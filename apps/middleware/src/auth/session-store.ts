@@ -1,6 +1,6 @@
 import { randomUUID } from "node:crypto";
 import type { DatabaseSync } from "node:sqlite";
-import type { AuthSession } from "@smart-db/contracts";
+import { IntegrationError, type AuthSession } from "@smart-db/contracts";
 
 interface SessionRecord {
   id: string;
@@ -26,7 +26,11 @@ export class SessionStore {
   create(input: CreateSessionInput): SessionRecord {
     const id = randomUUID();
     const now = new Date().toISOString();
-    const expiresAt = input.expiresAt ?? now;
+    if (!input.expiresAt) {
+      throw new IntegrationError("Auth", "session expiry could not be determined.");
+    }
+
+    const expiresAt = input.expiresAt;
     const session: AuthSession = {
       subject: input.subject,
       username: input.username,

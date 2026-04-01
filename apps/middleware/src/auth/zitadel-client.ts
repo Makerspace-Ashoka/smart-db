@@ -155,6 +155,7 @@ export class ZitadelClient {
           return response.json() as Promise<OidcDiscoveryDocument>;
         })
         .catch((error) => {
+          this.discoveryPromise = null;
           throw new IntegrationError(
             "Zitadel",
             error instanceof Error ? error.message : "Failed to fetch discovery document.",

@@ -83,4 +83,20 @@ describe("SessionStore", () => {
     store.deleteExpired("2026-01-01T00:00:00.000Z");
     expect(db.prepare(`SELECT COUNT(*) AS count FROM auth_sessions`).get()).toEqual({ count: 1 });
   });
+
+  it("fails fast when session expiry is missing", () => {
+    const store = new SessionStore(db);
+
+    expect(() =>
+      store.create({
+        subject: "zitadel-user-5",
+        username: "broken",
+        name: null,
+        email: null,
+        roles: [],
+        expiresAt: null,
+        idToken: null,
+      }),
+    ).toThrowError("session expiry could not be determined");
+  });
 });

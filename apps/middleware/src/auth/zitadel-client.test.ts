@@ -108,4 +108,40 @@ describe("ZitadelClient", () => {
       redirectUri: "https://smartdb.example.com/api/auth/callback",
     })).rejects.toThrowError(IntegrationError);
   });
+
+  it("does not poison discovery forever after a transient failure", async () => {
+    const fetch = vi
+      .fn()
+      .mockRejectedValueOnce(new Error("temporary dns failure"))
+      .mockResolvedValueOnce({
+        ok: true,
+        json: async () => ({
+          issuer: "https://auth.example.com",
+          authorization_endpoint: "https://auth.example.com/oauth/v2/authorize",
+          token_endpoint: "https://auth.example.com/oauth/v2/token",
+          jwks_uri: "https://auth.example.com/oauth/v2/keys",
+        }),
+      });
+    vi.stubGlobal("fetch", fetch);
+
+    const client = new ZitadelClient({
+      issuer: "https://auth.example.com",
+      clientId: "client-123",
+    });
+
+    await expect(client.authorizationUrl({
+      state: "state-1",
+      nonce: "nonce-1",
+      codeVerifier: "verifier-1",
+      redirectUri: "https://smartdb.example.com/api/auth/callback",
+    })).rejects.toThrowError("temporary dns failure");
+
+    await expect(client.authorizationUrl({
+      state: "state-2",
+      nonce: "nonce-2",
+      codeVerifier: "verifier-2",
+      redirectUri: "https://smartdb.example.com/api/auth/callback",
+    })).resolves.toContain("state=state-2");
+    expect(fetch).toHaveBeenCalledTimes(2);
+  });
 });
