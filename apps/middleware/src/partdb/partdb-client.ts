@@ -1,0 +1,242 @@
+import type {
+  AuthSession,
+  PartDbConnectionStatus,
+  PartDbDiscoveredResources,
+  PartDbLookupSummary,
+  UnauthenticatedError,
+} from "@smart-db/contracts";
+import { IntegrationError, UnauthenticatedError as UnauthenticatedApplicationError } from "@smart-db/contracts";
+import { withRetry, type RetryOptions, defaultRetryOptions } from "./retry.js";
+
+interface PartDbConfig {
+  baseUrl: string | null;
+  publicBaseUrl?: string | null;
+  retry?: RetryOptions;
+}
+
+interface OpenApiDocument {
+  paths?: Record<string, unknown>;
+}
+
+interface TokenInfo {
+  tokenLabel: string | null;
+  username: string;
+  expiresAt: string | null;
+}
+
+export class PartDbClient {
+  constructor(private readonly config: PartDbConfig) {}
+
+  async authenticate(apiToken: string): Promise<AuthSession> {
+    const tokenInfo = await this.getTokenInfo(apiToken);
+    return {
+      username: tokenInfo.username,
+      issuedAt: new Date().toISOString(),
+      expiresAt: tokenInfo.expiresAt,
+    };
+  }
+
+  async getConnectionStatus(apiToken: string | null): Promise<PartDbConnectionStatus> {
+    if (!this.config.baseUrl) {
+      return {
+        configured: false,
+        connected: false,
+        baseUrl: this.publicBaseUrl(),
+        tokenLabel: null,
+        userLabel: null,
+        message: "Part-DB credentials are not configured.",
+        discoveredResources: emptyResources(),
+      };
+    }
+
+    if (!apiToken) {
+      throw new UnauthenticatedApplicationError();
+    }
+
+    const normalizedBaseUrl = this.normalizedBaseUrl();
+    const tokenHeaders = this.headers(apiToken);
+    const docsHeaders = this.headers(apiToken, "application/vnd.openapi+json");
+
+    const retryOptions = this.config.retry ?? defaultRetryOptions;
+
+    try {
+      const [tokenResponse, docsResponse] = await withRetry(
+        () =>
+          Promise.all([
+            fetch(`${normalizedBaseUrl}/api/tokens/current`, { headers: tokenHeaders }),
+            fetch(`${normalizedBaseUrl}/api/docs.json`, { headers: docsHeaders }),
+          ]),
+        retryOptions,
+      );
+
+      let tokenLabel: string | null = null;
+      let userLabel: string | null = null;
+      if (tokenResponse.ok) {
+        const payload = (await tokenResponse.json()) as Record<string, unknown>;
+        tokenLabel = extractTokenLabel(payload);
+        userLabel = extractUsername(payload);
+      }
+
+      let discoveredResources = emptyResources();
+      if (docsResponse.ok) {
+        const openApi = (await docsResponse.json()) as OpenApiDocument;
+        discoveredResources = discoverResources(openApi);
+      }
+
+      if (!tokenResponse.ok) {
+        throw new UnauthenticatedApplicationError(
+          `Part-DB rejected the token (${tokenResponse.status}).`,
+        );
+      }
+
+      return {
+        configured: true,
+        connected: true,
+        baseUrl: this.publicBaseUrl(),
+        tokenLabel,
+        userLabel,
+        message: "Part-DB connection looks healthy.",
+        discoveredResources,
+      };
+    } catch (error) {
+      if (error instanceof UnauthenticatedApplicationError) {
+        throw error;
+      }
+      return {
+        configured: true,
+        connected: false,
+        baseUrl: this.publicBaseUrl(),
+        tokenLabel: null,
+        userLabel: null,
+        message:
+          error instanceof Error
+            ? `Failed to reach Part-DB: ${error.message}`
+            : "Failed to reach Part-DB.",
+        discoveredResources: emptyResources(),
+      };
+    }
+  }
+
+  async getLookupSummary(apiToken: string | null): Promise<PartDbLookupSummary> {
+    const status = await this.getConnectionStatus(apiToken);
+    return {
+      configured: status.configured,
+      connected: status.connected,
+      message: status.message,
+    };
+  }
+
+  private async getTokenInfo(apiToken: string): Promise<TokenInfo> {
+    if (!this.config.baseUrl) {
+      throw new IntegrationError("Part-DB", "base URL is not configured.");
+    }
+
+    const retryOptions = this.config.retry ?? defaultRetryOptions;
+    const response = await withRetry(
+      () =>
+        fetch(`${this.normalizedBaseUrl()}/api/tokens/current`, {
+          headers: this.headers(apiToken),
+        }),
+      retryOptions,
+    ).catch((error) => {
+      throw new IntegrationError(
+        "Part-DB",
+        error instanceof Error ? error.message : "Failed to reach Part-DB.",
+      );
+    });
+
+    if (!response.ok) {
+      throw new UnauthenticatedApplicationError(
+        `Part-DB rejected the token (${response.status}).`,
+      );
+    }
+
+    const payload = (await response.json()) as Record<string, unknown>;
+    const username = extractUsername(payload);
+    if (!username) {
+      throw new IntegrationError("Part-DB", "token owner could not be determined.");
+    }
+
+    return {
+      tokenLabel: extractTokenLabel(payload),
+      username,
+      expiresAt: extractTokenExpiry(payload),
+    };
+  }
+
+  private normalizedBaseUrl(): string {
+    if (!this.config.baseUrl) {
+      throw new IntegrationError("Part-DB", "base URL is not configured.");
+    }
+
+    return this.config.baseUrl.replace(/\/$/, "");
+  }
+
+  private publicBaseUrl(): string | null {
+    const candidate = this.config.publicBaseUrl ?? this.config.baseUrl;
+    return candidate ? candidate.replace(/\/$/, "") : null;
+  }
+
+  private headers(apiToken: string, accept: string = "application/json"): Record<string, string> {
+    return {
+      Accept: accept,
+      Authorization: `Bearer ${apiToken}`,
+    };
+  }
+}
+
+function emptyResources(): PartDbDiscoveredResources {
+  return {
+    tokenInfoPath: "/api/tokens/current",
+    openApiPath: "/api/docs.json",
+    partsPath: null,
+    partLotsPath: null,
+    storageLocationsPath: null,
+  };
+}
+
+function discoverResources(document: OpenApiDocument): PartDbDiscoveredResources {
+  const resources = emptyResources();
+
+  for (const path of Object.keys(document.paths ?? {})) {
+    if (path.includes("/api/parts") && !resources.partsPath) {
+      resources.partsPath = path;
+    }
+    if (path.includes("/api/part_lots") && !resources.partLotsPath) {
+      resources.partLotsPath = path;
+    }
+    if (path.includes("/api/storage_locations") && !resources.storageLocationsPath) {
+      resources.storageLocationsPath = path;
+    }
+  }
+
+  return resources;
+}
+
+function stringOrNull(value: unknown): string | null {
+  return typeof value === "string" ? value : null;
+}
+
+function extractTokenLabel(payload: Record<string, unknown>): string | null {
+  return stringOrNull(payload.name) ?? stringOrNull(payload.tokenName);
+}
+
+function extractUsername(payload: Record<string, unknown>): string | null {
+  const owner =
+    (payload.owner as Record<string, unknown> | undefined) ??
+    (payload.user as Record<string, unknown> | undefined);
+
+  return owner
+    ? stringOrNull(owner.username) ?? stringOrNull(owner.name)
+    : null;
+}
+
+function extractTokenExpiry(payload: Record<string, unknown>): string | null {
+  return (
+    stringOrNull(payload.expiresAt) ??
+    stringOrNull(payload.expires_at) ??
+    stringOrNull(payload.expirationDate) ??
+    stringOrNull(payload.expiration_date) ??
+    stringOrNull(payload.validUntil)
+  );
+}

@@ -1,0 +1,979 @@
+import { mkdtempSync } from "node:fs";
+import { join } from "node:path";
+import { tmpdir } from "node:os";
+import { describe, expect, it, vi } from "vitest";
+import {
+  ConflictError,
+  InvariantError,
+  NotFoundError,
+  type PartDbConnectionStatus,
+  type PartDbLookupSummary,
+} from "@smart-db/contracts";
+import { createDatabase } from "../db/database";
+import { InventoryService, inventoryServiceTestInternals } from "./inventory-service";
+
+function makeService() {
+  const directory = mkdtempSync(join(tmpdir(), "smart-db-service-"));
+  const db = createDatabase(join(directory, "smart.db"));
+  const partDbLookupSummary: PartDbLookupSummary = {
+    configured: false,
+    connected: false,
+    message: "Part-DB credentials are not configured.",
+  };
+  const partDbConnectionStatus: PartDbConnectionStatus = {
+    configured: false,
+    connected: false,
+    baseUrl: null,
+    tokenLabel: null,
+    userLabel: null,
+    message: "Part-DB credentials are not configured.",
+    discoveredResources: {
+      tokenInfoPath: "/api/tokens/current",
+      openApiPath: "/api/docs.json",
+      partsPath: null,
+      partLotsPath: null,
+      storageLocationsPath: null,
+    },
+  };
+  const partDbClient = {
+    getLookupSummary: vi.fn(async () => partDbLookupSummary),
+    getConnectionStatus: vi.fn(async () => partDbConnectionStatus),
+  };
+
+  return {
+    db,
+    service: new InventoryService(db, partDbClient as never),
+  };
+}
+
+describe("InventoryService", () => {
+  it("supports the full intake and lifecycle flow for instances and bulk stock", async () => {
+    const { service } = makeService();
+
+    expect(
+      service.registerQrBatch({
+        actor: "lab-admin",
+        prefix: "QR",
+        startNumber: 1001,
+        count: 6,
+      }),
+    ).toEqual({
+      batch: expect.objectContaining({
+        prefix: "QR",
+        startNumber: 1001,
+        endNumber: 1006,
+      }),
+      created: 6,
+      skipped: 0,
+    });
+    expect(
+      service.registerQrBatch({
+        actor: "lab-admin",
+        prefix: "QR",
+        startNumber: 1001,
+        count: 1,
+      }).skipped,
+    ).toBe(1);
+    expect(
+      service.registerQrBatch({
+        actor: "lab-admin",
+        batchId: "manual-batch",
+        prefix: "QR",
+        startNumber: 2000,
+        count: 1,
+      }).batch.id,
+    ).toBe("manual-batch");
+
+    await expect(service.scanCode("EAN-1234")).resolves.toEqual({
+      mode: "unknown",
+      code: "EAN-1234",
+      partDb: {
+        configured: false,
+        connected: false,
+        message: "Part-DB credentials are not configured.",
+      },
+    });
+
+    await expect(service.scanCode("QR-1001")).resolves.toMatchObject({
+      mode: "label",
+      qrCode: {
+        code: "QR-1001",
+        status: "printed",
+      },
+    });
+
+    const instanceSummary = service.assignQr({
+      qrCode: "QR-1001",
+      actor: "labeler",
+      entityKind: "instance",
+      location: "Shelf A",
+      notes: "starter board",
+      partType: {
+        kind: "new",
+        canonicalName: "Arduino Uno R3",
+        category: "Microcontrollers",
+        aliases: ["uno r3"],
+        notes: null,
+        imageUrl: null,
+        countable: true,
+      },
+      initialStatus: "available",
+    });
+
+    expect(instanceSummary).toMatchObject({
+      targetType: "instance",
+      state: "available",
+      partType: {
+        canonicalName: "Arduino Uno R3",
+      },
+    });
+
+    expect(service.getDashboardSummary()).toMatchObject({
+      partTypeCount: 1,
+      instanceCount: 1,
+      bulkStockCount: 0,
+      provisionalCount: 1,
+      unassignedQrCount: 6,
+    });
+    expect(service.searchPartTypes("arduino")).toHaveLength(1);
+    expect(service.getProvisionalPartTypes()).toHaveLength(1);
+
+    await expect(service.scanCode("QR-1001")).resolves.toMatchObject({
+      mode: "interact",
+      entity: {
+        targetType: "instance",
+      },
+      availableActions: [
+        "moved",
+        "checked_out",
+        "consumed",
+        "damaged",
+        "lost",
+        "disposed",
+      ],
+    });
+
+    expect(
+      service.recordEvent({
+        targetType: "instance",
+        targetId: instanceSummary.id,
+        actor: "lab-admin",
+        event: "moved",
+        location: "Shelf B",
+        notes: null,
+        nextStatus: "available",
+        assignee: null,
+      }).event,
+    ).toBe("moved");
+
+    expect(
+      service.recordEvent({
+        targetType: "instance",
+        targetId: instanceSummary.id,
+        actor: "lab-admin",
+        event: "checked_out",
+        location: "Workbench",
+        notes: "for robotics build",
+        nextStatus: "checked_out",
+        assignee: "Ayesha",
+      }).toState,
+    ).toBe("checked_out");
+    expect(
+      service.recordEvent({
+        targetType: "instance",
+        targetId: instanceSummary.id,
+        actor: "lab-admin",
+        event: "checked_out",
+        location: "" as never,
+        notes: null,
+        nextStatus: "checked_out",
+        assignee: "" as never,
+      }).location,
+    ).toBe("Workbench");
+
+    expect(
+      service.recordEvent({
+        targetType: "instance",
+        targetId: instanceSummary.id,
+        actor: "lab-admin",
+        event: "returned",
+        location: "Shelf B",
+        notes: null,
+        nextStatus: "available",
+        assignee: null,
+      }).toState,
+    ).toBe("available");
+
+    expect(
+      service.recordEvent({
+        targetType: "instance",
+        targetId: instanceSummary.id,
+        actor: "lab-admin",
+        event: "damaged",
+        location: "Repair shelf",
+        notes: null,
+        nextStatus: "damaged",
+        assignee: null,
+      }).toState,
+    ).toBe("damaged");
+
+    expect(
+      service.recordEvent({
+        targetType: "instance",
+        targetId: instanceSummary.id,
+        actor: "lab-admin",
+        event: "lost",
+        location: "Unknown",
+        notes: null,
+        nextStatus: "lost",
+        assignee: null,
+      }).toState,
+    ).toBe("lost");
+
+    expect(
+      service.recordEvent({
+        targetType: "instance",
+        targetId: instanceSummary.id,
+        actor: "lab-admin",
+        event: "disposed",
+        location: "Waste",
+        notes: null,
+        nextStatus: "consumed",
+        assignee: null,
+      }).toState,
+    ).toBe("consumed");
+
+    const secondInstance = service.assignQr({
+      qrCode: "QR-1002",
+      actor: "labeler",
+      entityKind: "instance",
+      location: "Shelf A",
+      notes: null,
+      partType: {
+        kind: "existing",
+        existingPartTypeId: instanceSummary.partType.id,
+      },
+      initialStatus: "available",
+    });
+
+    expect(
+      service.recordEvent({
+        targetType: "instance",
+        targetId: secondInstance.id,
+        actor: "lab-admin",
+        event: "consumed",
+        location: "Project bin",
+        notes: null,
+        nextStatus: "consumed",
+        assignee: null,
+      }).toState,
+    ).toBe("consumed");
+
+    const bulkSummary = service.assignQr({
+      qrCode: "QR-1003",
+      actor: "labeler",
+      entityKind: "bulk",
+      location: "Bin 7",
+      notes: "bulk screws",
+      partType: {
+        kind: "new",
+        canonicalName: "M3 Screw",
+        category: "Fasteners",
+        aliases: [],
+        notes: null,
+        imageUrl: null,
+        countable: false,
+      },
+      initialLevel: "good",
+    });
+    const fallbackBulk = service.assignQr({
+      qrCode: "QR-2000",
+      actor: "labeler",
+      entityKind: "bulk",
+      location: "Drawer",
+      notes: null,
+      partType: {
+        kind: "new",
+        canonicalName: "Fallback Bulk",
+        category: "Misc",
+        aliases: [],
+        notes: null,
+        imageUrl: null,
+        countable: false,
+      },
+      initialLevel: "not-a-level" as never,
+    });
+
+    expect(bulkSummary.targetType).toBe("bulk");
+    expect(fallbackBulk.state).toBe("good");
+    await expect(service.scanCode("QR-1003")).resolves.toMatchObject({
+      mode: "interact",
+      availableActions: ["moved", "level_changed", "consumed"],
+    });
+    expect(
+      service.recordEvent({
+        targetType: "bulk",
+        targetId: bulkSummary.id,
+        actor: "lab-admin",
+        event: "moved",
+        location: "Fastener wall",
+        notes: "drawer audit",
+        nextLevel: "good",
+      }).event,
+    ).toBe("moved");
+    expect(
+      service.recordEvent({
+        targetType: "bulk",
+        targetId: bulkSummary.id,
+        actor: "lab-admin",
+        event: "level_changed",
+        location: "Fastener wall",
+        notes: null,
+        nextLevel: "low",
+      }).toState,
+    ).toBe("low");
+    expect(
+      service.recordEvent({
+        targetType: "bulk",
+        targetId: bulkSummary.id,
+        actor: "lab-admin",
+        event: "consumed",
+        location: "Fastener wall",
+        notes: null,
+        nextLevel: "empty",
+      }).toState,
+    ).toBe("empty");
+    service.recordEvent({
+      targetType: "bulk",
+      targetId: bulkSummary.id,
+      actor: "lab-admin",
+      event: "level_changed",
+      location: "Fastener wall",
+      notes: null,
+      nextLevel: "low",
+    });
+    expect(
+      service.recordEvent({
+        targetType: "bulk",
+        targetId: bulkSummary.id,
+        actor: "lab-admin",
+        event: "consumed",
+        location: "Fastener wall",
+        notes: null,
+        nextLevel: "not-a-level" as never,
+      }).toState,
+    ).toBe("low");
+    expect(
+      service.recordEvent({
+        targetType: "bulk",
+        targetId: bulkSummary.id,
+        actor: "lab-admin",
+        event: "level_changed",
+        location: "" as never,
+        notes: null,
+        nextLevel: "not-a-level" as never,
+      }).location,
+    ).toBe("Fastener wall");
+
+    const mergeA = service.assignQr({
+      qrCode: "QR-1004",
+      actor: "labeler",
+      entityKind: "instance",
+      location: "Cable shelf",
+      notes: null,
+      partType: {
+        kind: "new",
+        canonicalName: "USB-C Cable",
+        category: "Cables",
+        aliases: ["usb c"],
+        notes: null,
+        imageUrl: null,
+        countable: true,
+      },
+      initialStatus: "available",
+    });
+    const mergeB = service.assignQr({
+      qrCode: "QR-1005",
+      actor: "labeler",
+      entityKind: "instance",
+      location: "Cable shelf",
+      notes: null,
+      partType: {
+        kind: "new",
+        canonicalName: "USB Type C Cable",
+        category: "Cables",
+        aliases: ["type c cable"],
+        notes: null,
+        imageUrl: null,
+        countable: true,
+      },
+      initialStatus: "available",
+    });
+
+    expect(
+      service.mergePartTypes({
+        sourcePartTypeId: mergeB.partType.id,
+        destinationPartTypeId: mergeA.partType.id,
+        aliasLabel: "usb type c cable",
+      }),
+    ).toMatchObject({
+      id: mergeA.partType.id,
+      aliases: expect.arrayContaining(["usb c", "usb type c cable"]),
+      needsReview: false,
+    });
+
+    await expect(service.getPartDbStatus()).resolves.toMatchObject({
+      configured: false,
+      connected: false,
+    });
+  });
+
+  it("raises designed errors for missing resources and conflicts", async () => {
+    const { db, service } = makeService();
+
+    expect(() =>
+      service.assignQr({
+        qrCode: "QR-404",
+        actor: "labeler",
+        entityKind: "instance",
+        location: "Shelf",
+        notes: null,
+        partType: {
+          kind: "new",
+          canonicalName: "Unknown",
+          category: "Misc",
+          aliases: [],
+          notes: null,
+          imageUrl: null,
+          countable: true,
+        },
+        initialStatus: "available",
+      }),
+    ).toThrowError(NotFoundError);
+
+    service.registerQrBatch({
+      actor: "lab-admin",
+      prefix: "QR",
+      startNumber: 2001,
+      count: 2,
+    });
+    service.assignQr({
+      qrCode: "QR-2001",
+      actor: "labeler",
+      entityKind: "instance",
+      location: "Shelf",
+      notes: null,
+      partType: {
+        kind: "new",
+        canonicalName: "Sensor",
+        category: "Electronics",
+        aliases: [],
+        notes: null,
+        imageUrl: null,
+        countable: true,
+      },
+      initialStatus: "available",
+    });
+
+    expect(() =>
+      service.assignQr({
+        qrCode: "QR-2001",
+        actor: "labeler",
+        entityKind: "instance",
+        location: "Shelf",
+        notes: null,
+        partType: {
+          kind: "existing",
+          existingPartTypeId: service.searchPartTypes("Sensor")[0]!.id,
+        },
+        initialStatus: "available",
+      }),
+    ).toThrowError(ConflictError);
+
+    service.registerQrBatch({
+      actor: "lab-admin",
+      prefix: "QR",
+      startNumber: 2999,
+      count: 1,
+    });
+    expect(
+      service.assignQr({
+        qrCode: "QR-2999",
+        actor: "labeler",
+        entityKind: "instance",
+        location: "Shelf",
+        notes: null,
+        partType: {
+          kind: "new",
+          canonicalName: "Fallback Status Part",
+          category: "Misc",
+          aliases: [],
+          notes: null,
+          imageUrl: null,
+          countable: true,
+        },
+        initialStatus: "not-a-status" as never,
+      }).state,
+    ).toBe("available");
+
+    expect(() =>
+      service.assignQr({
+        qrCode: "QR-2002",
+        actor: "labeler",
+        entityKind: "bulk",
+        location: "Bin",
+        notes: null,
+        partType: {
+          kind: "existing",
+          existingPartTypeId: service.searchPartTypes("Sensor")[0]!.id,
+        },
+        initialLevel: "good",
+      }),
+    ).toThrowError(ConflictError);
+
+    service.registerQrBatch({
+      actor: "lab-admin",
+      prefix: "QR",
+      startNumber: 3001,
+      count: 1,
+    });
+    const bulkPart = service.assignQr({
+      qrCode: "QR-3001",
+      actor: "labeler",
+      entityKind: "bulk",
+      location: "Bin",
+      notes: null,
+      partType: {
+        kind: "new",
+        canonicalName: "Cotton Thread",
+        category: "Textiles",
+        aliases: [],
+        notes: null,
+        imageUrl: null,
+        countable: false,
+      },
+      initialLevel: "good",
+    });
+
+    service.registerQrBatch({
+      actor: "lab-admin",
+      prefix: "QR",
+      startNumber: 3002,
+      count: 1,
+    });
+    expect(() =>
+      service.assignQr({
+        qrCode: "QR-3002",
+        actor: "labeler",
+        entityKind: "instance",
+        location: "Shelf",
+        notes: null,
+        partType: {
+          kind: "existing",
+          existingPartTypeId: bulkPart.partType.id,
+        },
+        initialStatus: "available",
+      }),
+    ).toThrowError(ConflictError);
+
+    await expect(service.scanCode("QR-2002")).resolves.toMatchObject({
+      mode: "label",
+    });
+    db.prepare(`UPDATE qrcodes SET status = 'voided' WHERE code = ?`).run("QR-2002");
+    await expect(service.scanCode("QR-2002")).resolves.toMatchObject({
+      mode: "unknown",
+    });
+
+    expect(() =>
+      service.recordEvent({
+        targetType: "instance",
+        targetId: "missing",
+        actor: "lab-admin",
+        event: "moved",
+        location: "Shelf",
+        notes: null,
+        nextStatus: "available",
+        assignee: null,
+      }),
+    ).toThrowError(NotFoundError);
+
+    expect(() =>
+      service.recordEvent({
+        targetType: "bulk",
+        targetId: "missing",
+        actor: "lab-admin",
+        event: "moved",
+        location: "Bin",
+        notes: null,
+        nextLevel: "good",
+      }),
+    ).toThrowError(NotFoundError);
+
+    expect(() =>
+      service.mergePartTypes({
+        sourcePartTypeId: "missing",
+        destinationPartTypeId: "also-missing",
+      }),
+    ).toThrowError(NotFoundError);
+
+    service.registerQrBatch({
+      actor: "lab-admin",
+      prefix: "QR",
+      startNumber: 3003,
+      count: 1,
+    });
+    const mergeSource = service.assignQr({
+      qrCode: "QR-3003",
+      actor: "labeler",
+      entityKind: "instance",
+      location: "Shelf",
+      notes: null,
+      partType: {
+        kind: "new",
+        canonicalName: "Loose Cable",
+        category: "Cables",
+        aliases: [],
+        notes: null,
+        imageUrl: null,
+        countable: true,
+      },
+      initialStatus: "available",
+    });
+
+    expect(() =>
+      service.mergePartTypes({
+        sourcePartTypeId: mergeSource.partType.id,
+        destinationPartTypeId: "missing-destination",
+      }),
+    ).toThrowError(NotFoundError);
+
+    expect(() =>
+      service.mergePartTypes({
+        sourcePartTypeId: mergeSource.partType.id,
+        destinationPartTypeId: mergeSource.partType.id,
+      }),
+    ).toThrowError(ConflictError);
+
+    service.registerQrBatch({
+      actor: "lab-admin",
+      prefix: "QR",
+      startNumber: 3100,
+      count: 1,
+    });
+    const availableItem = service.assignQr({
+      qrCode: "QR-3100",
+      actor: "labeler",
+      entityKind: "instance",
+      location: "Shelf",
+      notes: null,
+      partType: {
+        kind: "new",
+        canonicalName: "Transition Test",
+        category: "Misc",
+        aliases: [],
+        notes: null,
+        imageUrl: null,
+        countable: true,
+      },
+      initialStatus: "available",
+    });
+
+    expect(() =>
+      service.recordEvent({
+        targetType: "instance",
+        targetId: availableItem.id,
+        actor: "lab-admin",
+        event: "returned",
+        location: "Shelf",
+        notes: null,
+        nextStatus: "available",
+        assignee: null,
+      }),
+    ).toThrowError(ConflictError);
+  });
+
+  it("voids a QR code and disposes its assigned entity", () => {
+    const { service } = makeService();
+
+    service.registerQrBatch({ actor: "admin", prefix: "V", startNumber: 1, count: 3 });
+
+    // Void a printed (unassigned) QR
+    const voidedPrinted = service.voidQrCode("V-1", "admin");
+    expect(voidedPrinted.status).toBe("voided");
+
+    // Void again is a no-op (returns same voided QR)
+    const voidedAgain = service.voidQrCode("V-1", "admin");
+    expect(voidedAgain.status).toBe("voided");
+
+    // Void an assigned instance QR
+    const instance = service.assignQr({
+      qrCode: "V-2",
+      actor: "labeler",
+      entityKind: "instance",
+      location: "Shelf",
+      notes: null,
+      partType: { kind: "new", canonicalName: "Void Test", category: "Misc", aliases: [], notes: null, imageUrl: null, countable: true },
+      initialStatus: "available",
+    });
+    const voidedAssigned = service.voidQrCode("V-2", "admin");
+    expect(voidedAssigned.status).toBe("voided");
+    // The instance should be consumed
+    const dashboard = service.getDashboardSummary();
+    const events = dashboard.recentEvents.filter((e) => e.targetId === instance.id && e.event === "disposed");
+    expect(events.length).toBeGreaterThan(0);
+
+    // Void a missing QR
+    expect(() => service.voidQrCode("V-MISSING", "admin")).toThrowError(NotFoundError);
+
+    // Void an assigned bulk QR
+    const bulk = service.assignQr({
+      qrCode: "V-3",
+      actor: "labeler",
+      entityKind: "bulk",
+      location: "Bin",
+      notes: null,
+      partType: { kind: "new", canonicalName: "Bulk Void", category: "Misc", aliases: [], notes: null, imageUrl: null, countable: false },
+      initialLevel: "good",
+    });
+    const voidedBulk = service.voidQrCode("V-3", "admin");
+    expect(voidedBulk.status).toBe("voided");
+    const bulkEvents = service.getDashboardSummary().recentEvents.filter((e) => e.targetId === bulk.id && e.event === "consumed");
+    expect(bulkEvents.length).toBeGreaterThan(0);
+  });
+
+  it("approves a provisional part type", () => {
+    const { service } = makeService();
+
+    service.registerQrBatch({ actor: "admin", prefix: "A", startNumber: 1, count: 1 });
+    const entity = service.assignQr({
+      qrCode: "A-1",
+      actor: "labeler",
+      entityKind: "instance",
+      location: "Shelf",
+      notes: null,
+      partType: { kind: "new", canonicalName: "Approve Test", category: "Misc", aliases: [], notes: null, imageUrl: null, countable: true },
+      initialStatus: "available",
+    });
+
+    expect(entity.partType.needsReview).toBe(true);
+    const approved = service.approvePartType(entity.partType.id);
+    expect(approved.needsReview).toBe(false);
+    expect(approved.id).toBe(entity.partType.id);
+
+    // Approve missing part type
+    expect(() => service.approvePartType("missing-id")).toThrowError(NotFoundError);
+
+    // Approve read-back invariant: spy on findPartType to return null after update
+    const findSpy = vi.spyOn(service as never, "findPartType" as never);
+    findSpy.mockReturnValueOnce(entity.partType).mockReturnValueOnce(null);
+    expect(() => service.approvePartType(entity.partType.id)).toThrowError(InvariantError);
+    findSpy.mockRestore();
+  });
+
+  it("rejects illegal bulk transitions", () => {
+    const { service } = makeService();
+
+    service.registerQrBatch({ actor: "admin", prefix: "BLK", startNumber: 1, count: 1 });
+    const bulk = service.assignQr({
+      qrCode: "BLK-1",
+      actor: "labeler",
+      entityKind: "bulk",
+      location: "Bin",
+      notes: null,
+      partType: { kind: "new", canonicalName: "Empty Bulk", category: "Misc", aliases: [], notes: null, imageUrl: null, countable: false },
+      initialLevel: "good",
+    });
+
+    // Transition to empty
+    service.recordEvent({ targetType: "bulk", targetId: bulk.id, actor: "admin", event: "consumed", location: "Bin", notes: null, nextLevel: "empty" });
+
+    // consumed is not valid on empty bulk stock
+    expect(() =>
+      service.recordEvent({ targetType: "bulk", targetId: bulk.id, actor: "admin", event: "consumed", location: "Bin", notes: null, nextLevel: "empty" }),
+    ).toThrowError(ConflictError);
+  });
+
+  it("treats malformed persisted records as invariant failures", async () => {
+    const { db, service } = makeService();
+
+    db.prepare(
+      `
+      INSERT INTO part_types
+        (id, canonical_name, category, aliases_json, image_url, notes, countable, needs_review, partdb_part_id, created_at, updated_at)
+      VALUES
+        ('broken', 'Broken Row', 'Misc', 'not-json', NULL, NULL, 1, 1, NULL, '2026-01-01T00:00:00.000Z', '2026-01-01T00:00:00.000Z')
+      `,
+    ).run();
+
+    const results = service.searchPartTypes("");
+    const broken = results.find((pt) => pt.id === "broken");
+    expect(broken).toBeDefined();
+    expect(broken!.aliases).toEqual([]);
+    expect(() => (service as any).latestEvent("instance", "missing")).toThrowError(
+      InvariantError,
+    );
+
+    db.prepare(
+      `
+      INSERT INTO part_types
+        (id, canonical_name, category, aliases_json, image_url, notes, countable, needs_review, partdb_part_id, created_at, updated_at)
+      VALUES
+        ('bad-shape', 'Bad Shape', 'Misc', '[]', NULL, NULL, 1, 1, NULL, 'not-a-date', '2026-01-01T00:00:00.000Z')
+      `,
+    ).run();
+    expect(() => service.searchPartTypes("Bad Shape")).toThrowError(InvariantError);
+    expect(inventoryServiceTestInternals.parseAliases(null)).toEqual([]);
+    expect(() =>
+      (service as { withTransaction: (work: () => void) => void }).withTransaction(() => {
+        throw new Error("rollback");
+      }),
+    ).toThrowError("rollback");
+    expect(
+      (service as {
+        getEntityByQr: (qrCode: {
+          assignedId: string | null;
+          assignedKind: "instance" | "bulk" | null;
+        }) => unknown;
+      }).getEntityByQr({
+        assignedId: "missing-instance",
+        assignedKind: "instance",
+      }),
+    ).toBeNull();
+    expect(
+      (service as {
+        getEntityByQr: (qrCode: {
+          assignedId: string | null;
+          assignedKind: "instance" | "bulk" | null;
+        }) => unknown;
+      }).getEntityByQr({
+        assignedId: "missing-bulk",
+        assignedKind: "bulk",
+      }),
+    ).toBeNull();
+    expect(
+      (service as {
+        getEntityByQr: (qrCode: {
+          assignedId: string | null;
+          assignedKind: "instance" | "bulk" | null;
+        }) => unknown;
+      }).getEntityByQr({
+        assignedId: null,
+        assignedKind: null,
+      }),
+    ).toBeNull();
+    expect(() =>
+      (service as {
+        resolvePartType: (draft: { kind: "existing"; existingPartTypeId: string }) => unknown;
+      }).resolvePartType({
+        kind: "existing",
+        existingPartTypeId: "missing-part",
+      }),
+    ).toThrowError(NotFoundError);
+
+    service.registerQrBatch({
+      actor: "lab-admin",
+      prefix: "QR",
+      startNumber: 4001,
+      count: 2,
+    });
+    const mergeSource = service.assignQr({
+      qrCode: "QR-4001",
+      actor: "labeler",
+      entityKind: "instance",
+      location: "Shelf",
+      notes: null,
+      partType: {
+        kind: "new",
+        canonicalName: "Source",
+        category: "Misc",
+        aliases: [],
+        notes: null,
+        imageUrl: null,
+        countable: true,
+      },
+      initialStatus: "available",
+    });
+    const mergeDestination = service.assignQr({
+      qrCode: "QR-4002",
+      actor: "labeler",
+      entityKind: "instance",
+      location: "Shelf",
+      notes: null,
+      partType: {
+        kind: "new",
+        canonicalName: "Destination",
+        category: "Misc",
+        aliases: [],
+        notes: null,
+        imageUrl: null,
+        countable: true,
+      },
+      initialStatus: "available",
+    });
+    const findPartTypeSpy = vi.spyOn(service as never, "findPartType" as never);
+    findPartTypeSpy
+      .mockReturnValueOnce(mergeSource.partType)
+      .mockReturnValueOnce(mergeDestination.partType)
+      .mockReturnValueOnce(null);
+
+    expect(() =>
+      service.mergePartTypes({
+        sourcePartTypeId: mergeSource.partType.id,
+        destinationPartTypeId: mergeDestination.partType.id,
+      }),
+    ).toThrowError(InvariantError);
+
+    service.registerQrBatch({
+      actor: "lab-admin",
+      prefix: "QR",
+      startNumber: 5001,
+      count: 1,
+    });
+    const entityLookupSpy = vi.spyOn(service as never, "getEntityByQr" as never);
+    entityLookupSpy.mockReturnValueOnce(null);
+    expect(() =>
+      service.assignQr({
+        qrCode: "QR-5001",
+        actor: "labeler",
+        entityKind: "instance",
+        location: "Shelf",
+        notes: null,
+        partType: {
+          kind: "new",
+          canonicalName: "Broken Summary",
+          category: "Misc",
+          aliases: [],
+          notes: null,
+          imageUrl: null,
+          countable: true,
+        },
+        initialStatus: "available",
+      }),
+    ).toThrowError(InvariantError);
+    service.registerQrBatch({
+      actor: "lab-admin",
+      prefix: "QR",
+      startNumber: 6001,
+      count: 1,
+    });
+    const dangling = service.assignQr({
+      qrCode: "QR-6001",
+      actor: "labeler",
+      entityKind: "instance",
+      location: "Shelf",
+      notes: null,
+      partType: {
+        kind: "new",
+        canonicalName: "Dangling Instance",
+        category: "Misc",
+        aliases: [],
+        notes: null,
+        imageUrl: null,
+        countable: true,
+      },
+      initialStatus: "available",
+    });
+    db.prepare(`DELETE FROM physical_instances WHERE id = ?`).run(dangling.id);
+    await expect(service.scanCode("QR-6001")).rejects.toThrowError(InvariantError);
+  });
+});

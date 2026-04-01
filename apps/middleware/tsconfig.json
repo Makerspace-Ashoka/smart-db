@@ -1,0 +1,22 @@
+{
+  "extends": "../../tsconfig.base.json",
+  "compilerOptions": {
+    "composite": true,
+    "declaration": true,
+    "outDir": "dist",
+    "rootDir": "../../",
+    "module": "NodeNext",
+    "moduleResolution": "NodeNext",
+    "types": [
+      "node"
+    ]
+  },
+  "include": [
+    "src",
+    "../../packages/contracts/src"
+  ],
+  "exclude": [
+    "src/**/*.test.ts",
+    "../../packages/contracts/src/**/*.test.ts"
+  ]
+}
