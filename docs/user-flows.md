@@ -4,21 +4,21 @@ End-to-end documentation of every user flow in Smart DB, traced through both fro
 
 ## 1. Authentication
 
-The entry point is `SmartApp.tsx`. On mount, it checks `localStorage` for a saved Part-DB API token.
+The entry point is `SmartApp.tsx`. On mount, it calls `GET /api/auth/session` to check for an existing Smart DB session cookie.
 
-**No saved token**: The user sees a login screen with a single password field for their Part-DB API token.
+**No session**: The user sees a login screen with a single "Continue With SSO" control.
 
 **Login flow**:
-1. User pastes their Part-DB API token and submits
-2. Frontend calls `POST /api/auth/login` with `{ apiToken }`, sending the token itself as the `Authorization: Bearer` header
-3. Middleware's `AuthService.authenticateApiToken()` validates the token against Part-DB's `/api/tokens/current` endpoint — Smart DB has no user database; identity is entirely delegated to Part-DB
-4. On success, the middleware returns `{ session: { username, userId, expiresAt } }`
-5. Frontend stores the token in `localStorage` under `smart-db.partdb-api-token` and transitions to the authenticated view
-6. `loadAuthenticatedData()` fires, fetching dashboard, Part-DB status, provisional part types, and the default part-type catalog in parallel
+1. User clicks "Continue With SSO"
+2. Browser navigates to `GET /api/auth/login?returnTo=...`
+3. Middleware creates a signed auth-request cookie, generates `state` / `nonce` / PKCE verifier, and redirects to Zitadel
+4. Zitadel authenticates the user and redirects back to `GET /api/auth/callback`
+5. Middleware exchanges the authorization code, verifies the returned `id_token` against Zitadel JWKS, creates a server-side session, and sets an opaque session cookie
+6. Browser is redirected back to the requested Smart DB URL and `loadAuthenticatedData()` fetches dashboard, Part-DB status, provisional part types, and the default part-type catalog in parallel
 
-**Session restore**: If a token already exists in `localStorage`, SmartApp calls `GET /api/auth/session` to validate it's still good. If Part-DB rejects it, the token is cleared and the user sees the login screen again.
+**Session restore**: As long as the session cookie is valid, `GET /api/auth/session` returns the authenticated user and the app skips the login shell.
 
-**Global auth guard**: Every API call can return `unauthenticated`. The frontend's `handleApiFailure()` catches this, clears the token, resets all state, and drops the user back to login. This handles token revocation mid-session.
+**Global auth guard**: Every API call can still return `unauthenticated`. The frontend's `handleApiFailure()` resets all state and drops the user back to login. No browser-held bearer token is cleared because Smart DB now relies on an opaque cookie session.
 
 ---
 
@@ -201,7 +201,7 @@ Frontend:
 
 ## 8. Part-DB Status (read-only)
 
-The "Recent events" panel also shows discovered Part-DB resources (parts path, part lots path, storage locations path). This comes from `GET /api/partdb/status`, which calls `PartDbClient.getConnectionStatus()` — it reads Part-DB's `/api/docs.json` to discover API resource paths. This is informational only; no writes go to Part-DB yet.
+The "Recent events" panel also shows discovered Part-DB resources (parts path, part lots path, storage locations path). This comes from `GET /api/partdb/status`, which calls `PartDbClient.getConnectionStatus()` using the middleware-side Part-DB service token — it reads Part-DB's `/api/docs.json` to discover API resource paths. This is informational only; no writes go to Part-DB yet.
 
 ---
 

@@ -2,7 +2,7 @@
 
 ## Goal
 
-Smart DB is the operational layer for makerspace inventory. It optimizes for fast intake and low-friction lifecycle updates while preserving a clean data model that can sync into Part-DB.
+Smart DB is the operational layer for makerspace inventory. It optimizes for fast intake and low-friction lifecycle updates while preserving a clean data model that can sync into Part-DB and authenticate people through Zitadel.
 
 ## Core Domain
 
@@ -44,6 +44,7 @@ Part-DB is good at catalog and stock concepts, but it should not be the phone-fi
 - keep QR batch issuance explicit
 - maintain event history
 - own provisional naming and merge flows
+- terminate Zitadel login and hold server-side sessions
 - expose a narrow API for mobile intake
 - isolate Part-DB integration behind a dedicated adapter
 
@@ -53,7 +54,7 @@ Smart DB does not guess undocumented write payloads. Instead it implements a con
 
 Current middleware integration:
 
-- validates bearer-token connectivity with `/api/tokens/current`
+- validates a dedicated service token against `/api/tokens/current`
 - fetches `/api/docs.json`
 - discovers upstream resource paths for parts, part lots, and storage locations
 
@@ -64,6 +65,13 @@ Planned sync mapping:
 - `PhysicalInstance` stays native to Smart DB, with aggregate availability sync back into Part-DB
 
 This keeps Smart DB honest: it owns per-instance reality, while Part-DB remains compatible with its existing aggregate inventory model.
+
+## Identity Strategy
+
+- Zitadel is the only human identity provider.
+- Smart DB uses Authorization Code + PKCE through middleware routes and stores opaque session ids in secure cookies.
+- The browser no longer stores Part-DB or Zitadel bearer tokens.
+- Part-DB is accessed only through a middleware-side service token for status and future sync operations.
 
 ## Repository Layout
 
@@ -94,4 +102,3 @@ SQLite is the right first move here:
 4. Create or reuse a part type
 5. Log lifecycle events on later scans
 6. Merge provisional part types into canonicals
-
