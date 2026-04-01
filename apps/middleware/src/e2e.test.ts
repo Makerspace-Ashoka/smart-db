@@ -4,8 +4,36 @@ import { tmpdir } from "node:os";
 import { afterAll, afterEach, beforeAll, describe, expect, it, vi } from "vitest";
 import { buildServer } from "./server";
 import type { FastifyInstance } from "fastify";
+const auth = { cookie: "smartdb_session=session-1" };
+const authSession = {
+  subject: "zitadel-user-1",
+  username: "e2e-labeler",
+  name: "E2E Labeler",
+  email: "e2e@example.com",
+  roles: ["smartdb.labeler"],
+  issuedAt: "2026-01-01T00:00:00.000Z",
+  expiresAt: null,
+};
 
-function stubPartDbAuth() {
+function makeAuthService() {
+  return {
+    startLogin: vi.fn(async () => ({
+      authorizationUrl: "https://auth.example.com/oauth/v2/authorize?state=e2e-state",
+      authRequest: "auth-request-cookie",
+    })),
+    completeLogin: vi.fn(async () => ({
+      sessionId: "session-1",
+      session: authSession,
+      redirectTo: "http://localhost:5173/",
+    })),
+    getSession: vi.fn((sessionId: string | undefined) =>
+      sessionId === "session-1" ? authSession : null,
+    ),
+    logout: vi.fn(async () => ({ redirectUrl: null })),
+  } as never;
+}
+
+function stubPartDbFetch() {
   vi.stubGlobal(
     "fetch",
     vi.fn(async (input: string | URL | RequestInfo) => {
@@ -14,15 +42,21 @@ function stubPartDbAuth() {
         return {
           ok: true,
           json: async () => ({
-            name: "e2e-token",
-            owner: { username: "e2e-labeler" },
+            name: "smart-db-service-token",
+            owner: { username: "smartdb-service" },
           }),
         };
       }
       if (url.endsWith("/api/docs.json")) {
         return {
           ok: true,
-          json: async () => ({ paths: {} }),
+          json: async () => ({
+            paths: {
+              "/api/parts": {},
+              "/api/part_lots": {},
+              "/api/storage_locations": {},
+            },
+          }),
         };
       }
       throw new Error(`Unexpected fetch: ${url}`);
@@ -30,22 +64,33 @@ function stubPartDbAuth() {
   );
 }
 
-const auth = { authorization: "Bearer e2e-token" };
-
 describe("E2E: full intake → lifecycle → merge workflow", () => {
   let app: FastifyInstance;
 
   beforeAll(async () => {
-    stubPartDbAuth();
+    stubPartDbFetch();
     app = await buildServer({
       configOverride: {
         port: 4200,
         frontendOrigin: "http://localhost:5173",
+        publicBaseUrl: "http://localhost:4200",
         dataPath: join(mkdtempSync(join(tmpdir(), "smart-db-e2e-")), "smart.db"),
+        sessionCookieName: "smartdb_session",
         partDb: {
           baseUrl: "https://partdb.example.com",
+          publicBaseUrl: "https://partdb.example.com",
+          apiToken: "partdb-service-token",
+        },
+        auth: {
+          issuer: "https://auth.example.com",
+          clientId: "smartdb-client",
+          clientSecret: null,
+          postLogoutRedirectUri: "http://localhost:5173",
+          roleClaim: "smartdb_roles",
+          sessionCookieSecret: "test-session-secret",
         },
       },
+      authService: makeAuthService(),
     });
   });
 
@@ -55,17 +100,24 @@ describe("E2E: full intake → lifecycle → merge workflow", () => {
   });
 
   afterEach(() => {
-    vi.mocked(globalThis.fetch).mockClear();
+    vi.restoreAllMocks();
   });
 
   it("walks the full workflow: auth → batch → scan → assign → interact → merge", async () => {
     const login = await app.inject({
-      method: "POST",
+      method: "GET",
       url: "/api/auth/login",
-      payload: { apiToken: "e2e-token" },
     });
-    expect(login.statusCode).toBe(200);
-    expect(login.json().session.username).toBe("e2e-labeler");
+    expect(login.statusCode).toBe(302);
+
+    const callback = await app.inject({
+      method: "GET",
+      url: "/api/auth/callback?code=auth-code&state=e2e-state",
+      cookies: {
+        smartdb_auth_request: "auth-request-cookie",
+      },
+    });
+    expect(callback.statusCode).toBe(302);
 
     const dashboardEmpty = await app.inject({
       method: "GET",

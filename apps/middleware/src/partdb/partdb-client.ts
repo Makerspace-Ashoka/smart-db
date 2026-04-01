@@ -11,6 +11,7 @@ import { withRetry, type RetryOptions, defaultRetryOptions } from "./retry.js";
 interface PartDbConfig {
   baseUrl: string | null;
   publicBaseUrl?: string | null;
+  apiToken?: string | null;
   retry?: RetryOptions;
 }
 
@@ -46,8 +47,9 @@ export class PartDbClient {
     };
   }
 
-  async getConnectionStatus(apiToken: string | null): Promise<PartDbConnectionStatus> {
-    if (!this.config.baseUrl) {
+  async getConnectionStatus(apiToken: string | null = null): Promise<PartDbConnectionStatus> {
+    const activeToken = this.activeToken(apiToken);
+    if (!this.config.baseUrl || !activeToken) {
       return {
         configured: false,
         connected: false,
@@ -59,13 +61,9 @@ export class PartDbClient {
       };
     }
 
-    if (!apiToken) {
-      throw new UnauthenticatedApplicationError();
-    }
-
     const normalizedBaseUrl = this.normalizedBaseUrl();
-    const tokenHeaders = this.headers(apiToken);
-    const docsHeaders = this.headers(apiToken, "application/vnd.openapi+json");
+    const tokenHeaders = this.headers(activeToken);
+    const docsHeaders = this.headers(activeToken, "application/vnd.openapi+json");
 
     const retryOptions = this.config.retry ?? defaultRetryOptions;
 
@@ -127,7 +125,7 @@ export class PartDbClient {
     }
   }
 
-  async getLookupSummary(apiToken: string | null): Promise<PartDbLookupSummary> {
+  async getLookupSummary(apiToken: string | null = null): Promise<PartDbLookupSummary> {
     const status = await this.getConnectionStatus(apiToken);
     return {
       configured: status.configured,
@@ -185,6 +183,10 @@ export class PartDbClient {
   private publicBaseUrl(): string | null {
     const candidate = this.config.publicBaseUrl ?? this.config.baseUrl;
     return candidate ? candidate.replace(/\/$/, "") : null;
+  }
+
+  private activeToken(apiToken: string | null | undefined): string | null {
+    return apiToken ?? this.config.apiToken ?? null;
   }
 
   private headers(apiToken: string, accept: string = "application/json"): Record<string, string> {

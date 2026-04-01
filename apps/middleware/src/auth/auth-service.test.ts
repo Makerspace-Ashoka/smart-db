@@ -1,85 +1,205 @@
-import { afterEach, describe, expect, it, vi } from "vitest";
-import { UnauthenticatedError } from "@smart-db/contracts";
+import { DatabaseSync } from "node:sqlite";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import { IntegrationError, UnauthenticatedError } from "@smart-db/contracts";
+import { decodeAuthRequest } from "./auth-cookies.js";
 import { AuthService } from "./auth-service";
-
-afterEach(() => {
-  vi.useRealTimers();
-});
+import { SessionStore } from "./session-store";
+import { applyMigrations } from "../db/migrations.js";
 
 describe("AuthService", () => {
-  it("authenticates a Part-DB API token through the PartDbClient", async () => {
-    const service = new AuthService({
-      authenticate: vi.fn(async () => ({
-        username: "labeler",
-        issuedAt: "2026-01-01T00:00:00.000Z",
-        expiresAt: null,
-      })),
-    } as never);
+  let db: DatabaseSync;
 
-    await expect(service.authenticateApiToken("token-123")).resolves.toEqual({
-      username: "labeler",
-      issuedAt: "2026-01-01T00:00:00.000Z",
-      expiresAt: null,
+  beforeEach(() => {
+    db = new DatabaseSync(":memory:");
+    applyMigrations(db);
+  });
+
+  afterEach(() => {
+    db.close();
+  });
+
+  it("starts login with a signed auth request and authorization URL", async () => {
+    const authorizationUrl = vi.fn(async () => "https://auth.example.com/login");
+    const service = new AuthService(
+      {
+        authorizationUrl,
+        exchangeAuthorizationCode: vi.fn(),
+        logoutUrl: vi.fn(),
+      } as never,
+      new SessionStore(db),
+      {
+        frontendOrigin: "https://smartdb.example.com",
+        redirectUri: "https://smartdb.example.com/api/auth/callback",
+        sessionCookieSecret: "super-secret",
+      },
+    );
+
+    const result = await service.startLogin("https://smartdb.example.com/app?tab=scan");
+    const decoded = decodeAuthRequest(result.authRequest, "super-secret");
+
+    expect(result.authorizationUrl).toBe("https://auth.example.com/login");
+    expect(decoded).toMatchObject({
+      returnTo: "https://smartdb.example.com/app?tab=scan",
+    });
+    expect(authorizationUrl).toHaveBeenCalledWith(
+      expect.objectContaining({
+        redirectUri: "https://smartdb.example.com/api/auth/callback",
+      }),
+    );
+  });
+
+  it("normalizes external returnTo values back to the frontend origin", async () => {
+    const service = new AuthService(
+      {
+        authorizationUrl: vi.fn(async () => "https://auth.example.com/login"),
+        exchangeAuthorizationCode: vi.fn(),
+        logoutUrl: vi.fn(),
+      } as never,
+      new SessionStore(db),
+      {
+        frontendOrigin: "https://smartdb.example.com",
+        redirectUri: "https://smartdb.example.com/api/auth/callback",
+        sessionCookieSecret: "super-secret",
+      },
+    );
+
+    const result = await service.startLogin("https://evil.example.com/phish");
+    expect(decodeAuthRequest(result.authRequest, "super-secret")).toMatchObject({
+      returnTo: "https://smartdb.example.com/",
     });
   });
 
-  it("extracts bearer tokens and rejects missing or malformed headers", () => {
-    const service = new AuthService({ authenticate: vi.fn() } as never);
+  it("rejects login start when the cookie secret is missing", async () => {
+    const service = new AuthService(
+      {
+        authorizationUrl: vi.fn(),
+        exchangeAuthorizationCode: vi.fn(),
+        logoutUrl: vi.fn(),
+      } as never,
+      new SessionStore(db),
+      {
+        frontendOrigin: "https://smartdb.example.com",
+        redirectUri: "https://smartdb.example.com/api/auth/callback",
+        sessionCookieSecret: null,
+      },
+    );
 
-    expect(service.extractBearerToken("Bearer token-123")).toBe("token-123");
-    expect(() => service.extractBearerToken(undefined)).toThrowError(UnauthenticatedError);
-    expect(() => service.extractBearerToken("Basic nope")).toThrowError(UnauthenticatedError);
-    expect(() => service.extractBearerToken("Bearer ")).toThrowError(UnauthenticatedError);
+    await expect(service.startLogin(null)).rejects.toThrowError(IntegrationError);
   });
 
-  it("revalidates every request against Part-DB", async () => {
-    const authenticate = vi.fn(async () => ({
+  it("completes login and creates a session", async () => {
+    const exchangeAuthorizationCode = vi.fn(async () => ({
+      subject: "zitadel-user-1",
       username: "labeler",
-      issuedAt: "2026-01-01T00:00:00.000Z",
-      expiresAt: null,
+      name: "Labeler User",
+      email: "labeler@example.com",
+      roles: ["smartdb.labeler"],
+      idToken: "id-token",
+      expiresAt: "2026-04-02T00:00:00.000Z",
     }));
-    const service = new AuthService({ authenticate } as never);
+    const service = new AuthService(
+      {
+        authorizationUrl: vi.fn(async () => "https://auth.example.com/login"),
+        exchangeAuthorizationCode,
+        logoutUrl: vi.fn(async () => "https://auth.example.com/logout"),
+      } as never,
+      new SessionStore(db),
+      {
+        frontendOrigin: "https://smartdb.example.com",
+        redirectUri: "https://smartdb.example.com/api/auth/callback",
+        sessionCookieSecret: "super-secret",
+      },
+    );
 
-    await service.authenticateApiToken("token-cached");
-    await service.authenticateApiToken("token-cached");
+    const started = await service.startLogin("https://smartdb.example.com/app");
+    const authRequest = decodeAuthRequest(started.authRequest, "super-secret");
+    if (!authRequest) {
+      throw new Error("auth request was not decodable");
+    }
 
-    expect(authenticate).toHaveBeenCalledTimes(2);
-  });
+    const completed = await service.completeLogin(
+      {
+        code: "auth-code",
+        state: authRequest.state,
+      },
+      started.authRequest,
+    );
 
-  it("propagates upstream failures after a prior successful validation", async () => {
-    const session = {
+    expect(completed.redirectTo).toBe("https://smartdb.example.com/app");
+    expect(completed.session).toMatchObject({
+      subject: "zitadel-user-1",
       username: "labeler",
-      issuedAt: "2026-01-01T00:00:00.000Z",
-      expiresAt: null,
-    };
-    const authenticate = vi
-      .fn()
-      .mockResolvedValueOnce(session)
-      .mockRejectedValueOnce(new Error("Part-DB is down"));
-    const service = new AuthService({ authenticate } as never);
-
-    await service.authenticateApiToken("token-stale");
-
-    await expect(service.authenticateApiToken("token-stale")).rejects.toThrowError(
-      "Part-DB is down",
+      roles: ["smartdb.labeler"],
+    });
+    expect(service.getSession(completed.sessionId)).toMatchObject({
+      username: "labeler",
+    });
+    expect(exchangeAuthorizationCode).toHaveBeenCalledWith(
+      "auth-code",
+      authRequest.codeVerifier,
+      "https://smartdb.example.com/api/auth/callback",
+      authRequest.nonce,
     );
   });
 
-  it("propagates explicit token rejection from Part-DB", async () => {
-    const authenticate = vi
-      .fn()
-      .mockRejectedValueOnce(new UnauthenticatedError("Part-DB rejected the token (401)."));
-    const service = new AuthService({ authenticate } as never);
-
-    await expect(service.authenticateApiToken("token-revoked")).rejects.toThrowError(
-      "Part-DB rejected the token (401).",
+  it("returns and deletes sessions on logout", async () => {
+    const logoutUrl = vi.fn(async (idTokenHint: string | null) =>
+      idTokenHint ? "https://auth.example.com/logout" : null,
     );
+    const store = new SessionStore(db);
+    const service = new AuthService(
+      {
+        authorizationUrl: vi.fn(async () => "https://auth.example.com/login"),
+        exchangeAuthorizationCode: vi.fn(),
+        logoutUrl,
+      } as never,
+      store,
+      {
+        frontendOrigin: "https://smartdb.example.com",
+        redirectUri: "https://smartdb.example.com/api/auth/callback",
+        sessionCookieSecret: "super-secret",
+      },
+    );
+    const stored = store.create({
+      subject: "zitadel-user-1",
+      username: "labeler",
+      name: null,
+      email: null,
+      roles: [],
+      expiresAt: "2026-04-02T00:00:00.000Z",
+      idToken: "id-token",
+    });
+
+    expect(service.getSession(stored.id)).toMatchObject({ username: "labeler" });
+    await expect(service.logout(stored.id)).resolves.toEqual({
+      redirectUrl: "https://auth.example.com/logout",
+    });
+    expect(service.getSession(stored.id)).toBeNull();
+    expect(logoutUrl).toHaveBeenCalledWith("id-token");
   });
 
-  it("throws when cache is empty and Part-DB fails", async () => {
-    const authenticate = vi.fn().mockRejectedValue(new Error("Part-DB is down"));
-    const service = new AuthService({ authenticate } as never);
+  it("rejects invalid callback state", async () => {
+    const service = new AuthService(
+      {
+        authorizationUrl: vi.fn(async () => "https://auth.example.com/login"),
+        exchangeAuthorizationCode: vi.fn(),
+        logoutUrl: vi.fn(),
+      } as never,
+      new SessionStore(db),
+      {
+        frontendOrigin: "https://smartdb.example.com",
+        redirectUri: "https://smartdb.example.com/api/auth/callback",
+        sessionCookieSecret: "super-secret",
+      },
+    );
 
-    await expect(service.authenticateApiToken("token-new")).rejects.toThrowError("Part-DB is down");
+    const started = await service.startLogin("https://smartdb.example.com/app");
+    await expect(service.completeLogin(
+      {
+        code: "auth-code",
+        state: "wrong-state",
+      },
+      started.authRequest,
+    )).rejects.toThrowError(UnauthenticatedError);
   });
 });

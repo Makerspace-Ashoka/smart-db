@@ -45,7 +45,7 @@ export async function registerInventoryRoutes(
 
   app.post("/api/scan", { preHandler: requireAuth }, async (request) => {
     const command = parseWithSchema(scanRequestSchema, request.body, "scan request");
-    return inventoryService.scanCode(command.code, request.authContext!.partDbToken);
+    return inventoryService.scanCode(command.code);
   });
 
   app.post("/api/assignments", { preHandler: requireAuth }, async (request) => {
@@ -85,7 +85,7 @@ export async function registerInventoryRoutes(
     return inventoryService.approvePartType(params.id);
   });
 
-  app.get("/api/partdb/status", { preHandler: requireAuth }, async (request) =>
-    inventoryService.getPartDbStatus(request.authContext!.partDbToken),
+  app.get("/api/partdb/status", { preHandler: requireAuth }, async () =>
+    inventoryService.getPartDbStatus(),
   );
 }

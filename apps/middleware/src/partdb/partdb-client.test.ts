@@ -30,15 +30,17 @@ describe("PartDbClient", () => {
     });
   });
 
-  it("requires a token when the Part-DB base URL is configured", async () => {
+  it("reports an unconfigured status when the Part-DB base URL is configured but no token is available", async () => {
     const client = new PartDbClient({
       baseUrl: "https://partdb.example.com",
       retry: noRetry,
     });
 
-    await expect(client.getConnectionStatus(null)).rejects.toThrowError(
-      "Authentication is required.",
-    );
+    await expect(client.getConnectionStatus(null)).resolves.toMatchObject({
+      configured: false,
+      connected: false,
+      message: "Part-DB credentials are not configured.",
+    });
   });
 
   it("discovers token and resource paths on a healthy connection", async () => {

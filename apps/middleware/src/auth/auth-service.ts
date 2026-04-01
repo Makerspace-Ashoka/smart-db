@@ -1,23 +1,151 @@
-import { UnauthenticatedError, type AuthSession } from "@smart-db/contracts";
-import { PartDbClient } from "../partdb/partdb-client.js";
+import { randomBytes } from "node:crypto";
+import { IntegrationError, UnauthenticatedError, type AuthSession } from "@smart-db/contracts";
+import {
+  decodeAuthRequest,
+  encodeAuthRequest,
+  normalizeReturnTo,
+  type AuthRequestState,
+} from "./auth-cookies.js";
+import { SessionStore } from "./session-store.js";
+import type { ExchangedIdentity } from "./zitadel-client.js";
+
+interface IdentityProvider {
+  authorizationUrl(request: {
+    state: string;
+    nonce: string;
+    codeVerifier: string;
+    redirectUri: string;
+  }): Promise<string>;
+  exchangeAuthorizationCode(
+    code: string,
+    codeVerifier: string,
+    redirectUri: string,
+    expectedNonce: string,
+  ): Promise<ExchangedIdentity>;
+  logoutUrl(idTokenHint: string | null): Promise<string | null>;
+}
+
+interface AuthServiceOptions {
+  frontendOrigin: string;
+  redirectUri: string;
+  sessionCookieSecret: string | null;
+}
+
+interface LoginStartResult {
+  authorizationUrl: string;
+  authRequest: string;
+}
+
+interface LoginCompletionResult {
+  sessionId: string;
+  session: AuthSession;
+  redirectTo: string;
+}
+
+interface LogoutResult {
+  redirectUrl: string | null;
+}
 
 export class AuthService {
-  constructor(private readonly partDbClient: PartDbClient) {}
+  constructor(
+    private readonly identityProvider: IdentityProvider,
+    private readonly sessions: SessionStore,
+    private readonly options: AuthServiceOptions,
+  ) {}
 
-  async authenticateApiToken(apiToken: string): Promise<AuthSession> {
-    return this.partDbClient.authenticate(apiToken);
+  async startLogin(returnTo: string | null | undefined): Promise<LoginStartResult> {
+    const authRequest = {
+      state: randomToken(),
+      nonce: randomToken(),
+      codeVerifier: randomToken(48),
+      returnTo: normalizeReturnTo(returnTo, this.options.frontendOrigin),
+      createdAt: new Date().toISOString(),
+    } satisfies AuthRequestState;
+
+    return {
+      authorizationUrl: await this.identityProvider.authorizationUrl({
+        state: authRequest.state,
+        nonce: authRequest.nonce,
+        codeVerifier: authRequest.codeVerifier,
+        redirectUri: this.options.redirectUri,
+      }),
+      authRequest: encodeAuthRequest(authRequest, this.requireSecret()),
+    };
   }
 
-  extractBearerToken(authorizationHeader: string | undefined): string {
-    if (!authorizationHeader) {
-      throw new UnauthenticatedError("A Part-DB API token is required.");
+  async completeLogin(
+    query: { code?: string; state?: string },
+    encodedAuthRequest: string | undefined,
+  ): Promise<LoginCompletionResult> {
+    const code = query.code?.trim();
+    const state = query.state?.trim();
+    if (!code || !state) {
+      throw new UnauthenticatedError("Authorization callback was incomplete.");
     }
 
-    const [scheme, token] = authorizationHeader.split(" ");
-    if (scheme !== "Bearer" || !token?.trim()) {
-      throw new UnauthenticatedError("Authorization must use a Bearer token.");
+    const authRequest = decodeAuthRequest(encodedAuthRequest, this.requireSecret());
+    if (!authRequest) {
+      throw new UnauthenticatedError("Authentication request could not be verified.");
     }
 
-    return token.trim();
+    if (authRequest.state !== state) {
+      throw new UnauthenticatedError("Authentication state did not match.");
+    }
+
+    const identity = await this.identityProvider.exchangeAuthorizationCode(
+      code,
+      authRequest.codeVerifier,
+      this.options.redirectUri,
+      authRequest.nonce,
+    );
+
+    const sessionRecord = this.sessions.create({
+      subject: identity.subject,
+      username: identity.username,
+      name: identity.name,
+      email: identity.email,
+      roles: identity.roles,
+      expiresAt: identity.expiresAt,
+      idToken: identity.idToken,
+    });
+
+    return {
+      sessionId: sessionRecord.id,
+      session: sessionRecord.session,
+      redirectTo: authRequest.returnTo,
+    };
   }
+
+  getSession(sessionId: string | undefined): AuthSession | null {
+    if (!sessionId) {
+      return null;
+    }
+
+    return this.sessions.get(sessionId)?.session ?? null;
+  }
+
+  async logout(sessionId: string | undefined): Promise<LogoutResult> {
+    if (!sessionId) {
+      return { redirectUrl: null };
+    }
+
+    const existing = this.sessions.get(sessionId);
+    this.sessions.delete(sessionId);
+
+    return {
+      redirectUrl: await this.identityProvider.logoutUrl(existing?.idToken ?? null),
+    };
+  }
+
+  private requireSecret(): string {
+    if (!this.options.sessionCookieSecret) {
+      throw new IntegrationError("Auth", "session cookie secret is not configured.");
+    }
+
+    return this.options.sessionCookieSecret;
+  }
+}
+
+function randomToken(bytes: number = 32): string {
+  return randomBytes(bytes).toString("base64url");
 }

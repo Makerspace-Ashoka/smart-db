@@ -86,77 +86,83 @@ const partDbStatus: PartDbConnectionStatus = {
   },
 };
 
+const authSession = {
+  subject: "zitadel-user-1",
+  username: "labeler",
+  name: "Labeler User",
+  email: "labeler@example.com",
+  roles: ["smartdb.labeler"],
+  issuedAt: "2026-01-01T00:00:00.000Z",
+  expiresAt: null,
+};
+
+const sessionHeaders = {
+  cookie: "smartdb_session=session-1",
+};
+
 afterEach(() => {
   vi.restoreAllMocks();
 });
-
-function stubPartDbAuthFetch() {
-  vi.stubGlobal(
-    "fetch",
-    vi.fn(async (input: string | URL | RequestInfo) => {
-      const url = typeof input === "string" ? input : String(input);
-      if (url.endsWith("/api/tokens/current")) {
-        return {
-          ok: true,
-          json: async () => ({
-            name: "labeler token",
-            owner: {
-              username: "labeler",
-            },
-          }),
-        };
-      }
-
-      if (url.endsWith("/api/docs.json")) {
-        return {
-          ok: true,
-          json: async () => ({
-            paths: {
-              "/api/parts": {},
-              "/api/part_lots": {},
-              "/api/storage_locations": {},
-            },
-          }),
-        };
-      }
-
-      throw new Error(`Unexpected fetch: ${url}`);
-    }),
-  );
-}
 
 function makeConfig() {
   return {
     port: 4100,
     frontendOrigin: "http://localhost:5173",
+    publicBaseUrl: "http://localhost:4100",
     dataPath: join(mkdtempSync(join(tmpdir(), "smart-db-server-")), "smart.db"),
+    sessionCookieName: "smartdb_session",
     partDb: {
       baseUrl: "https://partdb.example.com",
+      publicBaseUrl: "https://partdb.example.com",
+      apiToken: "partdb-service-token",
+    },
+    auth: {
+      issuer: "https://auth.example.com",
+      clientId: "smartdb-client",
+      clientSecret: null,
+      postLogoutRedirectUri: "http://localhost:5173",
+      roleClaim: "smartdb_roles",
+      sessionCookieSecret: "test-session-secret",
     },
   };
 }
 
+function makeAuthService(overrides: Record<string, unknown> = {}) {
+  return {
+    startLogin: vi.fn(async () => ({
+      authorizationUrl: "https://auth.example.com/oauth/v2/authorize?state=state-1",
+      authRequest: "auth-request-cookie",
+    })),
+    completeLogin: vi.fn(async () => ({
+      sessionId: "session-1",
+      session: authSession,
+      redirectTo: "http://localhost:5173/",
+    })),
+    getSession: vi.fn((sessionId: string | undefined) =>
+      sessionId === "session-1" ? authSession : null,
+    ),
+    logout: vi.fn(async () => ({ redirectUrl: null })),
+    ...overrides,
+  } as never;
+}
+
 describe("buildServer", () => {
   it("supports auth login, session inspection, logout, and 401s", async () => {
-    stubPartDbAuthFetch();
+    const authService = makeAuthService();
     const app = await buildServer({
       configOverride: makeConfig(),
+      authService,
     });
 
     const login = await app.inject({
-      method: "POST",
+      method: "GET",
       url: "/api/auth/login",
-      payload: {
-        apiToken: "token",
-      },
     });
-    expect(login.statusCode).toBe(200);
-    expect(login.json()).toMatchObject({
-      session: {
-        username: "labeler",
-        expiresAt: null,
-      },
-    });
+    expect(login.statusCode).toBe(302);
+    expect(login.headers.location).toContain("https://auth.example.com/oauth/v2/authorize");
+    expect(login.headers["set-cookie"]).toEqual(
+      expect.stringContaining("smartdb_auth_request="),
+    );
 
     const missingAuth = await app.inject({
       method: "GET",
@@ -164,12 +170,20 @@ describe("buildServer", () => {
     });
     expect(missingAuth.statusCode).toBe(401);
 
+    const callback = await app.inject({
+      method: "GET",
+      url: "/api/auth/callback?code=auth-code&state=state-1",
+      cookies: {
+        smartdb_auth_request: "auth-request-cookie",
+      },
+    });
+    expect(callback.statusCode).toBe(302);
+    expect(callback.headers.location).toBe("http://localhost:5173/");
+
     const session = await app.inject({
       method: "GET",
       url: "/api/auth/session",
-      headers: {
-        authorization: "Bearer token",
-      },
+      headers: sessionHeaders,
     });
     expect(session.statusCode).toBe(200);
     expect(session.json()).toMatchObject({
@@ -179,12 +193,14 @@ describe("buildServer", () => {
     const logout = await app.inject({
       method: "POST",
       url: "/api/auth/logout",
-      headers: {
-        authorization: "Bearer token",
-      },
+      headers: sessionHeaders,
     });
     expect(logout.statusCode).toBe(200);
     expect(logout.json()).toEqual({ ok: true, redirectUrl: null });
+
+    expect(authService.startLogin).toHaveBeenCalledTimes(1);
+    expect(authService.completeLogin).toHaveBeenCalledTimes(1);
+    expect(authService.logout).toHaveBeenCalledTimes(1);
 
     await app.close();
   });
@@ -232,7 +248,7 @@ describe("buildServer", () => {
   });
 
   it("serves the route surface and delegates to the inventory service", async () => {
-    stubPartDbAuthFetch();
+    const authService = makeAuthService();
     const voidedQr: QRCode = {
       code: "QR-1001",
       batchId: "batch-1",
@@ -270,6 +286,7 @@ describe("buildServer", () => {
 
     const app = await buildServer({
       configOverride: makeConfig(),
+      authService,
       inventoryService: service as never,
     });
 
@@ -280,9 +297,7 @@ describe("buildServer", () => {
     await expect(app.inject({
       method: "GET",
       url: "/api/dashboard",
-      headers: {
-        authorization: "Bearer token",
-      },
+      headers: sessionHeaders,
     })).resolves.toMatchObject({
       statusCode: 200,
     });
@@ -290,18 +305,14 @@ describe("buildServer", () => {
       app.inject({
         method: "GET",
         url: "/api/part-types/search?q=arduino",
-        headers: {
-          authorization: "Bearer token",
-        },
+        headers: sessionHeaders,
       }),
     ).resolves.toMatchObject({ statusCode: 200 });
     await expect(
       app.inject({
         method: "GET",
         url: "/api/part-types/provisional",
-        headers: {
-          authorization: "Bearer token",
-        },
+        headers: sessionHeaders,
       }),
     ).resolves.toMatchObject({ statusCode: 200 });
     await expect(
@@ -312,9 +323,7 @@ describe("buildServer", () => {
           startNumber: 1001,
           count: 2,
         },
-        headers: {
-          authorization: "Bearer token",
-        },
+        headers: sessionHeaders,
       }),
     ).resolves.toMatchObject({ statusCode: 200 });
     await expect(
@@ -322,9 +331,7 @@ describe("buildServer", () => {
         method: "POST",
         url: "/api/scan",
         payload: { code: "EAN-1234" },
-        headers: {
-          authorization: "Bearer token",
-        },
+        headers: sessionHeaders,
       }),
     ).resolves.toMatchObject({ statusCode: 200 });
     await expect(
@@ -340,9 +347,7 @@ describe("buildServer", () => {
             existingPartTypeId: "part-1",
           },
         },
-        headers: {
-          authorization: "Bearer token",
-        },
+        headers: sessionHeaders,
       }),
     ).resolves.toMatchObject({ statusCode: 200 });
     await expect(
@@ -354,9 +359,7 @@ describe("buildServer", () => {
           targetId: "instance-1",
           event: "moved",
         },
-        headers: {
-          authorization: "Bearer token",
-        },
+        headers: sessionHeaders,
       }),
     ).resolves.toMatchObject({ statusCode: 200 });
     await expect(
@@ -367,18 +370,14 @@ describe("buildServer", () => {
           sourcePartTypeId: "source",
           destinationPartTypeId: "destination",
         },
-        headers: {
-          authorization: "Bearer token",
-        },
+        headers: sessionHeaders,
       }),
     ).resolves.toMatchObject({ statusCode: 200 });
     await expect(
       app.inject({
         method: "GET",
         url: "/api/partdb/status",
-        headers: {
-          authorization: "Bearer token",
-        },
+        headers: sessionHeaders,
       }),
     ).resolves.toMatchObject({
       statusCode: 200,
@@ -388,18 +387,14 @@ describe("buildServer", () => {
         method: "POST",
         url: "/api/qr-codes/QR-1001/void",
         payload: {},
-        headers: {
-          authorization: "Bearer token",
-        },
+        headers: sessionHeaders,
       }),
     ).resolves.toMatchObject({ statusCode: 200 });
     await expect(
       app.inject({
         method: "POST",
         url: "/api/part-types/part-1/approve",
-        headers: {
-          authorization: "Bearer token",
-        },
+        headers: sessionHeaders,
       }),
     ).resolves.toMatchObject({ statusCode: 200 });
 
@@ -410,7 +405,7 @@ describe("buildServer", () => {
   });
 
   it("maps parse failures and domain failures to structured HTTP errors", async () => {
-    stubPartDbAuthFetch();
+    const authService = makeAuthService();
     const service = {
       getDashboardSummary: vi.fn(() => {
         throw new Error("boom");
@@ -429,6 +424,7 @@ describe("buildServer", () => {
 
     const app = await buildServer({
       configOverride: makeConfig(),
+      authService,
       inventoryService: service as never,
     });
 
@@ -439,9 +435,7 @@ describe("buildServer", () => {
         startNumber: 1001,
         count: 0,
       },
-      headers: {
-        authorization: "Bearer token",
-      },
+      headers: sessionHeaders,
     });
     expect(parseFailure.statusCode).toBe(400);
     expect(parseFailure.json()).toEqual({
@@ -461,9 +455,7 @@ describe("buildServer", () => {
         startNumber: 1001,
         count: 2,
       },
-      headers: {
-        authorization: "Bearer token",
-      },
+      headers: sessionHeaders,
     });
     expect(domainFailure.statusCode).toBe(409);
     expect(domainFailure.json()).toEqual({
@@ -477,9 +469,7 @@ describe("buildServer", () => {
     const invariantFailure = await app.inject({
       method: "GET",
       url: "/api/dashboard",
-      headers: {
-        authorization: "Bearer token",
-      },
+      headers: sessionHeaders,
     });
     expect(invariantFailure.statusCode).toBe(500);
     expect(invariantFailure.json()).toEqual({

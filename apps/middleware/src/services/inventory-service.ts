@@ -186,12 +186,12 @@ export class InventoryService {
     return { batch: persistedBatch, created, skipped };
   }
 
-  async scanCode(code: string, partDbToken: string): Promise<ScanResponse> {
+  async scanCode(code: string): Promise<ScanResponse> {
     const normalized = code.trim();
     const qrRow = this.db
       .prepare(`SELECT * FROM qrcodes WHERE code = ?`)
       .get(normalized) as SqlRow | undefined;
-    const partDb = await this.partDbClient.getLookupSummary(partDbToken);
+    const partDb = await this.partDbClient.getLookupSummary();
 
     if (!qrRow) {
       return {
@@ -608,8 +608,8 @@ export class InventoryService {
     return updated;
   }
 
-  async getPartDbStatus(partDbToken: string): Promise<PartDbConnectionStatus> {
-    return this.partDbClient.getConnectionStatus(partDbToken);
+  async getPartDbStatus(): Promise<PartDbConnectionStatus> {
+    return this.partDbClient.getConnectionStatus();
   }
 
   private resolvePartType(draft: PartTypeDraft): PartType {
