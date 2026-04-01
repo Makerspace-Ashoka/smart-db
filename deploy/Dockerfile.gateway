@@ -1,0 +1,24 @@
+FROM node:24-bookworm-slim AS build
+
+ENV PNPM_HOME="/pnpm"
+ENV PATH="$PNPM_HOME:$PATH"
+
+RUN corepack enable
+
+WORKDIR /workspace
+
+COPY package.json pnpm-lock.yaml pnpm-workspace.yaml tsconfig.base.json ./
+COPY apps/frontend apps/frontend
+COPY packages/contracts packages/contracts
+
+RUN pnpm install --frozen-lockfile --ignore-scripts=false
+
+ARG VITE_API_BASE_URL=""
+ENV VITE_API_BASE_URL="$VITE_API_BASE_URL"
+
+RUN pnpm --filter @smart-db/frontend build
+
+FROM caddy:2.10-alpine
+
+COPY deploy/Caddyfile /etc/caddy/Caddyfile
+COPY --from=build /workspace/apps/frontend/dist /srv

@@ -1,0 +1,9 @@
+[Unit]
+Description=Smart DB backup job
+After=docker.service
+Requires=docker.service
+
+[Service]
+Type=oneshot
+WorkingDirectory=/opt/smart-db/deploy
+ExecStart=/opt/smart-db/deploy/scripts/backup.sh

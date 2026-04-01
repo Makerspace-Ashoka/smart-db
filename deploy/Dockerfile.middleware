@@ -1,0 +1,20 @@
+FROM node:24-bookworm-slim
+
+ENV PNPM_HOME="/pnpm"
+ENV PATH="$PNPM_HOME:$PATH"
+
+RUN corepack enable
+
+WORKDIR /workspace
+
+COPY package.json pnpm-lock.yaml pnpm-workspace.yaml tsconfig.base.json ./
+COPY apps/middleware apps/middleware
+COPY packages/contracts packages/contracts
+
+RUN pnpm install --frozen-lockfile --ignore-scripts=false
+
+ENV NODE_ENV=production
+
+HEALTHCHECK --interval=15s --timeout=5s --start-period=15s --retries=10 CMD ["node", "-e", "fetch('http://127.0.0.1:' + (process.env.PORT || 4000) + '/health').then((response) => process.exit(response.ok ? 0 : 1)).catch(() => process.exit(1))"]
+
+CMD ["pnpm", "--filter", "@smart-db/middleware", "exec", "tsx", "src/index.ts"]

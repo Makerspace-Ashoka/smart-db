@@ -1,0 +1,13 @@
+.git
+.claude
+coverage
+node_modules
+data
+docs
+apps/frontend/dist
+apps/frontend/.vite
+apps/middleware/dist
+packages/contracts/dist
+apps/middleware/.env
+apps/frontend/.env
+*.tsbuildinfo

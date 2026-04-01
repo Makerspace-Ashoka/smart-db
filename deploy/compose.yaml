@@ -1,0 +1,53 @@
+services:
+  gateway:
+    build:
+      context: ..
+      dockerfile: deploy/Dockerfile.gateway
+      args:
+        VITE_API_BASE_URL: ""
+    depends_on:
+      middleware:
+        condition: service_healthy
+      partdb:
+        condition: service_started
+    network_mode: host
+    restart: unless-stopped
+    volumes:
+      - ./state/caddy/data:/data
+      - ./state/caddy/config:/config
+      - ./state/caddy/certs:/certs:ro
+
+  middleware:
+    build:
+      context: ..
+      dockerfile: deploy/Dockerfile.middleware
+    env_file:
+      - ./config/middleware.env
+    environment:
+      NODE_EXTRA_CA_CERTS: /workspace/certs/smart-db-root-ca.crt
+    networks:
+      - smartdb
+    ports:
+      - "127.0.0.1:4000:4000"
+    restart: unless-stopped
+    volumes:
+      - ./state/smartdb/data:/workspace/data
+      - ./state/caddy/certs:/workspace/certs:ro
+
+  partdb:
+    image: jbtronics/part-db1:latest
+    env_file:
+      - ./config/partdb.env
+    networks:
+      - smartdb
+    ports:
+      - "127.0.0.1:8080:80"
+    restart: unless-stopped
+    volumes:
+      - ./state/partdb/uploads:/var/www/html/uploads
+      - ./state/partdb/public-media:/var/www/html/public/media
+      - ./state/partdb/db:/var/www/html/var/db
+
+networks:
+  smartdb:
+    driver: bridge
