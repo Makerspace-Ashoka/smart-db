@@ -378,6 +378,6 @@ describe("E2E: full intake → lifecycle → merge workflow", () => {
       headers: auth,
     });
     expect(logout.statusCode).toBe(200);
-    expect(logout.json()).toEqual({ ok: true });
+    expect(logout.json()).toEqual({ ok: true, redirectUrl: null });
   });
 });

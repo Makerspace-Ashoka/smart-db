@@ -184,7 +184,7 @@ describe("buildServer", () => {
       },
     });
     expect(logout.statusCode).toBe(200);
-    expect(logout.json()).toEqual({ ok: true });
+    expect(logout.json()).toEqual({ ok: true, redirectUrl: null });
 
     await app.close();
   });

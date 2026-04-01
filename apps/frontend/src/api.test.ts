@@ -202,7 +202,7 @@ describe("frontend api", () => {
     await expect(api.getSession()).resolves.toMatchObject({
       username: "labeler",
     });
-    await expect(api.logout()).resolves.toEqual({ ok: true });
+    await expect(api.logout()).resolves.toEqual({ ok: true, redirectUrl: null });
     await expect(api.getDashboard()).resolves.toMatchObject({ partTypeCount: 1 });
     await expect(api.getPartDbStatus()).resolves.toMatchObject({ configured: false });
     await expect(api.getProvisionalPartTypes()).resolves.toEqual([]);

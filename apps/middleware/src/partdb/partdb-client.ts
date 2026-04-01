@@ -36,7 +36,11 @@ export class PartDbClient {
   async authenticate(apiToken: string): Promise<AuthSession> {
     const tokenInfo = await this.getTokenInfo(apiToken, authRetryOptions);
     return {
+      subject: null,
       username: tokenInfo.username,
+      name: null,
+      email: null,
+      roles: [],
       issuedAt: new Date().toISOString(),
       expiresAt: tokenInfo.expiresAt,
     };
