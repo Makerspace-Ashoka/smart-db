@@ -94,6 +94,27 @@ CREATE TABLE IF NOT EXISTS idempotency_keys (
 );
     `,
   },
+  {
+    version: 3,
+    description: "auth sessions",
+    sql: `
+CREATE TABLE IF NOT EXISTS auth_sessions (
+  id TEXT PRIMARY KEY,
+  subject TEXT NOT NULL,
+  username TEXT NOT NULL,
+  display_name TEXT,
+  email TEXT,
+  roles_json TEXT NOT NULL DEFAULT '[]',
+  id_token TEXT,
+  expires_at TEXT NOT NULL,
+  created_at TEXT NOT NULL,
+  last_seen_at TEXT NOT NULL
+);
+
+CREATE INDEX IF NOT EXISTS auth_sessions_expires_at_idx
+  ON auth_sessions (expires_at);
+    `,
+  },
 ];
 
 export function applyMigrations(

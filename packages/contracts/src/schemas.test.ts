@@ -5,6 +5,7 @@ import {
   configEnvironmentSchema,
   loginRequestSchema,
   loginResponseSchema,
+  logoutResponseSchema,
   mergePartTypesRequestSchema,
   recordEventRequestSchema,
   registerQrBatchRequestSchema,
@@ -27,8 +28,16 @@ describe("schemas", () => {
     expect(configEnvironmentSchema.parse({})).toEqual({
       PORT: 4000,
       FRONTEND_ORIGIN: "http://localhost:5173",
+      PUBLIC_BASE_URL: "http://localhost:4000",
       PARTDB_BASE_URL: null,
       PARTDB_PUBLIC_BASE_URL: null,
+      PARTDB_API_TOKEN: null,
+      SESSION_COOKIE_SECRET: null,
+      ZITADEL_ISSUER: null,
+      ZITADEL_CLIENT_ID: null,
+      ZITADEL_CLIENT_SECRET: null,
+      ZITADEL_POST_LOGOUT_REDIRECT_URI: null,
+      ZITADEL_ROLE_CLAIM: null,
     });
   });
 
@@ -172,14 +181,22 @@ describe("schemas", () => {
     expect(
       loginResponseSchema.parse({
         session: {
+          subject: "zitadel-user-1",
           username: "labeler",
+          name: "Labeler User",
+          email: "labeler@example.com",
+          roles: ["smartdb.labeler"],
           issuedAt: "2026-01-01T00:00:00.000Z",
           expiresAt: null,
         },
       }),
     ).toEqual({
       session: {
+        subject: "zitadel-user-1",
         username: "labeler",
+        name: "Labeler User",
+        email: "labeler@example.com",
+        roles: ["smartdb.labeler"],
         issuedAt: "2026-01-01T00:00:00.000Z",
         expiresAt: null,
       },
@@ -203,6 +220,15 @@ describe("schemas", () => {
           source: "partdb",
         },
       },
+    });
+
+    expect(
+      logoutResponseSchema.parse({
+        ok: true,
+      }),
+    ).toEqual({
+      ok: true,
+      redirectUrl: null,
     });
   });
 });

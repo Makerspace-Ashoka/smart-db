@@ -10,10 +10,21 @@ describe("parseConfig", () => {
     expect(parseConfig({})).toEqual({
       port: 4000,
       frontendOrigin: "http://localhost:5173",
+      publicBaseUrl: "http://localhost:4000",
       dataPath: expect.stringMatching(/data\/smart\.db$/),
+      sessionCookieName: "smartdb_session",
       partDb: {
         baseUrl: null,
         publicBaseUrl: null,
+        apiToken: null,
+      },
+      auth: {
+        issuer: null,
+        clientId: null,
+        clientSecret: null,
+        postLogoutRedirectUri: null,
+        roleClaim: null,
+        sessionCookieSecret: null,
       },
     });
   });

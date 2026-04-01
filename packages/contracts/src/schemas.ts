@@ -140,7 +140,11 @@ export const dashboardSummarySchema = z
 
 export const authSessionSchema = z
   .object({
+    subject: nullableLooseString.default(null),
     username: nonEmptyString,
+    name: nullableLooseString.default(null),
+    email: nullableLooseString.default(null),
+    roles: z.array(nonEmptyString).default([]),
     issuedAt: isoTimestampSchema,
     expiresAt: isoTimestampSchema.nullable(),
   })
@@ -161,6 +165,7 @@ export const loginResponseSchema = z
 export const logoutResponseSchema = z
   .object({
     ok: z.literal(true),
+    redirectUrl: nullableLooseString.default(null),
   })
   .strict();
 
@@ -442,9 +447,17 @@ export const configEnvironmentSchema = z
   .object({
     PORT: z.coerce.number().int().positive().default(4000),
     FRONTEND_ORIGIN: nonEmptyString.default("http://localhost:5173"),
+    PUBLIC_BASE_URL: nonEmptyString.default("http://localhost:4000"),
     SMART_DB_DATA_PATH: nonEmptyString.optional(),
     PARTDB_BASE_URL: nullableString.nullish().transform((value) => value ?? null).default(null),
     PARTDB_PUBLIC_BASE_URL: nullableString.nullish().transform((value) => value ?? null).default(null),
+    PARTDB_API_TOKEN: nullableString.nullish().transform((value) => value ?? null).default(null),
+    SESSION_COOKIE_SECRET: nullableString.nullish().transform((value) => value ?? null).default(null),
+    ZITADEL_ISSUER: nullableString.nullish().transform((value) => value ?? null).default(null),
+    ZITADEL_CLIENT_ID: nullableString.nullish().transform((value) => value ?? null).default(null),
+    ZITADEL_CLIENT_SECRET: nullableString.nullish().transform((value) => value ?? null).default(null),
+    ZITADEL_POST_LOGOUT_REDIRECT_URI: nullableString.nullish().transform((value) => value ?? null).default(null),
+    ZITADEL_ROLE_CLAIM: nullableString.nullish().transform((value) => value ?? null).default(null),
   })
   .strict();
 

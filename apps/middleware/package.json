@@ -9,9 +9,11 @@
     "typecheck": "tsc -p tsconfig.json --noEmit"
   },
   "dependencies": {
+    "@fastify/cookie": "^11.0.2",
     "@fastify/cors": "^11.1.0",
     "@smart-db/contracts": "workspace:*",
-    "fastify": "^5.2.1"
+    "fastify": "^5.2.1",
+    "jose": "^6.0.12"
   },
   "devDependencies": {
     "@types/node": "^24.0.0",
@@ -19,4 +21,3 @@
     "typescript": "^5.8.3"
   }
 }
-

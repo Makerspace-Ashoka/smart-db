@@ -29,6 +29,7 @@ describe("applyMigrations", () => {
     expect(versions).toHaveLength(migrations.length);
     expect(versions[0]).toMatchObject({ version: 1, description: "baseline schema" });
     expect(versions[1]).toMatchObject({ version: 2, description: "version columns and idempotency keys" });
+    expect(versions[2]).toMatchObject({ version: 3, description: "auth sessions" });
   });
 
   it("skips already-applied migrations on subsequent runs", () => {
@@ -59,6 +60,7 @@ describe("applyMigrations", () => {
     expect(tableNames).toContain("physical_instances");
     expect(tableNames).toContain("bulk_stocks");
     expect(tableNames).toContain("stock_events");
+    expect(tableNames).toContain("auth_sessions");
     expect(tableNames).toContain("schema_version");
   });
 
@@ -82,6 +84,36 @@ describe("applyMigrations", () => {
       name: string;
     }[];
     expect(bulkCols.map((c) => c.name)).toContain("version");
+  });
+
+  it("creates the auth_sessions table in v3", () => {
+    const db = makeDb();
+    applyMigrations(db);
+
+    const tables = db
+      .prepare(
+        `SELECT name FROM sqlite_master WHERE type = 'table' AND name = 'auth_sessions'`,
+      )
+      .all() as { name: string }[];
+    expect(tables).toHaveLength(1);
+
+    const sessionCols = db.prepare(`PRAGMA table_info(auth_sessions)`).all() as {
+      name: string;
+    }[];
+    expect(sessionCols.map((column) => column.name)).toEqual(
+      expect.arrayContaining([
+        "id",
+        "subject",
+        "username",
+        "display_name",
+        "email",
+        "roles_json",
+        "id_token",
+        "expires_at",
+        "created_at",
+        "last_seen_at",
+      ]),
+    );
   });
 
   it("rolls back a failed migration without advancing the version", () => {
