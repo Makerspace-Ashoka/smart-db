@@ -6,4 +6,5 @@ Requires=docker.service
 [Service]
 Type=oneshot
 WorkingDirectory=/opt/smart-db/deploy
+UMask=0077
 ExecStart=/opt/smart-db/deploy/scripts/backup.sh

@@ -1,6 +1,7 @@
 #!/usr/bin/env bash
 
 set -euo pipefail
+umask 077
 
 deploy_dir="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 backup_root="${deploy_dir}/backups"
@@ -14,7 +15,7 @@ partdb_media_dir="${deploy_dir}/state/partdb/public-media"
 caddy_certs_dir="${deploy_dir}/state/caddy/certs"
 config_dir="${deploy_dir}/config"
 
-mkdir -p "${target_dir}"
+install -d -m 700 "${target_dir}"
 
 if [ -f "${smart_db_dir}/smart.db" ]; then
   sqlite3 "${smart_db_dir}/smart.db" ".backup '${target_dir}/smart.db'"

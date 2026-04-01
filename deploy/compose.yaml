@@ -15,7 +15,8 @@ services:
     volumes:
       - ./state/caddy/data:/data
       - ./state/caddy/config:/config
-      - ./state/caddy/certs:/certs:ro
+      - ./state/caddy/certs/server.crt:/certs/server.crt:ro
+      - ./state/caddy/certs/server.key:/certs/server.key:ro
 
   middleware:
     build:
@@ -32,7 +33,7 @@ services:
     restart: unless-stopped
     volumes:
       - ./state/smartdb/data:/workspace/data
-      - ./state/caddy/certs:/workspace/certs:ro
+      - ./state/caddy/certs/smart-db-root-ca.crt:/workspace/certs/smart-db-root-ca.crt:ro
 
   partdb:
     image: jbtronics/part-db1:latest
