@@ -32,7 +32,7 @@ import {
   type StockEvent,
 } from "@smart-db/contracts";
 
-const apiBaseUrl = import.meta.env.VITE_API_BASE_URL ?? "http://localhost:4000";
+const configuredApiBaseUrl = (import.meta.env.VITE_API_BASE_URL ?? "").trim();
 
 export class ApiClientError extends Error {
   constructor(
@@ -57,7 +57,7 @@ async function request<TSchema extends z.ZodTypeAny>(
   const combinedSignal = init?.signal
     ? AbortSignal.any([init.signal, timeoutSignal])
     : timeoutSignal;
-  const response = await fetch(`${apiBaseUrl}${path}`, {
+  const response = await fetch(apiUrl(path), {
     credentials: "include",
     headers: {
       "Content-Type": "application/json",
@@ -88,7 +88,7 @@ async function request<TSchema extends z.ZodTypeAny>(
 }
 
 export function loginUrl(returnTo: string): string {
-  const url = new URL("/api/auth/login", apiBaseUrl);
+  const url = new URL(apiUrl("/api/auth/login"), currentOrigin());
   url.searchParams.set("returnTo", returnTo);
   return url.toString();
 }
@@ -194,5 +194,13 @@ export const api = {
 };
 
 export function qrBatchLabelsPdfUrl(batchId: string): string {
-  return `${apiBaseUrl}/api/qr-batches/${encodeURIComponent(batchId)}/labels.pdf`;
+  return apiUrl(`/api/qr-batches/${encodeURIComponent(batchId)}/labels.pdf`);
+}
+
+function apiUrl(path: string): string {
+  return configuredApiBaseUrl ? `${configuredApiBaseUrl}${path}` : path;
+}
+
+function currentOrigin(): string {
+  return typeof window === "undefined" ? "http://localhost" : window.location.origin;
 }

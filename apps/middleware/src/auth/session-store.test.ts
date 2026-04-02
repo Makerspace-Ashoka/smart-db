@@ -24,7 +24,7 @@ describe("SessionStore", () => {
       name: "Labeler User",
       email: "labeler@example.com",
       roles: ["smartdb.labeler", "smartdb.labeler", "smartdb.viewer"],
-      expiresAt: "2026-04-02T00:00:00.000Z",
+      expiresAt: "2030-04-02T00:00:00.000Z",
       idToken: "id-token",
     });
 
@@ -37,7 +37,7 @@ describe("SessionStore", () => {
         email: "labeler@example.com",
         roles: ["smartdb.labeler", "smartdb.viewer"],
         issuedAt: expect.any(String),
-        expiresAt: "2026-04-02T00:00:00.000Z",
+        expiresAt: "2030-04-02T00:00:00.000Z",
       },
       idToken: "id-token",
     });

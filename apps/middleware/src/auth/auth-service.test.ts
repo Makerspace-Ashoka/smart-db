@@ -95,7 +95,7 @@ describe("AuthService", () => {
       email: "labeler@example.com",
       roles: ["smartdb.labeler"],
       idToken: "id-token",
-      expiresAt: "2026-04-02T00:00:00.000Z",
+      expiresAt: "2030-04-02T00:00:00.000Z",
     }));
     const service = new AuthService(
       {
@@ -166,7 +166,7 @@ describe("AuthService", () => {
       name: null,
       email: null,
       roles: [],
-      expiresAt: "2026-04-02T00:00:00.000Z",
+      expiresAt: "2030-04-02T00:00:00.000Z",
       idToken: "id-token",
     });
 

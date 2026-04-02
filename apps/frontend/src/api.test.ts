@@ -323,7 +323,7 @@ describe("frontend api", () => {
 
   it("builds a Zitadel login URL and leaves legacy token helpers inert", () => {
     expect(loginUrl("https://smartdb.example.com/app")).toBe(
-      `${import.meta.env.VITE_API_BASE_URL ?? "http://localhost:4000"}/api/auth/login?returnTo=${encodeURIComponent("https://smartdb.example.com/app")}`,
+      `${(import.meta.env.VITE_API_BASE_URL ?? "").trim() || window.location.origin}/api/auth/login?returnTo=${encodeURIComponent("https://smartdb.example.com/app")}`,
     );
     setSessionToken("token-xyz");
     expect(hydrateSessionToken()).toBeNull();
@@ -333,7 +333,7 @@ describe("frontend api", () => {
 
   it("builds qr batch pdf URLs", () => {
     expect(qrBatchLabelsPdfUrl("batch-123")).toBe(
-      `${import.meta.env.VITE_API_BASE_URL ?? "http://localhost:4000"}/api/qr-batches/batch-123/labels.pdf`,
+      `${(import.meta.env.VITE_API_BASE_URL ?? "").trim() || ""}/api/qr-batches/batch-123/labels.pdf`,
     );
   });
 
