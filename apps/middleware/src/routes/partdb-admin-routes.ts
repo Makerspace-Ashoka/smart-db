@@ -41,6 +41,7 @@ export async function registerPartDbAdminRoutes(
           targetRowId: row.targetRowId,
           attemptCount: row.attemptCount,
           nextAttemptAt: row.nextAttemptAt,
+          lastFailureAt: row.lastFailureAt,
           lastError: row.lastErrorJson ? JSON.parse(row.lastErrorJson) : null,
           createdAt: row.createdAt,
         },

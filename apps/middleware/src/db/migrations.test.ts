@@ -32,6 +32,7 @@ describe("applyMigrations", () => {
     expect(versions[2]).toMatchObject({ version: 3, description: "auth sessions" });
     expect(versions[3]).toMatchObject({ version: 4, description: "partdb sync model foundations" });
     expect(versions[4]).toMatchObject({ version: 5, description: "partdb outbox" });
+    expect(versions[5]).toMatchObject({ version: 6, description: "partdb outbox failure timestamps" });
   });
 
   it("skips already-applied migrations on subsequent runs", () => {
@@ -178,6 +179,7 @@ describe("applyMigrations", () => {
         "lease_expires_at",
         "next_attempt_at",
         "last_error_json",
+        "last_failure_at",
         "response_json",
         "response_iri",
         "created_at",

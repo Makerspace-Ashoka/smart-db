@@ -1,4 +1,4 @@
-import type { z } from "zod";
+import { z } from "zod";
 import {
   applicationErrorResponseSchema,
   assignQrRequestSchema,
@@ -10,6 +10,9 @@ import {
   mergePartTypesRequestSchema,
   parseWithSchema,
   partDbConnectionStatusSchema,
+  partDbSyncDrainResponseSchema,
+  partDbSyncFailureSchema,
+  partDbSyncStatusResponseSchema,
   partTypeSchema,
   qrCodeSchema,
   recordEventRequestSchema,
@@ -24,6 +27,9 @@ import {
   type LogoutResponse,
   type MergePartTypesRequest,
   type PartDbConnectionStatus,
+  type PartDbSyncDrainResponse,
+  type PartDbSyncFailure,
+  type PartDbSyncStatusResponse,
   type PartType,
   type RecordEventRequest,
   type RegisterQrBatchRequest,
@@ -120,6 +126,26 @@ export const api = {
   },
   getPartDbStatus(): Promise<PartDbConnectionStatus> {
     return request(partDbConnectionStatusSchema, "/api/partdb/status");
+  },
+  getPartDbSyncStatus(): Promise<PartDbSyncStatusResponse> {
+    return request(partDbSyncStatusResponseSchema, "/api/partdb/sync/status");
+  },
+  getPartDbSyncFailures(): Promise<PartDbSyncFailure[]> {
+    return request(partDbSyncFailureSchema.array(), "/api/partdb/sync/failures");
+  },
+  drainPartDbSync(): Promise<PartDbSyncDrainResponse> {
+    return request(partDbSyncDrainResponseSchema, "/api/partdb/sync/drain", {
+      method: "POST",
+      body: JSON.stringify({}),
+      headers: idempotencyHeaders(),
+    });
+  },
+  async retryPartDbSync(id: string): Promise<void> {
+    await request(z.object({ ok: z.literal(true) }).strict(), `/api/partdb/sync/retry/${encodeURIComponent(id)}`, {
+      method: "POST",
+      body: JSON.stringify({}),
+      headers: idempotencyHeaders(),
+    });
   },
   getLatestQrBatch(): Promise<LatestQrBatchResponse> {
     return request(latestQrBatchResponseSchema, "/api/qr-batches/latest");

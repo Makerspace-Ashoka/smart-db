@@ -3,6 +3,7 @@ import type { DatabaseSync } from "node:sqlite";
 import {
   bulkLevels,
   bulkStockSchema,
+  categoryLeafFromPath,
   ConflictError,
   InvariantError,
   instanceStatuses,
@@ -28,6 +29,7 @@ import {
   NotFoundError,
   partTypeSchema as persistedPartTypeSchema,
   physicalInstanceSchema,
+  parseCategoryPathInput,
   qrCodeSchema,
   stockEventSchema,
   getAvailableInstanceActions,
@@ -91,6 +93,12 @@ export class InventoryService {
         .map((row) => mapPartType(row as SqlRow));
     }
 
+    const categoryPathPattern = `%${normalized
+      .split("/")
+      .map((segment) => segment.trim())
+      .filter(Boolean)
+      .join("%")}%`;
+
     const rows = this.db
       .prepare(
         `
@@ -98,12 +106,13 @@ export class InventoryService {
         FROM part_types
         WHERE lower(canonical_name) LIKE ?
           OR lower(category) LIKE ?
+          OR lower(category_path_json) LIKE ?
           OR lower(aliases_json) LIKE ?
         ORDER BY needs_review DESC, updated_at DESC
         LIMIT 20
         `,
       )
-      .all(`%${normalized}%`, `%${normalized}%`, `%${normalized}%`);
+      .all(`%${normalized}%`, `%${normalized}%`, categoryPathPattern, `%${normalized}%`);
 
     return rows.map((row) => mapPartType(row as SqlRow));
   }
@@ -763,14 +772,22 @@ export class InventoryService {
     }
 
     const canonicalName = draft.canonicalName;
-    const category = draft.category;
+    const categoryPath = parseCategoryPathInput(draft.category);
+    if (!categoryPath.ok) {
+      throw new InvariantError("Parsed part type category path is invalid.", {
+        category: draft.category,
+        reason: categoryPath.error,
+      });
+    }
+
+    const category = categoryLeafFromPath(categoryPath.value);
     const countable = draft.countable;
     const timestamp = nowIso();
     const partType: PartType = {
       id: randomUUID(),
       canonicalName,
       category,
-      categoryPath: [category],
+      categoryPath: categoryPath.value,
       aliases: uniqueAliases(draft.aliases),
       imageUrl: draft.imageUrl,
       notes: draft.notes,

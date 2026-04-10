@@ -67,6 +67,56 @@ function dbRows(db: ReturnType<typeof createDatabase>) {
 }
 
 describe("InventoryService", () => {
+  it("parses slash-delimited category paths into canonical leaf and hierarchy", () => {
+    const { db, service, outbox } = makeService({ withOutbox: true });
+    if (!outbox) {
+      throw new Error("outbox was not created");
+    }
+
+    service.registerQrBatch({
+      actor: "lab-admin",
+      prefix: "CAT",
+      startNumber: 1,
+      count: 1,
+    });
+
+    service.assignQr({
+      qrCode: "CAT-1",
+      actor: "labeler",
+      entityKind: "instance",
+      location: "Shelf A",
+      notes: null,
+      partType: {
+        kind: "new",
+        canonicalName: "10k Resistor",
+        category: "Electronics/Resistors/SMD 0603",
+        aliases: [],
+        notes: null,
+        imageUrl: null,
+        countable: true,
+      },
+      initialStatus: "available",
+    });
+
+    const [createdPart] = service.searchPartTypes("10k Resistor");
+    expect(createdPart).toMatchObject({
+      canonicalName: "10k Resistor",
+      category: "SMD 0603",
+      categoryPath: ["Electronics", "Resistors", "SMD 0603"],
+    });
+
+    const partRow = dbRows(db).find((row) => row.operation === "create_part");
+    expect(partRow).toBeDefined();
+    expect(
+      partRow ? outbox.hydrateOperation(outbox.getById(partRow.id)!) : null,
+    ).toMatchObject({
+      kind: "create_part",
+      payload: {
+        categoryPath: ["Electronics", "Resistors", "SMD 0603"],
+      },
+    });
+  });
+
   it("enqueues part and lot sync work when assigning a new part type", () => {
     const { db, service, outbox } = makeService({ withOutbox: true });
     if (!outbox) {

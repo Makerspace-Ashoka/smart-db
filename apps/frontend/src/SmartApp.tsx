@@ -7,6 +7,8 @@ import type {
   InstanceStatus,
   QrBatch,
   PartDbConnectionStatus,
+  PartDbSyncFailure,
+  PartDbSyncStatusResponse,
   PartType,
   RegisterQrBatchRequest,
   ScanResponse,
@@ -43,7 +45,7 @@ import {
   type EventFormState,
 } from "./SmartApp.helpers";
 
-type PendingAction = "login" | "logout" | "batch" | "scan" | "assign" | "event" | "merge" | null;
+type PendingAction = "login" | "logout" | "batch" | "scan" | "assign" | "event" | "merge" | "sync" | null;
 
 type AuthState =
   | {
@@ -114,6 +116,8 @@ export default function SmartApp() {
   });
   const [dashboard, setDashboard] = useState<DashboardSummary | null>(null);
   const [partDbStatus, setPartDbStatus] = useState<PartDbConnectionStatus | null>(null);
+  const [partDbSyncStatus, setPartDbSyncStatus] = useState<PartDbSyncStatusResponse | null>(null);
+  const [partDbSyncFailures, setPartDbSyncFailures] = useState<PartDbSyncFailure[]>([]);
   const [latestBatch, setLatestBatch] = useState<QrBatch | null>(null);
   const [catalogSuggestions, setCatalogSuggestions] = useState<PartType[]>([]);
   const [provisionalPartTypes, setProvisionalPartTypes] = useState<PartType[]>([]);
@@ -211,6 +215,8 @@ export default function SmartApp() {
   function resetAuthenticatedView(): void {
     setDashboard(null);
     setPartDbStatus(null);
+    setPartDbSyncStatus(null);
+    setPartDbSyncFailures([]);
     setLatestBatch(null);
     setCatalogSuggestions([]);
     setProvisionalPartTypes([]);
@@ -258,16 +264,18 @@ export default function SmartApp() {
     const canAccessAdmin =
       activeSession !== null && hasSmartDbRole(activeSession.roles, smartDbRoles.admin);
 
-    const [dashboardResult, partDbResult, provisionalResult, partTypesResult, latestBatchResult] =
+    const [dashboardResult, partDbResult, syncStatusResult, syncFailuresResult, provisionalResult, partTypesResult, latestBatchResult] =
       await Promise.allSettled([
         api.getDashboard(),
         api.getPartDbStatus(),
+        canAccessAdmin ? api.getPartDbSyncStatus() : Promise.resolve(null),
+        canAccessAdmin ? api.getPartDbSyncFailures() : Promise.resolve([]),
         canAccessAdmin ? api.getProvisionalPartTypes() : Promise.resolve([]),
         api.searchPartTypes(""),
         canAccessAdmin ? api.getLatestQrBatch() : Promise.resolve(null),
       ]);
 
-    for (const result of [dashboardResult, partDbResult, provisionalResult, partTypesResult, latestBatchResult]) {
+    for (const result of [dashboardResult, partDbResult, syncStatusResult, syncFailuresResult, provisionalResult, partTypesResult, latestBatchResult]) {
       if (result.status === "rejected" && handleApiFailure(result.reason)) {
         return;
       }
@@ -281,6 +289,14 @@ export default function SmartApp() {
 
     if (partDbResult.status === "fulfilled") {
       setPartDbStatus(partDbResult.value);
+    }
+
+    if (syncStatusResult.status === "fulfilled") {
+      setPartDbSyncStatus(syncStatusResult.value);
+    }
+
+    if (syncFailuresResult.status === "fulfilled") {
+      setPartDbSyncFailures(syncFailuresResult.value);
     }
 
     if (latestBatchResult.status === "fulfilled") {
@@ -546,6 +562,36 @@ export default function SmartApp() {
     }
   }
 
+  async function handleDrainPartDbSync(): Promise<void> {
+    setPendingAction("sync");
+    try {
+      const result = await api.drainPartDbSync();
+      addToast(`Sync drained: ${result.delivered} delivered, ${result.failed} failed.`, "success");
+      await loadAuthenticatedData();
+    } catch (caught) {
+      if (!handleApiFailure(caught)) {
+        addToast(errorMessage(caught), "error");
+      }
+    } finally {
+      setPendingAction(null);
+    }
+  }
+
+  async function handleRetryPartDbSync(id: string): Promise<void> {
+    setPendingAction("sync");
+    try {
+      await api.retryPartDbSync(id);
+      addToast("Queued sync retry.", "success");
+      await loadAuthenticatedData();
+    } catch (caught) {
+      if (!handleApiFailure(caught)) {
+        addToast(errorMessage(caught), "error");
+      }
+    } finally {
+      setPendingAction(null);
+    }
+  }
+
   async function handleScan(event: FormEvent<HTMLFormElement>): Promise<void> {
     event.preventDefault();
     await performScan(scanCode);
@@ -718,6 +764,8 @@ export default function SmartApp() {
       : hasInProgressScanWork(scanResult, assignForm, labelSearch.query, eventForm)
         ? "Finish or clear the current scan form before scanning another item."
         : null;
+  const partDbHealth = getPartDbHealthPill(partDbStatus);
+  const partDbSync = isAdmin ? getPartDbSyncPill(partDbSyncStatus) : null;
 
   usePolling(
     () => void loadAuthenticatedData(),
@@ -781,9 +829,8 @@ export default function SmartApp() {
       <header className="header-bar">
         <strong className="header-brand">Smart DB</strong>
         <div className="header-status">
-          <div className={`pill ${partDbStatus?.connected ? "ok" : "warn"}`}>
-            {partDbStatus?.connected ? "Part-DB linked" : "Part-DB degraded"}
-          </div>
+          <div className={`pill ${partDbHealth.tone}`}>{partDbHealth.label}</div>
+          {partDbSync ? <div className={`pill ${partDbSync.tone}`}>{partDbSync.label}</div> : null}
           {authState.session.expiresAt ? (
             <small>Token/session expires at {authState.session.expiresAt}</small>
           ) : null}
@@ -860,6 +907,10 @@ export default function SmartApp() {
               latestBatch={latestBatch}
               isDownloadingLabels={downloadingBatchId === latestBatch?.id}
               onDownloadLabels={() => void handleDownloadLatestBatchLabels()}
+              partDbSyncStatus={partDbSyncStatus}
+              partDbSyncFailures={partDbSyncFailures}
+              onDrainSync={() => void handleDrainPartDbSync()}
+              onRetrySync={(id) => void handleRetryPartDbSync(id)}
               provisionalPartTypes={provisionalPartTypes}
               mergeSourceId={mergeSourceId}
               onMergeSourceIdChange={setMergeSourceId}
@@ -881,6 +932,46 @@ export default function SmartApp() {
       />
     </div>
   );
+}
+
+function getPartDbHealthPill(
+  status: PartDbConnectionStatus | null,
+): { tone: "ok" | "warn" | "info"; label: string } {
+  if (status === null) {
+    return { tone: "info", label: "Checking Part-DB" };
+  }
+
+  if (status.connected) {
+    return { tone: "ok", label: "Part-DB linked" };
+  }
+
+  return { tone: "warn", label: "Part-DB degraded" };
+}
+
+function getPartDbSyncPill(
+  status: PartDbSyncStatusResponse | null,
+): { tone: "ok" | "warn" | "info"; label: string } | null {
+  if (status === null) {
+    return { tone: "info", label: "Checking sync" };
+  }
+
+  if (!status.enabled) {
+    return { tone: "info", label: "Sync disabled" };
+  }
+
+  if (status.deadTotal > 0) {
+    return { tone: "warn", label: "Sync dead letters" };
+  }
+
+  if (status.failedLast24h > 0) {
+    return { tone: "warn", label: "Sync needs retry" };
+  }
+
+  if (status.pending > 0 || status.inFlight > 0) {
+    return { tone: "info", label: `Syncing ${status.pending + status.inFlight}` };
+  }
+
+  return { tone: "ok", label: "Sync idle" };
 }
 
 function consumeAuthError(): string | null {

@@ -88,7 +88,7 @@ export class PartDbOutboxWorker {
   ): Promise<Result<void, PartDbError>> {
     const hydrated = this.hydrateOperation(row);
     if (!hydrated.ok) {
-      this.outbox.markFailed(row.id, hydrated.error, "dead");
+      this.outbox.markFailed(row.id, hydrated.error, "dead", null, nowIso);
       return hydrated;
     }
 
@@ -103,9 +103,15 @@ export class PartDbOutboxWorker {
         Date.parse(nowIso) + retryBackoffMs(row.attemptCount),
       ).toISOString();
       const status = row.attemptCount >= row.maxAttempts ? "dead" : "failed";
-      this.outbox.markFailed(row.id, executed.error, status, status === "dead" ? null : nextAttemptAt);
+      this.outbox.markFailed(
+        row.id,
+        executed.error,
+        status,
+        status === "dead" ? null : nextAttemptAt,
+        nowIso,
+      );
     } else {
-      this.outbox.markFailed(row.id, executed.error, "dead");
+      this.outbox.markFailed(row.id, executed.error, "dead", null, nowIso);
     }
 
     return Err(executed.error);

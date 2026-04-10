@@ -109,11 +109,18 @@ describe("PartDbOutbox", () => {
       "corr-3",
     );
 
-    outbox.markFailed(id, { kind: "network", message: "reset" }, "failed", "2026-01-02T00:00:00.000Z");
+    outbox.markFailed(
+      id,
+      { kind: "network", message: "reset" },
+      "failed",
+      "2026-01-02T00:00:00.000Z",
+      "2026-01-01T23:59:30.000Z",
+    );
     let row = outbox.getById(id);
     expect(row).toMatchObject({
       status: "failed",
       nextAttemptAt: "2026-01-02T00:00:00.000Z",
+      lastFailureAt: "2026-01-01T23:59:30.000Z",
     });
 
     outbox.markDelivered(id, { iri: "/api/storage_locations/5", body: { id: 5 } }, "2026-01-02T00:00:01.000Z");

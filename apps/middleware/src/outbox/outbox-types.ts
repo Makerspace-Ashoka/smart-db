@@ -95,6 +95,7 @@ export interface OutboxRow {
   leaseExpiresAt: string | null;
   nextAttemptAt: string;
   lastErrorJson: string | null;
+  lastFailureAt: string | null;
   responseJson: string | null;
   responseIri: string | null;
   createdAt: string;

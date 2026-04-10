@@ -4,6 +4,9 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 import type {
   DashboardSummary,
   PartDbConnectionStatus,
+  PartDbSyncDrainResponse,
+  PartDbSyncFailure,
+  PartDbSyncStatusResponse,
   PartType,
   QrBatch,
   ScanResponse,
@@ -18,6 +21,8 @@ const apiMock = vi.hoisted(() => ({
   clearSessionToken: vi.fn(),
   getDashboard: vi.fn(),
   getPartDbStatus: vi.fn(),
+  getPartDbSyncStatus: vi.fn(),
+  getPartDbSyncFailures: vi.fn(),
   getLatestQrBatch: vi.fn(),
   getProvisionalPartTypes: vi.fn(),
   searchPartTypes: vi.fn(),
@@ -28,6 +33,8 @@ const apiMock = vi.hoisted(() => ({
   mergePartTypes: vi.fn(),
   voidQr: vi.fn(),
   approvePartType: vi.fn(),
+  drainPartDbSync: vi.fn(),
+  retryPartDbSync: vi.fn(),
 }));
 
 vi.mock("./api", () => ({
@@ -87,16 +94,35 @@ const partDbStatus: PartDbConnectionStatus = {
   },
 };
 
+const partDbSyncStatus: PartDbSyncStatusResponse = {
+  enabled: false,
+  pending: 0,
+  inFlight: 0,
+  failedLast24h: 0,
+  deadTotal: 0,
+};
+
+const partDbSyncFailures: PartDbSyncFailure[] = [];
+
 const partType: PartType = {
   id: "part-1",
   canonicalName: "Arduino Uno R3",
   category: "Microcontrollers",
+  categoryPath: ["Electronics", "Microcontrollers"],
   aliases: ["uno r3"],
   imageUrl: null,
   notes: null,
   countable: true,
+  unit: {
+    symbol: "pcs",
+    name: "Pieces",
+    isInteger: true,
+  },
   needsReview: true,
   partDbPartId: null,
+  partDbCategoryId: null,
+  partDbUnitId: null,
+  partDbSyncStatus: "never",
   createdAt: "2026-01-01T00:00:00.000Z",
   updatedAt: "2026-01-01T00:00:00.000Z",
 };
@@ -106,6 +132,7 @@ const bulkType: PartType = {
   id: "part-2",
   canonicalName: "M3 Screw",
   category: "Fasteners",
+  categoryPath: ["Hardware", "Fasteners"],
   countable: false,
 };
 
@@ -136,6 +163,8 @@ beforeEach(() => {
   apiMock.logout.mockResolvedValue({ ok: true, redirectUrl: null });
   apiMock.getDashboard.mockResolvedValue(dashboard);
   apiMock.getPartDbStatus.mockResolvedValue(partDbStatus);
+  apiMock.getPartDbSyncStatus.mockResolvedValue(partDbSyncStatus);
+  apiMock.getPartDbSyncFailures.mockResolvedValue(partDbSyncFailures);
   apiMock.getLatestQrBatch.mockResolvedValue(latestBatch);
   apiMock.getProvisionalPartTypes.mockResolvedValue([partType]);
   apiMock.searchPartTypes.mockResolvedValue([partType]);
@@ -188,6 +217,12 @@ beforeEach(() => {
     ...partType,
     needsReview: false,
   });
+  apiMock.drainPartDbSync.mockResolvedValue({
+    claimed: 0,
+    delivered: 0,
+    failed: 0,
+  } satisfies PartDbSyncDrainResponse);
+  apiMock.retryPartDbSync.mockResolvedValue(undefined);
 });
 
 function deferred<T>() {
@@ -243,6 +278,52 @@ describe("App", () => {
     expect(screen.queryByRole("button", { name: "Admin" })).not.toBeInTheDocument();
     expect(apiMock.getProvisionalPartTypes).not.toHaveBeenCalled();
     expect(apiMock.getLatestQrBatch).not.toHaveBeenCalled();
+  });
+
+  it("shows sync health in the header and humanized failures in the admin tab", async () => {
+    const user = userEvent.setup();
+    apiMock.getPartDbStatus.mockResolvedValueOnce({
+      ...partDbStatus,
+      configured: true,
+      connected: true,
+      baseUrl: "https://partdb.example.com",
+      message: "Connected.",
+    });
+    apiMock.getPartDbSyncStatus.mockResolvedValueOnce({
+      enabled: true,
+      pending: 1,
+      inFlight: 1,
+      failedLast24h: 1,
+      deadTotal: 0,
+    });
+    apiMock.getPartDbSyncFailures.mockResolvedValueOnce([
+      {
+        id: "sync-1",
+        operation: "create_part",
+        status: "failed",
+        targetTable: "part_types",
+        targetRowId: "part-1",
+        attemptCount: 2,
+        nextAttemptAt: "2026-01-01T00:01:00.000Z",
+        lastFailureAt: "2026-01-01T00:00:30.000Z",
+        lastError: {
+          kind: "validation",
+          violations: [{ propertyPath: "name", message: "This value is already used." }],
+        },
+        createdAt: "2026-01-01T00:00:00.000Z",
+      },
+    ] satisfies PartDbSyncFailure[]);
+
+    render(<SmartApp />);
+
+    expect(await screen.findByText("Part-DB linked")).toBeInTheDocument();
+    expect(await screen.findByText("Sync needs retry")).toBeInTheDocument();
+
+    await user.click(screen.getByRole("tab", { name: "Admin" }));
+
+    expect(await screen.findByText("Part-DB rejected the payload: name This value is already used.")).toBeInTheDocument();
+    await user.click(screen.getByRole("button", { name: "Retry sync" }));
+    expect(apiMock.retryPartDbSync).toHaveBeenCalledWith("sync-1");
   });
 
   it("surfaces session-restore failures and stays on the login shell", async () => {

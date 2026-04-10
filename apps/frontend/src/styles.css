@@ -125,6 +125,11 @@ h1 {
   color: #8a5312;
 }
 
+.pill.info {
+  background: #d9e7f6;
+  color: #21476a;
+}
+
 .banner {
   border-radius: 1rem;
   padding: 0.9rem 1rem;
@@ -259,6 +264,38 @@ button {
 .muted-copy {
   margin: 0.2rem 0 0;
   color: #5f6774;
+}
+
+.sync-status-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(120px, 1fr));
+  gap: 0.75rem;
+  margin-bottom: 1rem;
+}
+
+.sync-status-card {
+  border: 1px solid rgba(19, 32, 51, 0.08);
+  border-radius: 0.85rem;
+  padding: 0.85rem;
+  background: rgba(255, 255, 255, 0.7);
+  display: grid;
+  gap: 0.3rem;
+}
+
+.sync-status-card strong {
+  font-size: 0.82rem;
+  color: #5f6774;
+  text-transform: uppercase;
+  letter-spacing: 0.08em;
+}
+
+.sync-status-card span {
+  font-size: 1.5rem;
+  color: #132033;
+}
+
+.sync-actions {
+  margin-bottom: 1rem;
 }
 
 .picker {
@@ -470,6 +507,7 @@ button {
   gap: 0.75rem;
   flex: 1;
   justify-content: center;
+  flex-wrap: wrap;
 }
 
 .header-status .pill {

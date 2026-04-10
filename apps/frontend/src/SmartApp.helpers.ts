@@ -3,10 +3,15 @@ import type {
   BulkLevel,
   InstanceStatus,
   InventoryTargetKind,
+  PartDbSyncFailure,
   RecordEventRequest,
   StockEventKind,
 } from "@smart-db/contracts";
-import { InvariantError } from "@smart-db/contracts";
+import {
+  InvariantError,
+  describeCategoryPathParseError,
+  parseCategoryPathInput,
+} from "@smart-db/contracts";
 import { ApiClientError } from "./api";
 
 export type AssignFormState = {
@@ -56,8 +61,9 @@ export function getAssignFormIssues(form: AssignFormState): AssignFormIssues {
     issues.canonicalName = "Name the new part type.";
   }
 
-  if (!form.category.trim()) {
-    issues.category = "Category is required for a new part type.";
+  const categoryPath = parseCategoryPathInput(form.category);
+  if (!categoryPath.ok) {
+    issues.category = describeCategoryPathParseError(categoryPath.error);
   }
 
   return issues;
@@ -211,6 +217,10 @@ export function normalizeNullable(value: string): string | null {
   return trimmed ? trimmed : null;
 }
 
+export function formatCategoryPath(path: string[]): string {
+  return path.join(" / ");
+}
+
 export function narrowInstanceEvent(
   event: StockEventKind,
 ): Extract<
@@ -285,6 +295,60 @@ export function formatTimestamp(isoTimestamp: string): string {
   }).format(parsed);
 }
 
+export function describePartDbSyncFailure(failure: PartDbSyncFailure): string {
+  const error = failure.lastError;
+  if (!error) {
+    return "Background sync failed.";
+  }
+
+  const kind = stringField(error.kind);
+  switch (kind) {
+    case "network":
+      return `Network error: ${stringField(error.message) ?? "connection reset"}.`;
+    case "timeout": {
+      const timeoutMs = numberField(error.timeoutMs);
+      return timeoutMs === null
+        ? "Part-DB did not respond before the request timed out."
+        : `Part-DB did not respond before ${timeoutMs}ms.`;
+    }
+    case "unauthorized":
+      return "Part-DB rejected the configured token.";
+    case "forbidden":
+      return "The Part-DB token does not have write permission.";
+    case "not_found":
+      return `${stringField(error.resource) ?? "Resource"} '${stringField(error.identifier) ?? "unknown"}' was not found in Part-DB.`;
+    case "validation": {
+      const violations = Array.isArray(error.violations) ? error.violations : [];
+      const firstViolation = violations[0];
+      if (firstViolation && typeof firstViolation === "object" && firstViolation !== null) {
+        const propertyPath = stringField((firstViolation as Record<string, unknown>).propertyPath);
+        const message = stringField((firstViolation as Record<string, unknown>).message);
+        if (propertyPath && message) {
+          return `Part-DB rejected the payload: ${propertyPath} ${message}`.trim();
+        }
+
+        if (message) {
+          return `Part-DB rejected the payload: ${message}`;
+        }
+      }
+
+      return "Part-DB rejected the payload.";
+    }
+    case "conflict":
+      return "Part-DB reported a resource conflict.";
+    case "server_error":
+      return `Part-DB returned ${numberField(error.httpStatus) ?? "a server error"}.`;
+    case "rate_limited":
+      return "Part-DB rate-limited background sync work.";
+    case "schema_mismatch":
+      return "Part-DB returned a response SmartDB could not parse.";
+    case "dependency_missing":
+      return `A required sync dependency is missing: ${stringField(error.dependency) ?? "unknown dependency"}.`;
+    default:
+      return stringField(error.message) ?? "Background sync failed.";
+  }
+}
+
 function humanizeApiError(error: ApiClientError): string {
   switch (error.code) {
     case "parse_input":
@@ -349,4 +413,12 @@ function integrationMessage(details: Record<string, unknown>, fallback: string):
   }
 
   return fallback;
+}
+
+function stringField(value: unknown): string | null {
+  return typeof value === "string" && value.trim().length > 0 ? value : null;
+}
+
+function numberField(value: unknown): number | null {
+  return typeof value === "number" && Number.isFinite(value) ? value : null;
 }

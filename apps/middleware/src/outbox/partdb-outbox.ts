@@ -78,14 +78,15 @@ export class PartDbOutbox {
     failedLast24h: number;
     deadTotal: number;
   } {
+    const cutoffIso = new Date(Date.now() - 24 * 60 * 60 * 1_000).toISOString();
     const row = this.db.prepare(`
       SELECT
         SUM(CASE WHEN status IN ('pending', 'failed') THEN 1 ELSE 0 END) AS pending,
         SUM(CASE WHEN status = 'leased' THEN 1 ELSE 0 END) AS in_flight,
-        SUM(CASE WHEN status = 'failed' AND completed_at IS NULL THEN 1 ELSE 0 END) AS failed_last_24h,
+        SUM(CASE WHEN status IN ('failed', 'dead') AND last_failure_at >= ? THEN 1 ELSE 0 END) AS failed_last_24h,
         SUM(CASE WHEN status = 'dead' THEN 1 ELSE 0 END) AS dead_total
       FROM partdb_outbox
-    `).get() as SqlRow;
+    `).get(cutoffIso) as SqlRow;
 
     return {
       pending: Number(row.pending ?? 0),
@@ -100,6 +101,7 @@ export class PartDbOutbox {
       UPDATE partdb_outbox
       SET status = 'pending',
           next_attempt_at = ?,
+          completed_at = NULL,
           lease_expires_at = NULL,
           leased_at = NULL
       WHERE id = ? AND status IN ('failed', 'dead')
@@ -198,7 +200,8 @@ export class PartDbOutbox {
             response_json = ?,
             response_iri = ?,
             completed_at = ?,
-            lease_expires_at = NULL
+            lease_expires_at = NULL,
+            leased_at = NULL
         WHERE id = ?
       `).run(JSON.stringify(response.body), response.iri, completedAt, id);
 
@@ -228,15 +231,24 @@ export class PartDbOutbox {
     }
   }
 
-  markFailed(id: string, error: unknown, status: Extract<OutboxStatus, "failed" | "dead">, nextAttemptAt: string | null = null): void {
+  markFailed(
+    id: string,
+    error: unknown,
+    status: Extract<OutboxStatus, "failed" | "dead">,
+    nextAttemptAt: string | null = null,
+    failedAt: string = new Date().toISOString(),
+  ): void {
     this.db.prepare(`
       UPDATE partdb_outbox
       SET status = ?,
           next_attempt_at = COALESCE(?, next_attempt_at),
           last_error_json = ?,
-          lease_expires_at = NULL
+          last_failure_at = ?,
+          completed_at = CASE WHEN ? = 'dead' THEN ? ELSE completed_at END,
+          lease_expires_at = NULL,
+          leased_at = NULL
       WHERE id = ?
-    `).run(status, nextAttemptAt, JSON.stringify(error), id);
+    `).run(status, nextAttemptAt, JSON.stringify(error), failedAt, status, failedAt, id);
   }
 
   hydrateOperation(row: OutboxRow): OutboxOperation {
@@ -286,6 +298,7 @@ function mapOutboxRow(row: SqlRow): OutboxRow {
     leaseExpiresAt: stringOrNull(row.lease_expires_at),
     nextAttemptAt: String(row.next_attempt_at),
     lastErrorJson: stringOrNull(row.last_error_json),
+    lastFailureAt: stringOrNull(row.last_failure_at),
     responseJson: stringOrNull(row.response_json),
     responseIri: stringOrNull(row.response_iri),
     createdAt: String(row.created_at),

@@ -190,6 +190,13 @@ CREATE INDEX IF NOT EXISTS partdb_outbox_target_idx
   ON partdb_outbox(target_table, target_row_id);
     `,
   },
+  {
+    version: 6,
+    description: "partdb outbox failure timestamps",
+    sql: `
+ALTER TABLE partdb_outbox ADD COLUMN last_failure_at TEXT;
+    `,
+  },
 ];
 
 export function applyMigrations(

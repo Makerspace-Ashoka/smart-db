@@ -1,4 +1,5 @@
 import { z } from "zod";
+import { Err, Ok, type Result } from "./result.js";
 
 const nonEmptyString = z.string().trim().min(1);
 const nullableString = z.string().trim().min(1).nullable();
@@ -7,6 +8,7 @@ const normalizedOptionalString = z.string().trim().nullish().transform((value) =
   const trimmed = value?.trim();
   return trimmed ? trimmed : null;
 });
+const categorySegmentPattern = /^[A-Za-z0-9 _\-+&().#]+$/;
 
 export const instanceStatuses = [
   "available",
@@ -72,6 +74,51 @@ export const categoryPathSchema = z
   .array(z.string().trim().min(1).max(255))
   .min(1)
   .max(6);
+
+export type CategoryPathParseError =
+  | { kind: "empty" }
+  | { kind: "too_deep"; maxDepth: number }
+  | { kind: "invalid_segment"; segment: string };
+
+export function parseCategoryPathInput(
+  input: string,
+): Result<z.output<typeof categoryPathSchema>, CategoryPathParseError> {
+  const segments = input
+    .split("/")
+    .map((segment) => segment.trim())
+    .filter((segment) => segment.length > 0);
+
+  if (segments.length === 0) {
+    return Err({ kind: "empty" });
+  }
+
+  if (segments.length > 6) {
+    return Err({ kind: "too_deep", maxDepth: 6 });
+  }
+
+  for (const segment of segments) {
+    if (segment.length > 255 || !categorySegmentPattern.test(segment)) {
+      return Err({ kind: "invalid_segment", segment });
+    }
+  }
+
+  return Ok(segments);
+}
+
+export function describeCategoryPathParseError(error: CategoryPathParseError): string {
+  switch (error.kind) {
+    case "empty":
+      return "Category is required.";
+    case "too_deep":
+      return `Category paths can have at most ${error.maxDepth} levels.`;
+    case "invalid_segment":
+      return `Category segment '${error.segment}' contains unsupported characters.`;
+  }
+}
+
+export function categoryLeafFromPath(path: z.output<typeof categoryPathSchema>): string {
+  return path[path.length - 1] ?? "Uncategorized";
+}
 
 export const partTypeSchema = z
   .object({
@@ -255,7 +302,15 @@ export const newPartTypeDraftSchema = z
   .object({
     kind: z.literal("new"),
     canonicalName: nonEmptyString,
-    category: nonEmptyString,
+    category: nonEmptyString.superRefine((value, context) => {
+      const parsed = parseCategoryPathInput(value);
+      if (!parsed.ok) {
+        context.addIssue({
+          code: z.ZodIssueCode.custom,
+          message: describeCategoryPathParseError(parsed.error),
+        });
+      }
+    }),
     aliases: z.array(nonEmptyString).default([]),
     notes: nullableLooseString.default(null),
     imageUrl: nullableLooseString.default(null),
@@ -501,6 +556,39 @@ export const partDbLookupSummarySchema = z
   })
   .strict();
 
+export const partDbSyncStatusResponseSchema = z
+  .object({
+    enabled: z.boolean(),
+    pending: z.number().int().nonnegative(),
+    inFlight: z.number().int().nonnegative(),
+    failedLast24h: z.number().int().nonnegative(),
+    deadTotal: z.number().int().nonnegative(),
+  })
+  .strict();
+
+export const partDbSyncFailureSchema = z
+  .object({
+    id: identifierSchema,
+    operation: nonEmptyString,
+    status: z.enum(["failed", "dead"]),
+    targetTable: nullableLooseString.default(null),
+    targetRowId: nullableLooseString.default(null),
+    attemptCount: z.number().int().nonnegative(),
+    nextAttemptAt: isoTimestampSchema,
+    lastFailureAt: isoTimestampSchema.nullable().default(null),
+    lastError: z.record(z.unknown()).nullable().default(null),
+    createdAt: isoTimestampSchema,
+  })
+  .strict();
+
+export const partDbSyncDrainResponseSchema = z
+  .object({
+    claimed: z.number().int().nonnegative(),
+    delivered: z.number().int().nonnegative(),
+    failed: z.number().int().nonnegative(),
+  })
+  .strict();
+
 export const applicationErrorResponseSchema = z
   .object({
     error: z
@@ -605,6 +693,9 @@ export type PartTypeSearchQuery = z.output<typeof partTypeSearchQuerySchema>;
 export type PartDbDiscoveredResources = z.output<typeof partDbDiscoveredResourcesSchema>;
 export type PartDbConnectionStatus = z.output<typeof partDbConnectionStatusSchema>;
 export type PartDbLookupSummary = z.output<typeof partDbLookupSummarySchema>;
+export type PartDbSyncStatusResponse = z.output<typeof partDbSyncStatusResponseSchema>;
+export type PartDbSyncFailure = z.output<typeof partDbSyncFailureSchema>;
+export type PartDbSyncDrainResponse = z.output<typeof partDbSyncDrainResponseSchema>;
 export type ApplicationErrorResponse = z.output<typeof applicationErrorResponseSchema>;
 export type ScanResponse = z.output<typeof scanResponseSchema>;
 

@@ -4,7 +4,9 @@ import { ApiClientError } from "./api";
 import {
   buildAssignRequest,
   buildEventRequest,
+  describePartDbSyncFailure,
   errorMessage,
+  formatCategoryPath,
   getAssignFormIssues,
   hasAssignFormIssues,
   narrowBulkEvent,
@@ -225,7 +227,24 @@ describe("App helpers", () => {
     ).toEqual({
       location: "Location is required.",
       canonicalName: "Name the new part type.",
-      category: "Category is required for a new part type.",
+      category: "Category is required.",
+    });
+    expect(
+      getAssignFormIssues({
+        qrCode: "QR-1008",
+        entityKind: "instance",
+        location: "Shelf A",
+        notes: "",
+        partTypeMode: "new",
+        existingPartTypeId: "",
+        canonicalName: "Resistor Kit",
+        category: "Electronics/Bad|Segment",
+        countable: true,
+        initialStatus: "available",
+        initialLevel: "good",
+      }),
+    ).toEqual({
+      category: "Category segment 'Bad|Segment' contains unsupported characters.",
     });
     expect(
       hasAssignFormIssues(
@@ -293,5 +312,29 @@ describe("App helpers", () => {
         }),
       ),
     ).toBe("Part-DB is unavailable right now.");
+  });
+
+  it("formats category paths and structured sync failures", () => {
+    expect(formatCategoryPath(["Electronics", "Resistors", "SMD 0603"])).toBe(
+      "Electronics / Resistors / SMD 0603",
+    );
+
+    expect(
+      describePartDbSyncFailure({
+        id: "sync-1",
+        operation: "create_part",
+        status: "failed",
+        targetTable: "part_types",
+        targetRowId: "part-1",
+        attemptCount: 2,
+        nextAttemptAt: "2026-01-01T00:01:00.000Z",
+        lastFailureAt: "2026-01-01T00:00:30.000Z",
+        lastError: {
+          kind: "validation",
+          violations: [{ propertyPath: "name", message: "This value is already used." }],
+        },
+        createdAt: "2026-01-01T00:00:00.000Z",
+      }),
+    ).toBe("Part-DB rejected the payload: name This value is already used.");
   });
 });

@@ -13,6 +13,7 @@ import { PanelTitle } from "../components/PanelTitle";
 import { QRScanner } from "../components/QRScanner";
 import {
   actionLabel,
+  formatCategoryPath,
   formatTimestamp,
   type AssignFormIssues,
   type AssignFormState,
@@ -186,7 +187,7 @@ export function ScanTab(props: ScanTabProps) {
                             partTypeMode: "existing",
                             existingPartTypeId: partType.id,
                             canonicalName: "",
-                            category: partType.category,
+                            category: formatCategoryPath(partType.categoryPath),
                             countable: partType.countable,
                             initialStatus: "available",
                             initialLevel: "good",
@@ -194,7 +195,7 @@ export function ScanTab(props: ScanTabProps) {
                         }
                       >
                         <strong>{partType.canonicalName}</strong>
-                        <span>{partType.category}</span>
+                        <span>{formatCategoryPath(partType.categoryPath)}</span>
                       </button>
                     ))
                   ) : (
@@ -221,10 +222,10 @@ export function ScanTab(props: ScanTabProps) {
                   ) : null}
                 </label>
                 <label>
-                  Category
+                  Category path
                   <input
                     value={props.assignForm.category}
-                    placeholder="Microcontrollers"
+                    placeholder="Electronics/Resistors/SMD 0603"
                     onChange={(event) =>
                       props.onAssignFormChange((current) => ({
                         ...current,

@@ -2,14 +2,17 @@ import { describe, expect, it } from "vitest";
 import {
   applicationErrorResponseSchema,
   assignQrRequestSchema,
+  categoryLeafFromPath,
   categoryPathSchema,
   configEnvironmentSchema,
+  describeCategoryPathParseError,
   latestQrBatchResponseSchema,
   loginRequestSchema,
   loginResponseSchema,
   logoutResponseSchema,
   measurementUnitSchema,
   mergePartTypesRequestSchema,
+  parseCategoryPathInput,
   recordEventRequestSchema,
   registerQrBatchRequestSchema,
   scanResponseSchema,
@@ -66,6 +69,18 @@ describe("schemas", () => {
 
     expect(() => categoryPathSchema.parse([])).toThrow();
     expect(() => categoryPathSchema.parse(new Array(7).fill("too-deep"))).toThrow();
+    expect(parseCategoryPathInput("Electronics/Resistors/SMD 0603")).toEqual({
+      ok: true,
+      value: ["Electronics", "Resistors", "SMD 0603"],
+    });
+    expect(parseCategoryPathInput(" / / ")).toEqual({
+      ok: false,
+      error: { kind: "empty" },
+    });
+    expect(describeCategoryPathParseError({ kind: "too_deep", maxDepth: 6 })).toBe(
+      "Category paths can have at most 6 levels.",
+    );
+    expect(categoryLeafFromPath(["Electronics", "Resistors", "SMD 0603"])).toBe("SMD 0603");
   });
 
   it("rejects out-of-bounds batch count and invalid prefix characters", () => {
@@ -148,6 +163,20 @@ describe("schemas", () => {
       },
       initialLevel: "good",
     });
+
+    expect(() =>
+      assignQrRequestSchema.parse({
+        qrCode: "QR-1003",
+        entityKind: "instance",
+        location: "Shelf A",
+        partType: {
+          kind: "new",
+          canonicalName: "Bad Category",
+          category: "Electronics/Bad|Segment",
+          countable: true,
+        },
+      }),
+    ).toThrow(/unsupported characters/i);
   });
 
   it("parses lifecycle events, merge requests, responses, and error envelopes", () => {
