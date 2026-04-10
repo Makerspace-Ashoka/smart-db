@@ -398,6 +398,7 @@ describe("schemas", () => {
         location: "Shelf A",
         state: "available",
         assignee: null,
+        partDbSyncStatus: "never",
         quantity: null,
         minimumQuantity: null,
       },

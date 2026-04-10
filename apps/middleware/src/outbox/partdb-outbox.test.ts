@@ -40,6 +40,32 @@ function insertPartType(db: DatabaseSync, id: string): void {
   `).run(id, "Arduino Uno", "Electronics", "2026-01-01T00:00:00.000Z", "2026-01-01T00:00:00.000Z");
 }
 
+function insertInstance(db: DatabaseSync, id: string, qrCode: string, partTypeId: string): void {
+  db.prepare(`
+    INSERT INTO qr_batches (id, prefix, start_number, end_number, actor, created_at)
+    VALUES ('batch-1', 'QR', 1, 1, 'tester', '2026-01-01T00:00:00.000Z')
+    ON CONFLICT(id) DO NOTHING
+  `).run();
+  db.prepare(`
+    INSERT INTO qrcodes (code, batch_id, status, assigned_kind, assigned_id, created_at, updated_at)
+    VALUES (?, 'batch-1', 'assigned', 'instance', ?, '2026-01-01T00:00:00.000Z', '2026-01-01T00:00:00.000Z')
+  `).run(qrCode, id);
+  db.prepare(`
+    INSERT INTO physical_instances (
+      id,
+      qr_code,
+      part_type_id,
+      status,
+      location,
+      assignee,
+      created_at,
+      updated_at,
+      partdb_lot_id,
+      partdb_sync_status
+    ) VALUES (?, ?, ?, 'available', 'Shelf A', NULL, '2026-01-01T00:00:00.000Z', '2026-01-01T00:00:00.000Z', NULL, 'never')
+  `).run(id, qrCode, partTypeId);
+}
+
 describe("PartDbOutbox", () => {
   it("deduplicates equivalent operations by idempotency key", () => {
     const db = makeDb();
@@ -217,6 +243,53 @@ describe("PartDbOutbox", () => {
     expect(row).toEqual({
       partdb_sync_status: "synced",
       partdb_part_id: "5",
+    });
+  });
+
+  it("tracks physical-instance sync state for lot operations", () => {
+    const db = makeDb();
+    insertPartType(db, "part-1");
+    insertInstance(db, "instance-1", "QR-1", "part-1");
+    const outbox = new PartDbOutbox(db);
+
+    const id = outbox.enqueue(
+      {
+        kind: "create_lot",
+        payload: {
+          partIri: "/api/parts/1",
+          storageLocationName: "Shelf A",
+          amount: 1,
+          description: "",
+          userBarcode: "QR-1",
+          instockUnknown: false,
+        },
+        target: {
+          table: "physical_instances",
+          rowId: "instance-1",
+          column: "partdb_lot_id",
+        },
+        dependsOnId: null,
+      },
+      "corr-5",
+    );
+
+    let row = db.prepare(`SELECT partdb_sync_status, partdb_lot_id FROM physical_instances WHERE id = ?`).get("instance-1") as {
+      partdb_sync_status: string;
+      partdb_lot_id: string | null;
+    };
+    expect(row).toEqual({
+      partdb_sync_status: "pending",
+      partdb_lot_id: null,
+    });
+
+    outbox.markDelivered(id, { iri: "/api/part_lots/9", body: { id: 9 } }, "2026-01-02T00:00:00.000Z");
+    row = db.prepare(`SELECT partdb_sync_status, partdb_lot_id FROM physical_instances WHERE id = ?`).get("instance-1") as {
+      partdb_sync_status: string;
+      partdb_lot_id: string | null;
+    };
+    expect(row).toEqual({
+      partdb_sync_status: "synced",
+      partdb_lot_id: "9",
     });
   });
 });

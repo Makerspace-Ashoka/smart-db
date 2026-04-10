@@ -197,6 +197,13 @@ CREATE INDEX IF NOT EXISTS partdb_outbox_target_idx
 ALTER TABLE partdb_outbox ADD COLUMN last_failure_at TEXT;
     `,
   },
+  {
+    version: 7,
+    description: "physical instance sync status",
+    sql: `
+ALTER TABLE physical_instances ADD COLUMN partdb_sync_status TEXT NOT NULL DEFAULT 'never';
+    `,
+  },
 ];
 
 export function applyMigrations(

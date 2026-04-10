@@ -433,6 +433,7 @@ export function ScanTab(props: ScanTabProps) {
             {props.scanResult.entity.targetType} in {props.scanResult.entity.location} · current state{" "}
             <strong>{props.scanResult.entity.state}</strong>
           </p>
+          <p className="muted-copy">Part-DB sync: {props.scanResult.entity.partDbSyncStatus}</p>
           {props.scanResult.entity.targetType === "bulk" && props.scanResult.entity.quantity !== null ? (
             <p className="muted-copy">
               Quantity: {formatQuantity(props.scanResult.entity.quantity)} {props.scanResult.entity.partType.unit.symbol}

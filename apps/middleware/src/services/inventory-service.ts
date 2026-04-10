@@ -350,8 +350,8 @@ export class InventoryService {
           .prepare(
             `
             INSERT INTO physical_instances
-              (id, qr_code, part_type_id, status, location, assignee, created_at, updated_at)
-            VALUES (?, ?, ?, ?, ?, NULL, ?, ?)
+              (id, qr_code, part_type_id, status, location, assignee, partdb_sync_status, created_at, updated_at)
+            VALUES (?, ?, ?, ?, ?, NULL, 'never', ?, ?)
             `,
           )
           .run(id, qrCodeValue, partType.id, initialStatus, location, timestamp, timestamp);
@@ -1238,6 +1238,7 @@ export class InventoryService {
           location: String(row.location),
           state: String(row.status),
           assignee: stringOrNull(row.assignee),
+          partDbSyncStatus: (stringOrNull(row.partdb_sync_status) ?? "never") as InventoryEntitySummary["partDbSyncStatus"],
           partType: mapPartTypeFromJoin(row, "pt_"),
         },
         "inventory instance summary",
@@ -1291,6 +1292,7 @@ export class InventoryService {
           row.minimum_quantity === null || row.minimum_quantity === undefined ? null : Number(row.minimum_quantity),
         ),
         assignee: null,
+        partDbSyncStatus: (stringOrNull(row.partdb_sync_status) ?? "never") as InventoryEntitySummary["partDbSyncStatus"],
         quantity: Number(row.quantity ?? 0),
         minimumQuantity: row.minimum_quantity === null || row.minimum_quantity === undefined ? null : Number(row.minimum_quantity),
         partType: mapPartTypeFromJoin(row, "pt_"),
@@ -1480,9 +1482,10 @@ function mapPhysicalInstance(row: SqlRow): PhysicalInstance {
       id: String(row.id),
       qrCode: String(row.qr_code),
       partTypeId: String(row.part_type_id),
-    status: String(row.status) as PhysicalInstance["status"],
+      status: String(row.status) as PhysicalInstance["status"],
     location: String(row.location),
       assignee: stringOrNull(row.assignee),
+      partDbSyncStatus: (stringOrNull(row.partdb_sync_status) ?? "never") as PhysicalInstance["partDbSyncStatus"],
       createdAt: String(row.created_at),
       updatedAt: String(row.updated_at),
     },

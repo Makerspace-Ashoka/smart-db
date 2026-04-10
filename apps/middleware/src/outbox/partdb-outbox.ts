@@ -309,10 +309,10 @@ export class PartDbOutbox {
   }
 }
 
-type SyncStatusTable = "part_types" | "bulk_stocks";
+type SyncStatusTable = "part_types" | "physical_instances" | "bulk_stocks";
 
 function targetTableHasSyncStatus(table: string): table is SyncStatusTable {
-  return table === "part_types" || table === "bulk_stocks";
+  return table === "part_types" || table === "physical_instances" || table === "bulk_stocks";
 }
 
 function targetFromRow(row: OutboxRow): OutboxOperation["target"] {

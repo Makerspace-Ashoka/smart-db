@@ -64,6 +64,9 @@ const entitySummary: InventoryEntitySummary = {
   location: "Shelf A",
   state: "available",
   assignee: null,
+  partDbSyncStatus: "never",
+  quantity: null,
+  minimumQuantity: null,
 };
 
 const stockEvent: StockEvent = {

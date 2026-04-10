@@ -33,6 +33,7 @@ describe("applyMigrations", () => {
     expect(versions[3]).toMatchObject({ version: 4, description: "partdb sync model foundations" });
     expect(versions[4]).toMatchObject({ version: 5, description: "partdb outbox" });
     expect(versions[5]).toMatchObject({ version: 6, description: "partdb outbox failure timestamps" });
+    expect(versions[6]).toMatchObject({ version: 7, description: "physical instance sync status" });
   });
 
   it("skips already-applied migrations on subsequent runs", () => {
@@ -150,6 +151,7 @@ describe("applyMigrations", () => {
 
     const instanceCols = db.prepare(`PRAGMA table_info(physical_instances)`).all() as { name: string }[];
     expect(instanceCols.map((column) => column.name)).toContain("partdb_lot_id");
+    expect(instanceCols.map((column) => column.name)).toContain("partdb_sync_status");
   });
 
   it("creates the partdb_outbox table and indexes in v5", () => {

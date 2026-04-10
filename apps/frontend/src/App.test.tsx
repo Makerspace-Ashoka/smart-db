@@ -189,6 +189,9 @@ beforeEach(() => {
     location: "Shelf A",
     state: "available",
     assignee: null,
+    partDbSyncStatus: "never",
+    quantity: null,
+    minimumQuantity: null,
   });
   apiMock.recordEvent.mockResolvedValue({
     id: "event-2",
@@ -671,6 +674,9 @@ describe("App", () => {
           location: "Shelf A",
           state: "available",
           assignee: null,
+          partDbSyncStatus: "never",
+          quantity: null,
+          minimumQuantity: null,
         },
         recentEvents: [],
         availableActions: [
@@ -764,6 +770,7 @@ describe("App", () => {
           location: "Fastener wall",
           state: "4 pcs on hand",
           assignee: null,
+          partDbSyncStatus: "never",
           quantity: 4,
           minimumQuantity: 2,
         },
@@ -904,6 +911,9 @@ describe("App", () => {
           location: "Shelf A",
           state: "available",
           assignee: null,
+          partDbSyncStatus: "never",
+          quantity: null,
+          minimumQuantity: null,
         },
         recentEvents: [dashboard.recentEvents[0]],
         availableActions: [
@@ -940,6 +950,9 @@ describe("App", () => {
           location: "Workbench",
           state: "checked_out",
           assignee: "Ayesha",
+          partDbSyncStatus: "never",
+          quantity: null,
+          minimumQuantity: null,
         },
         recentEvents: [],
         availableActions: [
@@ -1165,6 +1178,9 @@ describe("App", () => {
         location: "Shelf A",
         state: "available",
         assignee: null,
+        partDbSyncStatus: "never",
+        quantity: null,
+        minimumQuantity: null,
       },
       recentEvents: [
         {
@@ -1395,7 +1411,7 @@ describe("App", () => {
       .mockResolvedValueOnce({
         mode: "interact",
         qrCode: { ...labelResponse.qrCode, status: "assigned", assignedKind: "instance", assignedId: "instance-1" },
-        entity: { id: "instance-1", targetType: "instance", qrCode: "QR-2001", partType, location: "Shelf A", state: "available", assignee: null },
+        entity: { id: "instance-1", targetType: "instance", qrCode: "QR-2001", partType, location: "Shelf A", state: "available", assignee: null, partDbSyncStatus: "never", quantity: null, minimumQuantity: null },
         recentEvents: [],
         availableActions: ["moved", "checked_out"],
         partDb: labelResponse.partDb,
@@ -1407,7 +1423,7 @@ describe("App", () => {
       .mockResolvedValueOnce({
         mode: "interact",
         qrCode: { ...labelResponse.qrCode, code: "QR-2002", status: "assigned", assignedKind: "instance", assignedId: "instance-2" },
-        entity: { id: "instance-2", targetType: "instance", qrCode: "QR-2002", partType, location: "Buffer Room A", state: "available", assignee: null },
+        entity: { id: "instance-2", targetType: "instance", qrCode: "QR-2002", partType, location: "Buffer Room A", state: "available", assignee: null, partDbSyncStatus: "never", quantity: null, minimumQuantity: null },
         recentEvents: [],
         availableActions: ["moved", "checked_out"],
         partDb: labelResponse.partDb,
@@ -1490,6 +1506,9 @@ describe("App", () => {
           location: "Shelf Z",
           state: "available",
           assignee: null,
+          partDbSyncStatus: "never",
+          quantity: null,
+          minimumQuantity: null,
         },
         recentEvents: [],
         availableActions: ["moved", "checked_out"],
@@ -1516,6 +1535,9 @@ describe("App", () => {
           location: "Shelf Z",
           state: "available",
           assignee: null,
+          partDbSyncStatus: "never",
+          quantity: null,
+          minimumQuantity: null,
         },
         recentEvents: [],
         availableActions: ["moved", "checked_out"],
@@ -1531,6 +1553,9 @@ describe("App", () => {
         location: "Shelf Z",
         state: "available",
         assignee: null,
+        partDbSyncStatus: "never",
+        quantity: null,
+        minimumQuantity: null,
       })
       .mockResolvedValueOnce({
         id: "instance-3002",
@@ -1540,6 +1565,9 @@ describe("App", () => {
         location: "Shelf Z",
         state: "available",
         assignee: null,
+        partDbSyncStatus: "never",
+        quantity: null,
+        minimumQuantity: null,
       });
 
     render(<SmartApp />);

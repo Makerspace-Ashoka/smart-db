@@ -172,6 +172,7 @@ export const physicalInstanceSchema = z
     status: instanceStatusSchema,
     location: nonEmptyString,
     assignee: nullableLooseString.default(null),
+    partDbSyncStatus: partDbSyncStatusSchema.default("never"),
     createdAt: isoTimestampSchema,
     updatedAt: isoTimestampSchema,
   })
@@ -240,6 +241,7 @@ export const inventoryEntitySummarySchema = z
     location: nonEmptyString,
     state: nonEmptyString,
     assignee: nullableLooseString.default(null),
+    partDbSyncStatus: partDbSyncStatusSchema.default("never"),
     quantity: z.number().nonnegative().nullable().default(null),
     minimumQuantity: z.number().nonnegative().nullable().default(null),
   })
