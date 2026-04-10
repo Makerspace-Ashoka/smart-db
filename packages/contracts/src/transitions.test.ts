@@ -1,9 +1,8 @@
 import { describe, expect, it } from "vitest";
-import type { BulkLevel, InstanceStatus } from "./schemas";
 import {
   getAvailableBulkActions,
   getAvailableInstanceActions,
-  getNextBulkLevel,
+  getNextBulkQuantity,
   getNextInstanceStatus,
 } from "./transitions";
 
@@ -24,16 +23,14 @@ describe("transitions", () => {
     expect(getAvailableInstanceActions("consumed")).toEqual([]);
   });
 
-  it("maps each bulk level to the correct available actions", () => {
-    for (const level of ["full", "good", "low"] as BulkLevel[]) {
-      expect(getAvailableBulkActions(level)).toEqual(
-        expect.arrayContaining(["moved", "level_changed", "consumed"]),
-      );
-    }
-    expect(getAvailableBulkActions("empty")).toEqual(
-      expect.arrayContaining(["moved", "level_changed"]),
+  it("maps bulk quantity to the correct available actions", () => {
+    expect(getAvailableBulkActions(10)).toEqual(
+      expect.arrayContaining(["moved", "restocked", "consumed", "stocktaken", "adjusted"]),
     );
-    expect(getAvailableBulkActions("empty")).not.toContain("consumed");
+    expect(getAvailableBulkActions(0)).toEqual(
+      expect.arrayContaining(["moved", "restocked", "stocktaken", "adjusted"]),
+    );
+    expect(getAvailableBulkActions(0)).not.toContain("consumed");
   });
 
   it("returns the correct next instance status for legal transitions", () => {
@@ -59,17 +56,17 @@ describe("transitions", () => {
     expect(getNextInstanceStatus("damaged", "checked_out")).toBeNull();
   });
 
-  it("returns the correct next bulk level for legal transitions", () => {
-    expect(getNextBulkLevel("good", "moved")).toBe("good");
-    expect(getNextBulkLevel("good", "level_changed", "low")).toBe("low");
-    expect(getNextBulkLevel("good", "level_changed")).toBe("good");
-    expect(getNextBulkLevel("good", "consumed", "empty")).toBe("empty");
-    expect(getNextBulkLevel("good", "consumed")).toBe("low");
-    expect(getNextBulkLevel("empty", "moved")).toBe("empty");
-    expect(getNextBulkLevel("empty", "level_changed", "full")).toBe("full");
+  it("returns the correct next bulk quantity for legal transitions", () => {
+    expect(getNextBulkQuantity(12, "moved")).toBe(12);
+    expect(getNextBulkQuantity(12, "restocked", { quantityDelta: 8 })).toBe(20);
+    expect(getNextBulkQuantity(12, "consumed", { quantityDelta: 5 })).toBe(7);
+    expect(getNextBulkQuantity(12, "stocktaken", { quantity: 4 })).toBe(4);
+    expect(getNextBulkQuantity(12, "adjusted", { quantityDelta: -2 })).toBe(10);
   });
 
   it("returns null for illegal bulk transitions", () => {
-    expect(getNextBulkLevel("empty", "consumed")).toBeNull();
+    expect(getNextBulkQuantity(0, "consumed", { quantityDelta: 1 })).toBeNull();
+    expect(getNextBulkQuantity(4, "adjusted", { quantityDelta: -5 })).toBeNull();
+    expect(getNextBulkQuantity(4, "restocked")).toBeNull();
   });
 });

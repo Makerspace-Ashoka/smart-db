@@ -261,20 +261,20 @@ describe("E2E: full intake → lifecycle → merge workflow", () => {
     expect(assignBulk.statusCode).toBe(200);
     expect(assignBulk.json().targetType).toBe("bulk");
 
-    const levelChange = await app.inject({
+    const stocktake = await app.inject({
       method: "POST",
       url: "/api/events",
       payload: {
         targetType: "bulk",
         targetId: assignBulk.json().id,
-        event: "level_changed",
+        event: "stocktaken",
         location: "Bin 7",
-        nextLevel: "low",
+        quantity: 5,
       },
       headers: auth,
     });
-    expect(levelChange.statusCode).toBe(200);
-    expect(levelChange.json().toState).toBe("low");
+    expect(stocktake.statusCode).toBe(200);
+    expect(stocktake.json().toState).toBe("5 pcs on hand");
 
     const assignDuplicate = await app.inject({
       method: "POST",

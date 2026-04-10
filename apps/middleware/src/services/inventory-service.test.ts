@@ -468,7 +468,8 @@ describe("InventoryService", () => {
         imageUrl: null,
         countable: false,
       },
-      initialLevel: "good",
+      initialQuantity: 75,
+      minimumQuantity: null,
     });
     const fallbackBulk = service.assignQr({
       qrCode: "QR-2000",
@@ -485,14 +486,15 @@ describe("InventoryService", () => {
         imageUrl: null,
         countable: false,
       },
-      initialLevel: "not-a-level" as never,
+      initialQuantity: 0,
+      minimumQuantity: null,
     });
 
     expect(bulkSummary.targetType).toBe("bulk");
-    expect(fallbackBulk.state).toBe("good");
+    expect(fallbackBulk.state).toBe("0 pcs on hand");
     await expect(service.scanCode("QR-1003")).resolves.toMatchObject({
       mode: "interact",
-      availableActions: ["moved", "level_changed", "consumed"],
+      availableActions: ["moved", "restocked", "consumed", "stocktaken", "adjusted"],
     });
     expect(
       service.recordEvent({
@@ -509,12 +511,12 @@ describe("InventoryService", () => {
         targetType: "bulk",
         targetId: bulkSummary.id,
         actor: "lab-admin",
-        event: "level_changed",
+        event: "stocktaken",
         location: "Fastener wall",
         notes: null,
-        nextLevel: "low",
+        quantity: 25,
       }).toState,
-    ).toBe("low");
+    ).toBe("25 pcs on hand");
     expect(
       service.recordEvent({
         targetType: "bulk",
@@ -523,17 +525,17 @@ describe("InventoryService", () => {
         event: "consumed",
         location: "Fastener wall",
         notes: null,
-        nextLevel: "empty",
+        quantityDelta: 25,
       }).toState,
-    ).toBe("empty");
+    ).toBe("0 pcs on hand");
     service.recordEvent({
       targetType: "bulk",
       targetId: bulkSummary.id,
       actor: "lab-admin",
-      event: "level_changed",
+      event: "restocked",
       location: "Fastener wall",
       notes: null,
-      nextLevel: "low",
+      quantityDelta: 3,
     });
     expect(() =>
       service.recordEvent({
@@ -543,18 +545,18 @@ describe("InventoryService", () => {
         event: "consumed",
         location: "Fastener wall",
         notes: null,
-        nextLevel: "not-a-level" as never,
+        quantityDelta: 5,
       }),
-    ).toThrowError(InvariantError);
+    ).toThrowError(ConflictError);
     expect(() =>
       service.recordEvent({
         targetType: "bulk",
         targetId: bulkSummary.id,
         actor: "lab-admin",
-        event: "level_changed",
+        event: "adjusted",
         location: "" as never,
-        notes: null,
-        nextLevel: "not-a-level" as never,
+        notes: "" as never,
+        quantityDelta: Number.NaN as never,
       }),
     ).toThrowError(InvariantError);
 
@@ -710,7 +712,8 @@ describe("InventoryService", () => {
           kind: "existing",
           existingPartTypeId: service.searchPartTypes("Sensor")[0]!.id,
         },
-        initialLevel: "good",
+        initialQuantity: 10,
+        minimumQuantity: null,
       }),
     ).toThrowError(ConflictError);
 
@@ -735,7 +738,8 @@ describe("InventoryService", () => {
         imageUrl: null,
         countable: false,
       },
-      initialLevel: "good",
+      initialQuantity: 10,
+      minimumQuantity: null,
     });
 
     service.registerQrBatch({
@@ -898,7 +902,8 @@ describe("InventoryService", () => {
         imageUrl: null,
         countable: false,
       },
-      initialLevel: "good",
+      initialQuantity: 10,
+      minimumQuantity: null,
     });
 
     expect(() =>
@@ -954,7 +959,8 @@ describe("InventoryService", () => {
       location: "Bin",
       notes: null,
       partType: { kind: "new", canonicalName: "Bulk Void", category: "Misc", aliases: [], notes: null, imageUrl: null, countable: false },
-      initialLevel: "good",
+      initialQuantity: 10,
+      minimumQuantity: null,
     });
     const voidedBulk = service.voidQrCode("V-3", "admin");
     expect(voidedBulk.status).toBe("voided");
@@ -1002,15 +1008,16 @@ describe("InventoryService", () => {
       location: "Bin",
       notes: null,
       partType: { kind: "new", canonicalName: "Empty Bulk", category: "Misc", aliases: [], notes: null, imageUrl: null, countable: false },
-      initialLevel: "good",
+      initialQuantity: 10,
+      minimumQuantity: null,
     });
 
     // Transition to empty
-    service.recordEvent({ targetType: "bulk", targetId: bulk.id, actor: "admin", event: "consumed", location: "Bin", notes: null, nextLevel: "empty" });
+    service.recordEvent({ targetType: "bulk", targetId: bulk.id, actor: "admin", event: "consumed", location: "Bin", notes: null, quantityDelta: 10 });
 
     // consumed is not valid on empty bulk stock
     expect(() =>
-      service.recordEvent({ targetType: "bulk", targetId: bulk.id, actor: "admin", event: "consumed", location: "Bin", notes: null, nextLevel: "empty" }),
+      service.recordEvent({ targetType: "bulk", targetId: bulk.id, actor: "admin", event: "consumed", location: "Bin", notes: null, quantityDelta: 1 }),
     ).toThrowError(ConflictError);
   });
 

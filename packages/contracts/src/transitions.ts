@@ -1,6 +1,5 @@
 import type {
   BulkActionKind,
-  BulkLevel,
   InstanceActionKind,
   InstanceStatus,
 } from "./schemas.js";
@@ -39,22 +38,14 @@ export const INSTANCE_TRANSITIONS: Record<
   consumed: {},
 };
 
-export const BULK_TRANSITIONS: Record<
-  BulkLevel,
-  Partial<Record<BulkActionKind, "keep">>
-> = {
-  full: { moved: "keep", level_changed: "keep", consumed: "keep" },
-  good: { moved: "keep", level_changed: "keep", consumed: "keep" },
-  low: { moved: "keep", level_changed: "keep", consumed: "keep" },
-  empty: { moved: "keep", level_changed: "keep" },
-};
-
 export function getAvailableInstanceActions(status: InstanceStatus): InstanceActionKind[] {
   return Object.keys(INSTANCE_TRANSITIONS[status]) as InstanceActionKind[];
 }
 
-export function getAvailableBulkActions(level: BulkLevel): BulkActionKind[] {
-  return Object.keys(BULK_TRANSITIONS[level]) as BulkActionKind[];
+export function getAvailableBulkActions(quantity: number): BulkActionKind[] {
+  return quantity > 0
+    ? ["moved", "restocked", "consumed", "stocktaken", "adjusted"]
+    : ["moved", "restocked", "stocktaken", "adjusted"];
 }
 
 export function getNextInstanceStatus(
@@ -66,23 +57,34 @@ export function getNextInstanceStatus(
   return next ?? null;
 }
 
-export function getNextBulkLevel(
-  current: BulkLevel,
+export function getNextBulkQuantity(
+  current: number,
   event: string,
-  requestedLevel?: BulkLevel,
-): BulkLevel | null {
-  const transitions = BULK_TRANSITIONS[current];
-  if (!(event in transitions)) {
-    return null;
+  input: {
+    quantityDelta?: number;
+    quantity?: number;
+  } = {},
+): number | null {
+  switch (event) {
+    case "moved":
+      return current;
+    case "restocked":
+      return typeof input.quantityDelta === "number" ? current + input.quantityDelta : null;
+    case "consumed":
+      if (typeof input.quantityDelta !== "number" || input.quantityDelta > current) {
+        return null;
+      }
+      return current - input.quantityDelta;
+    case "stocktaken":
+      return typeof input.quantity === "number" ? input.quantity : null;
+    case "adjusted": {
+      if (typeof input.quantityDelta !== "number") {
+        return null;
+      }
+      const next = current + input.quantityDelta;
+      return next >= 0 ? next : null;
+    }
+    default:
+      return null;
   }
-
-  if (event === "level_changed") {
-    return requestedLevel ?? current;
-  }
-
-  if (event === "consumed") {
-    return requestedLevel ?? "low";
-  }
-
-  return current;
 }

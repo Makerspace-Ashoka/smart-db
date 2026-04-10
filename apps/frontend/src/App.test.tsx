@@ -753,11 +753,13 @@ describe("App", () => {
           qrCode: "QR-1006",
           partType: bulkType,
           location: "Fastener wall",
-          state: "low",
+          state: "4 pcs on hand",
           assignee: null,
+          quantity: 4,
+          minimumQuantity: 2,
         },
         recentEvents: [],
-        availableActions: ["moved", "level_changed", "consumed"],
+        availableActions: ["moved", "restocked", "consumed", "stocktaken", "adjusted"],
         partDb: {
           configured: false,
           connected: false,
@@ -789,7 +791,10 @@ describe("App", () => {
     await user.type(within(assignCard).getByLabelText(/^Location/), "Fastener wall");
     await user.click(within(assignCard).getByRole("button", { name: "More options" }));
     await user.selectOptions(within(assignCard).getByLabelText("Kind"), "bulk");
-    await user.selectOptions(within(assignCard).getByLabelText("Initial level"), "low");
+    await user.clear(within(assignCard).getByLabelText(/^Starting quantity/));
+    await user.type(within(assignCard).getByLabelText(/^Starting quantity/), "4");
+    await user.clear(within(assignCard).getByLabelText(/^Low-stock threshold/));
+    await user.type(within(assignCard).getByLabelText(/^Low-stock threshold/), "2");
     await user.type(within(assignCard).getByLabelText(/^New canonical name/), "M3 Screw");
     await user.clear(within(assignCard).getByLabelText(/^Category/));
     await user.type(within(assignCard).getByLabelText(/^Category/), "Fasteners");
@@ -812,7 +817,8 @@ describe("App", () => {
           imageUrl: null,
           countable: false,
         },
-        initialLevel: "low",
+        initialQuantity: 4,
+        minimumQuantity: 2,
       });
     });
   });
@@ -983,11 +989,13 @@ describe("App", () => {
         qrCode: "QR-1006",
         partType: bulkType,
         location: "Fastener wall",
-        state: "good",
+        state: "10 pcs on hand",
         assignee: null,
+        quantity: 10,
+        minimumQuantity: 2,
       },
       recentEvents: [],
-      availableActions: ["moved", "level_changed", "consumed"],
+      availableActions: ["moved", "restocked", "consumed", "stocktaken", "adjusted"],
       partDb: {
         configured: false,
         connected: false,
@@ -1006,21 +1014,20 @@ describe("App", () => {
       throw new Error("interact card was not rendered");
     }
 
-    await user.click(within(interactCard).getByRole("button", { name: "Update level" }));
-    await user.clear(within(interactCard).getByLabelText("Location"));
-    await user.type(within(interactCard).getByLabelText("Location"), "Drawer wall");
-    await user.selectOptions(within(interactCard).getByLabelText("Next level"), "empty");
+    await user.click(within(interactCard).getByRole("button", { name: "Stocktake" }));
+    await user.clear(within(interactCard).getByLabelText(/^Quantity on hand/));
+    await user.type(within(interactCard).getByLabelText(/^Quantity on hand/), "0");
     await user.type(within(interactCard).getByLabelText("Notes"), "used up");
-    await user.click(within(interactCard).getByRole("button", { name: "Confirm Update level" }));
+    await user.click(within(interactCard).getByRole("button", { name: "Confirm Stocktake" }));
 
     await waitFor(() => {
       expect(apiMock.recordEvent).toHaveBeenCalledWith({
         targetType: "bulk",
         targetId: "bulk-1",
-        event: "level_changed",
-        location: "Drawer wall",
+        event: "stocktaken",
+        location: "Fastener wall",
         notes: "used up",
-        nextLevel: "empty",
+        quantity: 0,
       });
     });
     expect(await screen.findByText("event failed")).toBeInTheDocument();

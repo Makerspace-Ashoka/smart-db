@@ -161,7 +161,8 @@ describe("schemas", () => {
         imageUrl: null,
         countable: false,
       },
-      initialLevel: "good",
+      initialQuantity: 0,
+      minimumQuantity: null,
     });
 
     expect(() =>
@@ -200,7 +201,7 @@ describe("schemas", () => {
         targetType: "bulk",
         targetId: "bulk-1",
         event: "consumed",
-        nextLevel: "low",
+        quantityDelta: 2,
       }),
     ).toEqual({
       targetType: "bulk",
@@ -208,7 +209,23 @@ describe("schemas", () => {
       event: "consumed",
       notes: null,
       location: null,
-      nextLevel: "low",
+      quantityDelta: 2,
+    });
+
+    expect(
+      recordEventRequestSchema.parse({
+        targetType: "bulk",
+        targetId: "bulk-1",
+        event: "stocktaken",
+        quantity: 11,
+      }),
+    ).toEqual({
+      targetType: "bulk",
+      targetId: "bulk-1",
+      event: "stocktaken",
+      notes: null,
+      location: null,
+      quantity: 11,
     });
 
     expect(() =>
@@ -224,6 +241,16 @@ describe("schemas", () => {
         targetType: "bulk",
         targetId: "bulk-1",
         event: "consumed",
+      }),
+    ).toThrow();
+
+    expect(() =>
+      recordEventRequestSchema.parse({
+        targetType: "bulk",
+        targetId: "bulk-1",
+        event: "adjusted",
+        quantityDelta: -3,
+        notes: null,
       }),
     ).toThrow();
 
@@ -335,6 +362,8 @@ describe("schemas", () => {
         location: "Shelf A",
         state: "available",
         assignee: null,
+        quantity: null,
+        minimumQuantity: null,
       },
       recentEvents: [],
       availableActions: ["moved", "checked_out"],

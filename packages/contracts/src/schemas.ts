@@ -28,6 +28,9 @@ export const stockEventKinds = [
   "checked_out",
   "returned",
   "consumed",
+  "restocked",
+  "stocktaken",
+  "adjusted",
   "level_changed",
   "damaged",
   "lost",
@@ -42,7 +45,7 @@ export const instanceActionKinds = [
   "lost",
   "disposed",
 ] as const;
-export const bulkActionKinds = ["moved", "level_changed", "consumed"] as const;
+export const bulkActionKinds = ["moved", "restocked", "consumed", "stocktaken", "adjusted"] as const;
 
 export const instanceStatusSchema = z.enum(instanceStatuses);
 export const bulkLevelSchema = z.enum(bulkLevels);
@@ -221,6 +224,8 @@ export const inventoryEntitySummarySchema = z
     location: nonEmptyString,
     state: nonEmptyString,
     assignee: nullableLooseString.default(null),
+    quantity: z.number().nonnegative().nullable().default(null),
+    minimumQuantity: z.number().nonnegative().nullable().default(null),
   })
   .strict();
 
@@ -341,7 +346,8 @@ export const bulkAssignQrRequestSchema = z
     location: nonEmptyString,
     notes: nullableLooseString.default(null),
     partType: partTypeDraftSchema,
-    initialLevel: bulkLevelSchema.default("good"),
+    initialQuantity: z.number().nonnegative().default(0),
+    minimumQuantity: z.number().nonnegative().nullable().default(null),
   })
   .strict();
 
@@ -449,10 +455,10 @@ export const bulkRecordEventRequestSchema = z.discriminatedUnion("event", [
     .object({
       targetType: z.literal("bulk"),
       targetId: identifierSchema,
-      event: z.literal("level_changed"),
+      event: z.literal("restocked"),
       notes: normalizedOptionalString,
       location: normalizedOptionalString,
-      nextLevel: bulkLevelSchema,
+      quantityDelta: z.number().positive(),
     })
     .strict(),
   z
@@ -462,7 +468,27 @@ export const bulkRecordEventRequestSchema = z.discriminatedUnion("event", [
       event: z.literal("consumed"),
       notes: normalizedOptionalString,
       location: normalizedOptionalString,
-      nextLevel: bulkLevelSchema,
+      quantityDelta: z.number().positive(),
+    })
+    .strict(),
+  z
+    .object({
+      targetType: z.literal("bulk"),
+      targetId: identifierSchema,
+      event: z.literal("stocktaken"),
+      notes: normalizedOptionalString,
+      location: normalizedOptionalString,
+      quantity: z.number().nonnegative(),
+    })
+    .strict(),
+  z
+    .object({
+      targetType: z.literal("bulk"),
+      targetId: identifierSchema,
+      event: z.literal("adjusted"),
+      notes: nonEmptyString,
+      location: normalizedOptionalString,
+      quantityDelta: z.number(),
     })
     .strict(),
 ]);

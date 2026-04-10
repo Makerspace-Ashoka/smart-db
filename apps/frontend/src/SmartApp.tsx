@@ -2,7 +2,6 @@ import { useEffect, useRef, useState } from "react";
 import type { FormEvent } from "react";
 import type {
   AuthSession,
-  BulkLevel,
   DashboardSummary,
   InstanceStatus,
   QrBatch,
@@ -40,6 +39,7 @@ import {
   buildAssignRequest,
   buildEventRequest,
   errorMessage,
+  getEventFormIssues,
   getAssignFormIssues,
   type AssignFormState,
   type EventFormState,
@@ -88,7 +88,8 @@ const defaultAssignForm: AssignFormState = {
   category: "",
   countable: true,
   initialStatus: "available",
-  initialLevel: "good",
+  initialQuantity: "0",
+  minimumQuantity: "",
 };
 
 const defaultEventForm: EventFormState = {
@@ -96,7 +97,8 @@ const defaultEventForm: EventFormState = {
   targetId: "",
   event: "moved",
   location: "Unknown",
-  nextLevel: "good",
+  quantityDelta: "",
+  quantity: "",
   assignee: "",
   notes: "",
 };
@@ -758,6 +760,7 @@ export default function SmartApp() {
 
   const mergeOptions = mergeSearch.results.length > 0 ? mergeSearch.results : catalogSuggestions;
   const assignIssues = getAssignFormIssues(assignForm);
+  const eventIssues = getEventFormIssues(eventForm);
   const cameraBlockedReason =
     pendingAction !== null
       ? "Finish the current action before scanning another item."
@@ -882,6 +885,7 @@ export default function SmartApp() {
               lastAssignment={lastAssignment}
               onAssignSame={() => void handleAssignSame()}
               eventForm={eventForm}
+              eventIssues={eventIssues}
               onEventFormChange={setEventForm}
               onRecordEvent={handleRecordEvent}
             />
@@ -998,7 +1002,7 @@ function buildDefaultEventFormForEntity(
     targetType: entity.targetType,
     targetId: entity.id,
     location: entity.location,
-    nextLevel: entity.targetType === "bulk" ? (entity.state as BulkLevel) : defaultEventForm.nextLevel,
+    quantity: entity.targetType === "bulk" && entity.quantity !== null ? String(entity.quantity) : "",
   };
 }
 

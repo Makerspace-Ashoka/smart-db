@@ -1,6 +1,5 @@
 import type {
   AssignQrRequest,
-  BulkLevel,
   InstanceStatus,
   InventoryTargetKind,
   PartDbSyncFailure,
@@ -25,11 +24,15 @@ export type AssignFormState = {
   category: string;
   countable: boolean;
   initialStatus: InstanceStatus;
-  initialLevel: BulkLevel;
+  initialQuantity: string;
+  minimumQuantity: string;
 };
 
 export type AssignFormIssues = Partial<
-  Record<"location" | "existingPartTypeId" | "canonicalName" | "category", string>
+  Record<
+    "location" | "existingPartTypeId" | "canonicalName" | "category" | "initialQuantity" | "minimumQuantity",
+    string
+  >
 >;
 
 export type EventFormState = {
@@ -37,16 +40,32 @@ export type EventFormState = {
   targetId: string;
   event: StockEventKind;
   location: string;
-  nextLevel: BulkLevel;
+  quantityDelta: string;
+  quantity: string;
   assignee: string;
   notes: string;
 };
+
+export type EventFormIssues = Partial<
+  Record<"location" | "quantityDelta" | "quantity" | "notes", string>
+>;
 
 export function getAssignFormIssues(form: AssignFormState): AssignFormIssues {
   const issues: AssignFormIssues = {};
 
   if (!form.location.trim()) {
     issues.location = "Location is required.";
+  }
+
+  if (form.entityKind === "bulk") {
+    const initialQuantity = parseNonNegativeNumber(form.initialQuantity);
+    if (initialQuantity === null) {
+      issues.initialQuantity = "Starting quantity must be zero or greater.";
+    }
+
+    if (form.minimumQuantity.trim().length > 0 && parseNonNegativeNumber(form.minimumQuantity) === null) {
+      issues.minimumQuantity = "Low-stock threshold must be zero or greater.";
+    }
   }
 
   if (form.partTypeMode === "existing") {
@@ -82,6 +101,8 @@ export function buildAssignRequest(form: AssignFormState): AssignQrRequest {
 
   const notes = normalizeNullable(form.notes);
   const location = form.location.trim();
+  const initialQuantity = parseNonNegativeNumber(form.initialQuantity);
+  const minimumQuantity = parseNullableNonNegativeNumber(form.minimumQuantity);
 
   if (form.partTypeMode === "existing") {
     const existingPartTypeId = form.existingPartTypeId.trim();
@@ -107,7 +128,8 @@ export function buildAssignRequest(form: AssignFormState): AssignQrRequest {
             kind: "existing",
             existingPartTypeId,
           },
-          initialLevel: form.initialLevel,
+          initialQuantity: initialQuantity ?? 0,
+          minimumQuantity,
         };
   }
 
@@ -142,8 +164,57 @@ export function buildAssignRequest(form: AssignFormState): AssignQrRequest {
           imageUrl: null,
           countable: form.countable,
         },
-        initialLevel: form.initialLevel,
+        initialQuantity: initialQuantity ?? 0,
+        minimumQuantity,
       };
+}
+
+export function getEventFormIssues(form: EventFormState): EventFormIssues {
+  const issues: EventFormIssues = {};
+
+  if (form.targetType === "instance") {
+    if (form.event === "moved" && !form.location.trim()) {
+      issues.location = "Destination location is required.";
+    }
+
+    return issues;
+  }
+
+  const event = narrowBulkEvent(form.event);
+  if (event === "moved") {
+    if (!form.location.trim()) {
+      issues.location = "Destination location is required.";
+    }
+    return issues;
+  }
+
+  if (event === "restocked" || event === "consumed") {
+    if (parsePositiveNumber(form.quantityDelta) === null) {
+      issues.quantityDelta = "Enter a quantity greater than zero.";
+    }
+    return issues;
+  }
+
+  if (event === "stocktaken") {
+    if (parseNonNegativeNumber(form.quantity) === null) {
+      issues.quantity = "Enter the measured quantity on hand.";
+    }
+    return issues;
+  }
+
+  if (parseSignedNumber(form.quantityDelta) === null) {
+    issues.quantityDelta = "Enter a positive or negative adjustment.";
+  }
+
+  if (!form.notes.trim()) {
+    issues.notes = "Explain why this correction is needed.";
+  }
+
+  return issues;
+}
+
+export function hasEventFormIssues(issues: EventFormIssues): boolean {
+  return Object.keys(issues).length > 0;
 }
 
 export function buildEventRequest(form: EventFormState): RecordEventRequest {
@@ -188,14 +259,42 @@ export function buildEventRequest(form: EventFormState): RecordEventRequest {
   const event = narrowBulkEvent(form.event);
   const location = normalizeNullable(form.location);
   const notes = normalizeNullable(form.notes);
-  if (event === "level_changed" || event === "consumed") {
+  const issues = getEventFormIssues(form);
+  const firstIssue = Object.values(issues)[0];
+  if (firstIssue) {
+    throw new InvariantError(firstIssue);
+  }
+
+  if (event === "restocked" || event === "consumed") {
     return {
       targetType: "bulk",
       targetId: form.targetId,
       event,
       location,
       notes,
-      nextLevel: form.nextLevel,
+      quantityDelta: parsePositiveNumber(form.quantityDelta) ?? 0,
+    };
+  }
+
+  if (event === "stocktaken") {
+    return {
+      targetType: "bulk",
+      targetId: form.targetId,
+      event,
+      location,
+      notes,
+      quantity: parseNonNegativeNumber(form.quantity) ?? 0,
+    };
+  }
+
+  if (event === "adjusted") {
+    return {
+      targetType: "bulk",
+      targetId: form.targetId,
+      event,
+      location,
+      notes: form.notes.trim(),
+      quantityDelta: parseSignedNumber(form.quantityDelta) ?? 0,
     };
   }
 
@@ -221,27 +320,51 @@ export function formatCategoryPath(path: string[]): string {
   return path.join(" / ");
 }
 
+export function formatQuantity(value: number | null | undefined): string {
+  if (typeof value !== "number" || Number.isNaN(value)) {
+    return "0";
+  }
+
+  return Number.isInteger(value) ? String(value) : value.toFixed(2).replace(/\.?0+$/, "");
+}
+
+export function formatBulkState(quantity: number | null, unitSymbol: string, minimumQuantity: number | null = null): string {
+  if (quantity === null) {
+    return "Quantity unavailable";
+  }
+
+  const amount = `${formatQuantity(quantity)} ${unitSymbol} on hand`;
+  if (minimumQuantity !== null && quantity <= minimumQuantity) {
+    return `${amount} · low stock`;
+  }
+
+  return amount;
+}
+
 export function narrowInstanceEvent(
   event: StockEventKind,
 ): Extract<
   StockEventKind,
   "moved" | "checked_out" | "returned" | "consumed" | "damaged" | "lost" | "disposed"
 > {
-  if (event === "level_changed" || event === "labeled") {
+  if (!["moved", "checked_out", "returned", "consumed", "damaged", "lost", "disposed"].includes(event)) {
     throw new InvariantError(`Invalid instance event: ${event}`);
   }
 
-  return event;
+  return event as Extract<
+    StockEventKind,
+    "moved" | "checked_out" | "returned" | "consumed" | "damaged" | "lost" | "disposed"
+  >;
 }
 
 export function narrowBulkEvent(
   event: StockEventKind,
-): Extract<StockEventKind, "moved" | "level_changed" | "consumed"> {
-  if (event !== "moved" && event !== "level_changed" && event !== "consumed") {
+): Extract<StockEventKind, "moved" | "restocked" | "consumed" | "stocktaken" | "adjusted"> {
+  if (!["moved", "restocked", "consumed", "stocktaken", "adjusted"].includes(event)) {
     throw new InvariantError(`Invalid bulk event: ${event}`);
   }
 
-  return event;
+  return event as Extract<StockEventKind, "moved" | "restocked" | "consumed" | "stocktaken" | "adjusted">;
 }
 
 export function errorMessage(value: unknown): string {
@@ -262,6 +385,12 @@ export function actionLabel(event: StockEventKind): string {
       return "Check out";
     case "level_changed":
       return "Update level";
+    case "restocked":
+      return "Restock";
+    case "stocktaken":
+      return "Stocktake";
+    case "adjusted":
+      return "Adjust quantity";
     case "disposed":
       return "Dispose";
     case "returned":
@@ -421,4 +550,39 @@ function stringField(value: unknown): string | null {
 
 function numberField(value: unknown): number | null {
   return typeof value === "number" && Number.isFinite(value) ? value : null;
+}
+
+function parseNonNegativeNumber(value: string | undefined): number | null {
+  if (typeof value !== "string" || !value.trim()) {
+    return null;
+  }
+
+  const parsed = Number(value);
+  return Number.isFinite(parsed) && parsed >= 0 ? parsed : null;
+}
+
+function parseNullableNonNegativeNumber(value: string | undefined): number | null {
+  if (typeof value !== "string" || !value.trim()) {
+    return null;
+  }
+
+  return parseNonNegativeNumber(value);
+}
+
+function parsePositiveNumber(value: string | undefined): number | null {
+  if (typeof value !== "string" || !value.trim()) {
+    return null;
+  }
+
+  const parsed = Number(value);
+  return Number.isFinite(parsed) && parsed > 0 ? parsed : null;
+}
+
+function parseSignedNumber(value: string | undefined): number | null {
+  if (typeof value !== "string" || !value.trim()) {
+    return null;
+  }
+
+  const parsed = Number(value);
+  return Number.isFinite(parsed) ? parsed : null;
 }

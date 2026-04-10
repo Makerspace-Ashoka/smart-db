@@ -28,7 +28,8 @@ describe("App helpers", () => {
         category: "",
         countable: true,
         initialStatus: "available",
-        initialLevel: "good",
+        initialQuantity: "0",
+        minimumQuantity: "",
       }),
     ).toEqual({
       qrCode: "QR-1001",
@@ -54,7 +55,8 @@ describe("App helpers", () => {
         category: "Microcontrollers",
         countable: true,
         initialStatus: "available",
-        initialLevel: "good",
+        initialQuantity: "0",
+        minimumQuantity: "",
       }),
     ).toEqual({
       qrCode: "QR-1003",
@@ -85,7 +87,8 @@ describe("App helpers", () => {
         category: "Fasteners",
         countable: false,
         initialStatus: "available",
-        initialLevel: "good",
+        initialQuantity: "8",
+        minimumQuantity: "2",
       }),
     ).toEqual({
       qrCode: "QR-1002",
@@ -101,7 +104,8 @@ describe("App helpers", () => {
         imageUrl: null,
         countable: false,
         },
-        initialLevel: "good",
+        initialQuantity: 8,
+        minimumQuantity: 2,
       });
 
     expect(
@@ -116,7 +120,8 @@ describe("App helpers", () => {
         category: "",
         countable: false,
         initialStatus: "available",
-        initialLevel: "low",
+        initialQuantity: "4",
+        minimumQuantity: "",
       }),
     ).toEqual({
       qrCode: "QR-1004",
@@ -127,7 +132,8 @@ describe("App helpers", () => {
         kind: "existing",
         existingPartTypeId: "part-2",
       },
-      initialLevel: "low",
+      initialQuantity: 4,
+      minimumQuantity: null,
     });
   });
 
@@ -139,7 +145,8 @@ describe("App helpers", () => {
         targetId: "instance-1",
         event: "checked_out",
         location: "Workbench",
-        nextLevel: "good",
+        quantityDelta: "",
+        quantity: "",
         assignee: "Ayesha",
         notes: "",
       }),
@@ -156,19 +163,20 @@ describe("App helpers", () => {
       buildEventRequest({
         targetType: "bulk",
         targetId: "bulk-1",
-        event: "level_changed",
+        event: "restocked",
         location: "Wall",
-        nextLevel: "low",
+        quantityDelta: "5",
+        quantity: "",
         assignee: "",
         notes: "running low",
       }),
     ).toEqual({
       targetType: "bulk",
       targetId: "bulk-1",
-      event: "level_changed",
+      event: "restocked",
       location: "Wall",
       notes: "running low",
-      nextLevel: "low",
+      quantityDelta: 5,
     });
 
     expect(
@@ -177,7 +185,8 @@ describe("App helpers", () => {
         targetId: "bulk-1",
         event: "moved",
         location: "Shelf B",
-        nextLevel: "good",
+        quantityDelta: "",
+        quantity: "",
         assignee: "",
         notes: "",
       }),
@@ -192,7 +201,7 @@ describe("App helpers", () => {
 
   it("guards impossible event combinations", () => {
     expect(narrowInstanceEvent("checked_out")).toBe("checked_out");
-    expect(narrowBulkEvent("level_changed")).toBe("level_changed");
+    expect(narrowBulkEvent("restocked")).toBe("restocked");
     expect(() => narrowInstanceEvent("level_changed")).toThrowError(InvariantError);
     expect(() => narrowBulkEvent("lost")).toThrowError(InvariantError);
     expect(() =>
@@ -207,7 +216,8 @@ describe("App helpers", () => {
         category: "",
         countable: true,
         initialStatus: "available",
-        initialLevel: "good",
+        initialQuantity: "0",
+        minimumQuantity: "",
       }),
     ).toThrowError("Choose an existing part type or switch to creating a new one.");
     expect(
@@ -222,7 +232,8 @@ describe("App helpers", () => {
         category: "",
         countable: true,
         initialStatus: "available",
-        initialLevel: "good",
+        initialQuantity: "0",
+        minimumQuantity: "",
       }),
     ).toEqual({
       location: "Location is required.",
@@ -241,7 +252,8 @@ describe("App helpers", () => {
         category: "Electronics/Bad|Segment",
         countable: true,
         initialStatus: "available",
-        initialLevel: "good",
+        initialQuantity: "0",
+        minimumQuantity: "",
       }),
     ).toEqual({
       category: "Category segment 'Bad|Segment' contains unsupported characters.",
@@ -259,7 +271,8 @@ describe("App helpers", () => {
           category: "",
           countable: true,
           initialStatus: "available",
-          initialLevel: "good",
+          initialQuantity: "0",
+          minimumQuantity: "",
         }),
       ),
     ).toBe(true);
@@ -269,7 +282,8 @@ describe("App helpers", () => {
         targetId: "instance-1",
         event: "moved",
         location: "   ",
-        nextLevel: "good",
+        quantityDelta: "",
+        quantity: "",
         assignee: "",
         notes: "",
       }),
@@ -280,11 +294,12 @@ describe("App helpers", () => {
         targetId: "bulk-1",
         event: "moved",
         location: "",
-        nextLevel: "good",
+        quantityDelta: "",
+        quantity: "",
         assignee: "",
         notes: "",
       }),
-    ).toThrowError("Moved event requires a destination location.");
+    ).toThrowError("Destination location is required.");
   });
 
   it("humanizes structured API failures", () => {

@@ -2,21 +2,22 @@ import { useState } from "react";
 import type { FormEvent } from "react";
 import type {
   AssignQrRequest,
-  BulkLevel,
   InstanceStatus,
   PartType,
   ScanResponse,
   StockEventKind,
 } from "@smart-db/contracts";
-import { bulkLevels, instanceStatuses } from "@smart-db/contracts";
+import { instanceStatuses } from "@smart-db/contracts";
 import { PanelTitle } from "../components/PanelTitle";
 import { QRScanner } from "../components/QRScanner";
 import {
   actionLabel,
   formatCategoryPath,
+  formatQuantity,
   formatTimestamp,
   type AssignFormIssues,
   type AssignFormState,
+  type EventFormIssues,
   type EventFormState,
 } from "../SmartApp.helpers";
 
@@ -58,6 +59,7 @@ interface ScanTabProps {
   onAssignSame: () => void;
   // Interact
   eventForm: EventFormState;
+  eventIssues: EventFormIssues;
   onEventFormChange: (updater: (current: EventFormState) => EventFormState) => void;
   onRecordEvent: (event: FormEvent<HTMLFormElement>) => void;
 }
@@ -190,7 +192,8 @@ export function ScanTab(props: ScanTabProps) {
                             category: formatCategoryPath(partType.categoryPath),
                             countable: partType.countable,
                             initialStatus: "available",
-                            initialLevel: "good",
+                            initialQuantity: "0",
+                            minimumQuantity: "",
                           }))
                         }
                       >
@@ -307,24 +310,47 @@ export function ScanTab(props: ScanTabProps) {
                     </select>
                   </label>
                 ) : (
-                  <label>
-                    Initial level
-                    <select
-                      value={props.assignForm.initialLevel}
-                      onChange={(event) =>
-                        props.onAssignFormChange((current) => ({
-                          ...current,
-                          initialLevel: event.target.value as BulkLevel,
-                        }))
-                      }
-                    >
-                      {bulkLevels.map((level) => (
-                        <option key={level} value={level}>
-                          {level}
-                        </option>
-                      ))}
-                    </select>
-                  </label>
+                  <>
+                    <label>
+                      Starting quantity
+                      <input
+                        type="number"
+                        min="0"
+                        step="any"
+                        inputMode="decimal"
+                        value={props.assignForm.initialQuantity}
+                        onChange={(event) =>
+                          props.onAssignFormChange((current) => ({
+                            ...current,
+                            initialQuantity: event.target.value,
+                          }))
+                        }
+                      />
+                      {props.assignIssues.initialQuantity ? (
+                        <span className="field-error">{props.assignIssues.initialQuantity}</span>
+                      ) : null}
+                    </label>
+                    <label>
+                      Low-stock threshold
+                      <input
+                        type="number"
+                        min="0"
+                        step="any"
+                        inputMode="decimal"
+                        value={props.assignForm.minimumQuantity}
+                        onChange={(event) =>
+                          props.onAssignFormChange((current) => ({
+                            ...current,
+                            minimumQuantity: event.target.value,
+                          }))
+                        }
+                        placeholder="Optional"
+                      />
+                      {props.assignIssues.minimumQuantity ? (
+                        <span className="field-error">{props.assignIssues.minimumQuantity}</span>
+                      ) : null}
+                    </label>
+                  </>
                 )}
                 {props.assignForm.partTypeMode === "new" ? (
                   <label>
@@ -373,6 +399,14 @@ export function ScanTab(props: ScanTabProps) {
             {props.scanResult.entity.targetType} in {props.scanResult.entity.location} · current state{" "}
             <strong>{props.scanResult.entity.state}</strong>
           </p>
+          {props.scanResult.entity.targetType === "bulk" && props.scanResult.entity.quantity !== null ? (
+            <p className="muted-copy">
+              Quantity: {formatQuantity(props.scanResult.entity.quantity)} {props.scanResult.entity.partType.unit.symbol}
+              {props.scanResult.entity.minimumQuantity !== null
+                ? ` · threshold ${formatQuantity(props.scanResult.entity.minimumQuantity)} ${props.scanResult.entity.partType.unit.symbol}`
+                : ""}
+            </p>
+          ) : null}
             <div className="action-buttons">
               {props.scanResult.availableActions.map((action) => (
                 <button
@@ -393,8 +427,7 @@ export function ScanTab(props: ScanTabProps) {
           </div>
           <form className="form-grid" onSubmit={props.onRecordEvent}>
             {(props.eventForm.event === "moved" ||
-              props.eventForm.event === "checked_out" ||
-              props.eventForm.event === "level_changed") && (
+              props.eventForm.event === "checked_out") && (
               <label>
                 Location
                 <input
@@ -406,6 +439,9 @@ export function ScanTab(props: ScanTabProps) {
                     }))
                   }
                 />
+                {props.eventIssues.location ? (
+                  <span className="field-error">{props.eventIssues.location}</span>
+                ) : null}
               </label>
             )}
             {props.eventForm.event === "checked_out" && (
@@ -422,26 +458,49 @@ export function ScanTab(props: ScanTabProps) {
                 />
               </label>
             )}
-            {(props.eventForm.event === "level_changed" ||
-              props.eventForm.event === "consumed") &&
+            {(props.eventForm.event === "restocked" ||
+              props.eventForm.event === "consumed" ||
+              props.eventForm.event === "adjusted") &&
               props.scanResult.entity.targetType === "bulk" && (
               <label>
-                Next level
-                <select
-                  value={props.eventForm.nextLevel}
+                {props.eventForm.event === "adjusted" ? "Adjustment" : "Quantity change"}
+                <input
+                  type="number"
+                  step="any"
+                  inputMode="decimal"
+                  value={props.eventForm.quantityDelta}
                   onChange={(event) =>
                     props.onEventFormChange((current) => ({
                       ...current,
-                      nextLevel: event.target.value as BulkLevel,
+                      quantityDelta: event.target.value,
                     }))
                   }
-                >
-                  {bulkLevels.map((level) => (
-                    <option key={level} value={level}>
-                      {level}
-                    </option>
-                  ))}
-                </select>
+                />
+                {props.eventIssues.quantityDelta ? (
+                  <span className="field-error">{props.eventIssues.quantityDelta}</span>
+                ) : null}
+              </label>
+            )}
+            {props.eventForm.event === "stocktaken" &&
+              props.scanResult.entity.targetType === "bulk" && (
+              <label>
+                Quantity on hand
+                <input
+                  type="number"
+                  min="0"
+                  step="any"
+                  inputMode="decimal"
+                  value={props.eventForm.quantity}
+                  onChange={(event) =>
+                    props.onEventFormChange((current) => ({
+                      ...current,
+                      quantity: event.target.value,
+                    }))
+                  }
+                />
+                {props.eventIssues.quantity ? (
+                  <span className="field-error">{props.eventIssues.quantity}</span>
+                ) : null}
               </label>
             )}
             <label className="wide">
@@ -452,11 +511,14 @@ export function ScanTab(props: ScanTabProps) {
                   props.onEventFormChange((current) => ({
                     ...current,
                     notes: event.target.value,
-                  }))
-                }
-              />
-            </label>
-            <button type="submit" disabled={props.pendingAction !== null}>
+                    }))
+                  }
+                />
+                {props.eventIssues.notes ? (
+                  <span className="field-error">{props.eventIssues.notes}</span>
+                ) : null}
+              </label>
+            <button type="submit" disabled={props.pendingAction !== null || Object.keys(props.eventIssues).length > 0}>
               {props.pendingAction === "event" ? "Saving..." : `Confirm ${actionLabel(props.eventForm.event)}`}
             </button>
           </form>

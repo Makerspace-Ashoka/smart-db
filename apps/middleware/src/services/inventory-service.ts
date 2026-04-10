@@ -35,7 +35,7 @@ import {
   getAvailableInstanceActions,
   getAvailableBulkActions,
   getNextInstanceStatus,
-  getNextBulkLevel,
+  getNextBulkQuantity,
 } from "@smart-db/contracts";
 import { PartDbClient } from "../partdb/partdb-client.js";
 import type { PartDbOutbox } from "../outbox/partdb-outbox.js";
@@ -281,7 +281,7 @@ export class InventoryService {
           targetType: "bulk",
         },
         recentEvents,
-        availableActions: getAvailableBulkActions(entity.state as BulkLevel),
+        availableActions: getAvailableBulkActions(entity.quantity ?? 0),
         partDb,
       };
     }
@@ -376,17 +376,22 @@ export class InventoryService {
           createdAt: timestamp,
         });
       } else {
-        const initialLevel = validBulkLevel(input.initialLevel) ? input.initialLevel : "good";
+        const initialQuantity = requireFiniteNonNegativeQuantity(input.initialQuantity, "initialQuantity");
+        const minimumQuantity =
+          input.minimumQuantity === null
+            ? null
+            : requireFiniteNonNegativeQuantity(input.minimumQuantity, "minimumQuantity");
+        const initialLevel = persistedBulkLevelFromQuantity(initialQuantity, minimumQuantity);
         const id = randomUUID();
         this.db
           .prepare(
             `
             INSERT INTO bulk_stocks
-              (id, qr_code, part_type_id, level, location, created_at, updated_at)
-            VALUES (?, ?, ?, ?, ?, ?, ?)
+              (id, qr_code, part_type_id, level, quantity, minimum_quantity, location, created_at, updated_at)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
             `,
           )
-          .run(id, qrCodeValue, partType.id, initialLevel, location, timestamp, timestamp);
+          .run(id, qrCodeValue, partType.id, initialLevel, initialQuantity, minimumQuantity, location, timestamp, timestamp);
 
         this.updateQrAssignment(qrCodeValue, "bulk", id, timestamp);
         this.enqueueCreateLot(
@@ -400,7 +405,7 @@ export class InventoryService {
           location,
           qrCodeValue,
           input.notes ?? "",
-          quantityFromBulkLevel(initialLevel),
+          initialQuantity,
           partSyncDependencyId,
         );
         this.insertEvent({
@@ -408,7 +413,7 @@ export class InventoryService {
           targetId: id,
           event: "labeled",
           fromState: null,
-          toState: initialLevel,
+          toState: formatBulkState(initialQuantity, partType.unit.symbol, minimumQuantity),
           location,
           actor,
           notes: input.notes ?? null,
@@ -515,21 +520,41 @@ export class InventoryService {
     }
 
     const current = mapBulkStock(row);
+    if ("quantityDelta" in input && !Number.isFinite(input.quantityDelta)) {
+      throw new InvariantError(`Parsed '${input.event}' command is missing a finite quantity delta.`, {
+        event: input.event,
+      });
+    }
+    if ("quantity" in input && !Number.isFinite(input.quantity)) {
+      throw new InvariantError(`Parsed '${input.event}' command is missing a finite quantity.`, {
+        event: input.event,
+      });
+    }
+
     const location =
       input.event === "moved"
         ? requireChangedLocation(input.location, current.location, input.event)
         : input.location?.trim() || current.location;
 
-    const requestedLevel =
-      input.event === "moved"
-        ? undefined
-        : requireBulkNextLevel(input.nextLevel, input.event);
-    const nextLevel = getNextBulkLevel(current.level, input.event, requestedLevel);
-    if (nextLevel === null) {
+    const nextQuantity = getNextBulkQuantity(
+      current.quantity,
+      input.event,
+      "quantity" in input
+        ? { quantity: input.quantity }
+        : "quantityDelta" in input
+          ? { quantityDelta: input.quantityDelta }
+          : {},
+    );
+    if (nextQuantity === null) {
       throw new ConflictError(
-        `Cannot perform '${input.event}' on bulk stock with level '${current.level}'.`,
-        { currentLevel: current.level, event: input.event },
+        `Cannot perform '${input.event}' on bulk stock with quantity '${current.quantity}'.`,
+        { currentQuantity: current.quantity, event: input.event },
       );
+    }
+    const nextLevel = persistedBulkLevelFromQuantity(nextQuantity, current.minimumQuantity);
+    const partType = this.findPartType(current.partTypeId);
+    if (!partType) {
+      throw new InvariantError("Bulk stock is missing its part type.", { partTypeId: current.partTypeId });
     }
 
     this.withTransaction(() => {
@@ -537,18 +562,18 @@ export class InventoryService {
         .prepare(
           `
           UPDATE bulk_stocks
-          SET level = ?, location = ?, updated_at = ?
+          SET level = ?, quantity = ?, location = ?, updated_at = ?
           WHERE id = ?
           `,
         )
-        .run(nextLevel, location, timestamp, current.id);
+        .run(nextLevel, nextQuantity, location, timestamp, current.id);
 
       this.insertEvent({
         targetType: "bulk",
         targetId: current.id,
         event: input.event,
-        fromState: current.level,
-        toState: nextLevel,
+        fromState: formatBulkState(current.quantity, partType.unit.symbol, current.minimumQuantity),
+        toState: formatBulkState(nextQuantity, partType.unit.symbol, current.minimumQuantity),
         location,
         actor,
         notes: input.notes ?? null,
@@ -576,7 +601,7 @@ export class InventoryService {
           },
           correlationId,
           {
-            amount: quantityFromBulkLevel(nextLevel),
+            amount: nextQuantity,
           },
         );
       }
@@ -1022,12 +1047,19 @@ export class InventoryService {
             pt.id AS pt_id,
             pt.canonical_name AS pt_canonical_name,
             pt.category AS pt_category,
+            pt.category_path_json AS pt_category_path_json,
             pt.aliases_json AS pt_aliases_json,
             pt.image_url AS pt_image_url,
             pt.notes AS pt_notes,
             pt.countable AS pt_countable,
+            pt.unit_symbol AS pt_unit_symbol,
+            pt.unit_name AS pt_unit_name,
+            pt.unit_is_integer AS pt_unit_is_integer,
             pt.needs_review AS pt_needs_review,
             pt.partdb_part_id AS pt_partdb_part_id,
+            pt.partdb_category_id AS pt_partdb_category_id,
+            pt.partdb_unit_id AS pt_partdb_unit_id,
+            pt.partdb_sync_status AS pt_partdb_sync_status,
             pt.created_at AS pt_created_at,
             pt.updated_at AS pt_updated_at
           FROM physical_instances pi
@@ -1064,12 +1096,19 @@ export class InventoryService {
           pt.id AS pt_id,
           pt.canonical_name AS pt_canonical_name,
           pt.category AS pt_category,
+          pt.category_path_json AS pt_category_path_json,
           pt.aliases_json AS pt_aliases_json,
           pt.image_url AS pt_image_url,
           pt.notes AS pt_notes,
           pt.countable AS pt_countable,
+          pt.unit_symbol AS pt_unit_symbol,
+          pt.unit_name AS pt_unit_name,
+          pt.unit_is_integer AS pt_unit_is_integer,
           pt.needs_review AS pt_needs_review,
           pt.partdb_part_id AS pt_partdb_part_id,
+          pt.partdb_category_id AS pt_partdb_category_id,
+          pt.partdb_unit_id AS pt_partdb_unit_id,
+          pt.partdb_sync_status AS pt_partdb_sync_status,
           pt.created_at AS pt_created_at,
           pt.updated_at AS pt_updated_at
         FROM bulk_stocks bs
@@ -1090,8 +1129,14 @@ export class InventoryService {
         targetType: "bulk",
         qrCode: String(row.qr_code),
         location: String(row.location),
-        state: String(row.level),
+        state: formatBulkState(
+          Number(row.quantity ?? 0),
+          stringOrNull(row.pt_unit_symbol) ?? "pcs",
+          row.minimum_quantity === null || row.minimum_quantity === undefined ? null : Number(row.minimum_quantity),
+        ),
         assignee: null,
+        quantity: Number(row.quantity ?? 0),
+        minimumQuantity: row.minimum_quantity === null || row.minimum_quantity === undefined ? null : Number(row.minimum_quantity),
         partType: mapPartTypeFromJoin(row, "pt_"),
       },
       "bulk stock summary",
@@ -1359,19 +1404,6 @@ function validInstanceStatus(value: unknown): value is PhysicalInstance["status"
   return typeof value === "string" && instanceStatuses.includes(value as PhysicalInstance["status"]);
 }
 
-function quantityFromBulkLevel(level: BulkLevel): number {
-  switch (level) {
-    case "full":
-      return 100;
-    case "good":
-      return 75;
-    case "low":
-      return 25;
-    case "empty":
-      return 0;
-  }
-}
-
 function parseAliases(value: unknown): string[] {
   if (typeof value !== "string") {
     return [];
@@ -1450,17 +1482,46 @@ function requireChangedLocation(
   return normalized;
 }
 
-function requireBulkNextLevel(
-  nextLevel: unknown,
-  event: "level_changed" | "consumed",
+function persistedBulkLevelFromQuantity(
+  quantity: number,
+  minimumQuantity: number | null,
 ): BulkLevel {
-  if (!validBulkLevel(nextLevel)) {
-    throw new InvariantError(`Parsed '${event}' command is missing a valid next level.`, {
-      event,
+  if (quantity <= 0) {
+    return "empty";
+  }
+
+  if (minimumQuantity !== null && quantity <= minimumQuantity) {
+    return "low";
+  }
+
+  return "good";
+}
+
+function formatBulkState(
+  quantity: number,
+  unitSymbol: string,
+  minimumQuantity: number | null,
+): string {
+  const amount = `${formatQuantity(quantity)} ${unitSymbol} on hand`;
+  if (minimumQuantity !== null && quantity <= minimumQuantity) {
+    return `${amount} · low stock`;
+  }
+
+  return amount;
+}
+
+function formatQuantity(value: number): string {
+  return Number.isInteger(value) ? String(value) : value.toFixed(2).replace(/\.?0+$/, "");
+}
+
+function requireFiniteNonNegativeQuantity(value: number, field: string): number {
+  if (!Number.isFinite(value) || value < 0) {
+    throw new InvariantError(`Parsed bulk command is missing a valid ${field}.`, {
+      field,
     });
   }
 
-  return nextLevel;
+  return value;
 }
 
 export const inventoryServiceTestInternals = {
