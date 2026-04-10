@@ -18,12 +18,21 @@ const partType: PartType = {
   id: "part-1",
   canonicalName: "Arduino Uno R3",
   category: "Microcontrollers",
+  categoryPath: ["Uncategorized"],
   aliases: ["uno r3"],
   imageUrl: null,
   notes: null,
   countable: true,
+  unit: {
+    symbol: "pcs",
+    name: "Pieces",
+    isInteger: true,
+  },
   needsReview: true,
   partDbPartId: null,
+  partDbCategoryId: null,
+  partDbUnitId: null,
+  partDbSyncStatus: "never",
   createdAt: "2026-01-01T00:00:00.000Z",
   updatedAt: "2026-01-01T00:00:00.000Z",
 };
@@ -116,6 +125,7 @@ function makeConfig() {
       baseUrl: "https://partdb.example.com",
       publicBaseUrl: "https://partdb.example.com",
       apiToken: "partdb-service-token",
+      syncEnabled: false,
     },
     auth: {
       issuer: "https://auth.example.com",
@@ -310,6 +320,49 @@ describe("buildServer", () => {
           requiredRole: "smartdb.admin",
         },
       },
+    });
+
+    await app.close();
+  });
+
+  it("exposes partdb sync admin status endpoints", async () => {
+    const app = await buildServer({
+      configOverride: makeConfig(),
+      authService: makeAuthService(),
+    });
+
+    const status = await app.inject({
+      method: "GET",
+      url: "/api/partdb/sync/status",
+      headers: sessionHeaders,
+    });
+    expect(status.statusCode).toBe(200);
+    expect(status.json()).toEqual({
+      enabled: false,
+      pending: 0,
+      inFlight: 0,
+      failedLast24h: 0,
+      deadTotal: 0,
+    });
+
+    const failures = await app.inject({
+      method: "GET",
+      url: "/api/partdb/sync/failures",
+      headers: sessionHeaders,
+    });
+    expect(failures.statusCode).toBe(200);
+    expect(failures.json()).toEqual([]);
+
+    const drain = await app.inject({
+      method: "POST",
+      url: "/api/partdb/sync/drain",
+      headers: sessionHeaders,
+    });
+    expect(drain.statusCode).toBe(200);
+    expect(drain.json()).toEqual({
+      claimed: 0,
+      delivered: 0,
+      failed: 0,
     });
 
     await app.close();

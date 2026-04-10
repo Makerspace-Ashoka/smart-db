@@ -17,12 +17,23 @@ import { SessionStore } from "./auth/session-store.js";
 import "./auth/types.js";
 import { createDatabase } from "./db/database.js";
 import { createIdempotencyHooks } from "./middleware/idempotency.js";
+import { PartDbOutbox } from "./outbox/partdb-outbox.js";
+import { PartDbOutboxWorker } from "./outbox/partdb-worker.js";
 import { PartDbClient } from "./partdb/partdb-client.js";
+import { CategoryResolver } from "./partdb/category-resolver.js";
+import { PartDbOperations } from "./partdb/partdb-operations.js";
 import { registerAuthRoutes } from "./routes/auth-routes.js";
 import { registerInventoryRoutes } from "./routes/inventory-routes.js";
+import { registerPartDbAdminRoutes } from "./routes/partdb-admin-routes.js";
 import { InventoryService } from "./services/inventory-service.js";
 import { ZitadelClient } from "./auth/zitadel-client.js";
 import { sessionCookieOptions } from "./auth/auth-cookies.js";
+import { PartDbRestClient } from "./partdb/partdb-rest.js";
+import { PartDbCategoriesResource } from "./partdb/resources/categories.js";
+import { PartDbMeasurementUnitsResource } from "./partdb/resources/measurement-units.js";
+import { PartDbPartLotsResource } from "./partdb/resources/part-lots.js";
+import { PartDbPartsResource } from "./partdb/resources/parts.js";
+import { PartDbStorageLocationsResource } from "./partdb/resources/storage-locations.js";
 
 interface BuildServerOptions {
   configOverride?: AppConfig;
@@ -68,9 +79,55 @@ export async function buildServer(options: BuildServerOptions = {}) {
       },
     );
   const partDbClient = new PartDbClient(activeConfig.partDb);
+  const syncEnabled =
+    activeConfig.partDb.syncEnabled &&
+    Boolean(activeConfig.partDb.baseUrl) &&
+    Boolean(activeConfig.partDb.apiToken);
+  const partDbOutbox = syncEnabled ? new PartDbOutbox(db) : null;
+  const partDbWorker = syncEnabled
+    ? new PartDbOutboxWorker(
+        partDbOutbox!,
+        new PartDbOperations(
+          new CategoryResolver(
+            db,
+            new PartDbCategoriesResource(
+              new PartDbRestClient({
+                baseUrl: activeConfig.partDb.baseUrl!,
+                apiToken: activeConfig.partDb.apiToken!,
+              }),
+            ),
+          ),
+          new PartDbMeasurementUnitsResource(
+            new PartDbRestClient({
+              baseUrl: activeConfig.partDb.baseUrl!,
+              apiToken: activeConfig.partDb.apiToken!,
+            }),
+          ),
+          new PartDbPartsResource(
+            new PartDbRestClient({
+              baseUrl: activeConfig.partDb.baseUrl!,
+              apiToken: activeConfig.partDb.apiToken!,
+            }),
+          ),
+          new PartDbPartLotsResource(
+            new PartDbRestClient({
+              baseUrl: activeConfig.partDb.baseUrl!,
+              apiToken: activeConfig.partDb.apiToken!,
+            }),
+          ),
+          new PartDbStorageLocationsResource(
+            new PartDbRestClient({
+              baseUrl: activeConfig.partDb.baseUrl!,
+              apiToken: activeConfig.partDb.apiToken!,
+            }),
+          ),
+        ),
+        app.log,
+      )
+    : null;
   const inventoryService =
     options.inventoryService ??
-    new InventoryService(db, partDbClient);
+    new InventoryService(db, partDbClient, partDbOutbox);
 
   const idempotency = createIdempotencyHooks(db);
 
@@ -126,6 +183,22 @@ export async function buildServer(options: BuildServerOptions = {}) {
     requireAdmin,
     idempotency,
   });
+  await registerPartDbAdminRoutes(
+    app,
+    {
+      enabled: syncEnabled,
+      outbox: partDbOutbox,
+      worker: partDbWorker,
+    },
+    requireAdmin,
+  );
+
+  if (partDbWorker) {
+    partDbWorker.start();
+    app.addHook("onClose", async () => {
+      partDbWorker.stop();
+    });
+  }
 
   app.setErrorHandler((error, _request, reply) => {
     const applicationError = isApplicationError(error)

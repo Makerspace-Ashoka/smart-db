@@ -101,17 +101,19 @@ describe("InventoryService", () => {
     expect(summary.targetType).toBe("instance");
 
     const allRows = dbRows(db);
-    expect(allRows.map((row) => row.operation)).toEqual(["create_part", "create_lot"]);
-    expect(allRows[0]).toMatchObject({
+    expect(allRows.map((row) => row.operation).sort()).toEqual(["create_lot", "create_part"]);
+    const partRow = allRows.find((row) => row.operation === "create_part");
+    const lotRow = allRows.find((row) => row.operation === "create_lot");
+    expect(partRow).toMatchObject({
       targetTable: "part_types",
       targetColumn: "partdb_part_id",
       status: "pending",
     });
-    expect(allRows[1]).toMatchObject({
+    expect(lotRow).toMatchObject({
       targetTable: "physical_instances",
       targetColumn: "partdb_lot_id",
       status: "pending",
-      dependsOnId: allRows[0]?.id,
+      dependsOnId: partRow?.id,
     });
   });
 
