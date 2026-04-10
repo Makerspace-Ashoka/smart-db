@@ -13,7 +13,7 @@ const authSession = {
   username: "e2e-labeler",
   name: "E2E Labeler",
   email: "e2e@example.com",
-  roles: ["smartdb.labeler"],
+  roles: ["smartdb.admin", "smartdb.labeler"],
   issuedAt: "2026-01-01T00:00:00.000Z",
   expiresAt: null,
 };
@@ -416,7 +416,7 @@ describe("E2E: full intake → lifecycle → merge workflow", () => {
       },
       headers: auth,
     });
-    expect(selfMerge.statusCode).toBe(409);
+    expect(selfMerge.statusCode).toBe(400);
 
     const conflictAssign = await app.inject({
       method: "POST",

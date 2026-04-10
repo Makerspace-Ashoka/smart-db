@@ -15,6 +15,7 @@ partdb_uploads_dir="${deploy_dir}/state/partdb/uploads"
 partdb_media_dir="${deploy_dir}/state/partdb/public-media"
 caddy_certs_dir="${deploy_dir}/state/caddy/certs"
 config_dir="${deploy_dir}/config"
+include_secrets="${SMART_DB_BACKUP_INCLUDE_SECRETS:-0}"
 
 install -d -m 700 "${backup_root}"
 exec 9>"${lock_file}"
@@ -35,8 +36,19 @@ fi
 
 tar -czf "${target_dir}/partdb-uploads.tar.gz" -C "${partdb_uploads_dir}" .
 tar -czf "${target_dir}/partdb-public-media.tar.gz" -C "${partdb_media_dir}" .
-tar -czf "${target_dir}/caddy-certs.tar.gz" -C "${caddy_certs_dir}" .
-tar -czf "${target_dir}/config.tar.gz" -C "${config_dir}" .
+
+if [ "${include_secrets}" = "1" ]; then
+  tar -czf "${target_dir}/caddy-certs.tar.gz" -C "${caddy_certs_dir}" .
+  tar -czf "${target_dir}/config.tar.gz" -C "${config_dir}" .
+else
+  {
+    echo "Secret-bearing paths were intentionally excluded from this backup."
+    echo "Skipped: ${caddy_certs_dir}"
+    echo "Skipped: ${config_dir}"
+    echo "Set SMART_DB_BACKUP_INCLUDE_SECRETS=1 only for an explicit disaster-recovery export."
+  } > "${target_dir}/secrets-excluded.txt"
+fi
+
 chmod 600 "${target_dir}"/*
 
 {

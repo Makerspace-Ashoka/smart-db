@@ -6,6 +6,7 @@ interface UseCameraResult {
   isSupported: boolean;
   permissionState: PermissionState;
   videoRef: React.RefObject<HTMLVideoElement | null>;
+  isScanning: boolean;
   start: () => Promise<void>;
   stop: () => void;
   lastResult: string | null;
@@ -19,6 +20,7 @@ export function useCamera(onScan: (code: string) => void): UseCameraResult {
     () => typeof BarcodeDetector !== "undefined" && !!navigator.mediaDevices?.getUserMedia,
   );
   const [permissionState, setPermissionState] = useState<PermissionState>("unknown");
+  const [isScanning, setIsScanning] = useState(false);
   const [lastResult, setLastResult] = useState<string | null>(null);
   const videoRef = useRef<HTMLVideoElement | null>(null);
   const streamRef = useRef<MediaStream | null>(null);
@@ -43,12 +45,14 @@ export function useCamera(onScan: (code: string) => void): UseCameraResult {
     if (videoRef.current) {
       videoRef.current.srcObject = null;
     }
+    setIsScanning(false);
   }, []);
 
   const start = useCallback(async () => {
     if (!isSupported) return;
 
     stop();
+    setLastResult(null);
 
     try {
       const stream = await navigator.mediaDevices.getUserMedia({
@@ -56,6 +60,7 @@ export function useCamera(onScan: (code: string) => void): UseCameraResult {
       });
       streamRef.current = stream;
       setPermissionState("granted");
+      setIsScanning(true);
 
       if (videoRef.current) {
         videoRef.current.srcObject = stream;
@@ -89,7 +94,9 @@ export function useCamera(onScan: (code: string) => void): UseCameraResult {
               recentCodesRef.current.set(code, now);
               lastDecodeTimeRef.current = now;
               setLastResult(code);
+              stop();
               onScanRef.current(code);
+              return;
             }
           }
         } catch {
@@ -111,5 +118,16 @@ export function useCamera(onScan: (code: string) => void): UseCameraResult {
     return () => stop();
   }, [stop]);
 
-  return { isSupported, permissionState, videoRef, start, stop, lastResult };
+  useEffect(() => {
+    const handleVisibilityChange = () => {
+      if (document.hidden) {
+        stop();
+      }
+    };
+
+    document.addEventListener("visibilitychange", handleVisibilityChange);
+    return () => document.removeEventListener("visibilitychange", handleVisibilityChange);
+  }, [stop]);
+
+  return { isSupported, permissionState, videoRef, isScanning, start, stop, lastResult };
 }

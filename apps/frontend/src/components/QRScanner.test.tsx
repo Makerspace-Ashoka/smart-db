@@ -15,6 +15,7 @@ function baseCameraResult() {
     isSupported: true,
     permissionState: "prompt" as const,
     videoRef: { current: null },
+    isScanning: false,
     start: vi.fn(),
     stop: vi.fn(),
     lastResult: null,
@@ -46,15 +47,26 @@ describe("QRScanner", () => {
     expect(start).toHaveBeenCalled();
   });
 
-  it("shows viewfinder and scan flash when permission is granted with a result", () => {
+  it("shows viewfinder while the camera is actively scanning", () => {
+    mockUseCamera.mockReturnValue({
+      ...baseCameraResult(),
+      permissionState: "granted",
+      isScanning: true,
+    });
+    const { container } = render(<QRScanner onScan={vi.fn()} enabled />);
+    expect(screen.getByRole("button", { name: "Switch to manual input" })).toBeInTheDocument();
+    expect(container.querySelector(".viewfinder-guide")).toBeInTheDocument();
+  });
+
+  it("shows detected status and scan-next affordance after a scan completes", () => {
     mockUseCamera.mockReturnValue({
       ...baseCameraResult(),
       permissionState: "granted",
       lastResult: "QR-TEST",
     });
-    const { container } = render(<QRScanner onScan={vi.fn()} enabled />);
-    expect(screen.getByRole("button", { name: "Switch to manual input" })).toBeInTheDocument();
-    expect(container.querySelector(".scan-flash")).toBeInTheDocument();
+    render(<QRScanner onScan={vi.fn()} enabled onScanNext={vi.fn()} />);
+    expect(screen.getByText("Detected QR-TEST")).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Scan next" })).toBeInTheDocument();
   });
 
   it("toggles between manual input and camera", async () => {
@@ -64,6 +76,7 @@ describe("QRScanner", () => {
     mockUseCamera.mockReturnValue({
       ...baseCameraResult(),
       permissionState: "granted",
+      isScanning: true,
       stop,
       start,
     });
@@ -83,5 +96,16 @@ describe("QRScanner", () => {
     });
     render(<QRScanner onScan={vi.fn()} enabled />);
     expect(screen.getByText("Camera permission denied. Use manual input instead.")).toBeInTheDocument();
+  });
+
+  it("shows lookup status and disables restart actions while loading", () => {
+    mockUseCamera.mockReturnValue({
+      ...baseCameraResult(),
+      permissionState: "granted",
+      lastResult: "QR-LOADING",
+    });
+    render(<QRScanner onScan={vi.fn()} enabled isLookingUp />);
+    expect(screen.getByText("Looking up QR-LOADING...")).toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: "Scan next" })).not.toBeInTheDocument();
   });
 });

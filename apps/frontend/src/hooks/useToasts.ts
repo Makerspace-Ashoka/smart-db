@@ -8,7 +8,7 @@ export interface Toast {
   type: ToastType;
 }
 
-const AUTO_DISMISS_MS = 2000;
+const AUTO_DISMISS_MS = 4000;
 let nextId = 0;
 
 export function useToasts() {
@@ -27,7 +27,22 @@ export function useToasts() {
   const addToast = useCallback(
     (message: string, type: ToastType) => {
       const id = `toast-${++nextId}`;
-      setToasts((current) => [...current, { id, message, type }]);
+      let dedupedId: string | null = null;
+      setToasts((current) => {
+        const existing = current.find(
+          (toast) => toast.message === message && toast.type === type,
+        );
+        if (existing) {
+          dedupedId = existing.id;
+          return current;
+        }
+
+        return [...current, { id, message, type }];
+      });
+
+      if (dedupedId) {
+        return dedupedId;
+      }
 
       if (type === "success") {
         const timer = setTimeout(() => {

@@ -12,10 +12,14 @@ import type {
   ScanResponse,
 } from "@smart-db/contracts";
 import {
+  hasSmartDbRole,
+  smartDbRoles,
+} from "@smart-db/contracts";
+import {
   ApiClientError,
   api,
+  downloadQrBatchLabelsPdf,
   loginUrl,
-  qrBatchLabelsPdfUrl,
 } from "./api";
 import { PanelTitle } from "./components/PanelTitle";
 import { Metric } from "./components/Metric";
@@ -30,9 +34,11 @@ import { useOnlineStatus } from "./hooks/useOnlineStatus";
 import { useSessionTimer } from "./hooks/useSessionTimer";
 import { usePolling } from "./hooks/usePolling";
 import {
+  actionLabel,
   buildAssignRequest,
   buildEventRequest,
   errorMessage,
+  getAssignFormIssues,
   type AssignFormState,
   type EventFormState,
 } from "./SmartApp.helpers";
@@ -66,7 +72,7 @@ type SearchState = {
 const defaultBatchForm: RegisterQrBatchRequest = {
   prefix: "QR",
   startNumber: 1001,
-  count: 500,
+  count: 25,
 };
 
 const defaultAssignForm: AssignFormState = {
@@ -74,7 +80,7 @@ const defaultAssignForm: AssignFormState = {
   entityKind: "instance",
   location: "Buffer Room A",
   notes: "",
-  partTypeMode: "new",
+  partTypeMode: "existing",
   existingPartTypeId: "",
   canonicalName: "",
   category: "",
@@ -88,7 +94,6 @@ const defaultEventForm: EventFormState = {
   targetId: "",
   event: "moved",
   location: "Unknown",
-  nextStatus: "available",
   nextLevel: "good",
   assignee: "",
   notes: "",
@@ -121,17 +126,23 @@ export default function SmartApp() {
   const [scanCode, setScanCode] = useState("");
   const [scanHistory, setScanHistory] = useState<ScanHistoryEntry[]>([]);
   const [lastAssignment, setLastAssignment] = useState<LastAssignment | null>(null);
+  const [cameraLookupCode, setCameraLookupCode] = useState<string | null>(null);
   const [mergeSourceId, setMergeSourceId] = useState("");
   const [mergeDestinationId, setMergeDestinationId] = useState("");
   const [pendingAction, setPendingAction] = useState<PendingAction>(null);
+  const [downloadingBatchId, setDownloadingBatchId] = useState<string | null>(null);
   const [activeTab, setActiveTab] = useState<TabId>("scan");
   const { toasts, addToast, dismissToast } = useToasts();
   const isOnline = useOnlineStatus();
   const sessionTimer = useSessionTimer(
     authState.status === "authenticated" ? authState.session.expiresAt : null,
   );
+  const isAdmin =
+    authState.status === "authenticated" &&
+    hasSmartDbRole(authState.session.roles, smartDbRoles.admin);
 
   const scanInputRef = useRef<HTMLInputElement>(null);
+  const scanResultRef = useRef<HTMLDivElement>(null);
   const labelSearchAbortRef = useRef<AbortController | null>(null);
   const mergeSearchAbortRef = useRef<AbortController | null>(null);
   const scanAbortRef = useRef<AbortController | null>(null);
@@ -151,6 +162,21 @@ export default function SmartApp() {
     }
   }, [authState.status]);
 
+  useEffect(() => {
+    if (!isAdmin && activeTab === "admin") {
+      setActiveTab("scan");
+    }
+  }, [activeTab, isAdmin]);
+
+  useEffect(() => {
+    if (scanResult && typeof scanResultRef.current?.scrollIntoView === "function") {
+      scanResultRef.current?.scrollIntoView({
+        behavior: prefersReducedMotion() ? "auto" : "smooth",
+        block: "start",
+      });
+    }
+  }, [scanResult]);
+
   async function restoreSession(signal: AbortSignal, authError: string | null): Promise<void> {
     setAuthState({
       status: "checking",
@@ -167,7 +193,7 @@ export default function SmartApp() {
       if (authError) {
         addToast(authError, "error");
       }
-      await loadAuthenticatedData();
+      await loadAuthenticatedData(session);
     } catch (caught) {
       if (signal.aborted) {
         return;
@@ -197,9 +223,11 @@ export default function SmartApp() {
     setScanCode("");
     setScanHistory([]);
     setLastAssignment(null);
+    setCameraLookupCode(null);
     setMergeSourceId("");
     setMergeDestinationId("");
     setPendingAction(null);
+    setDownloadingBatchId(null);
     labelSearchAbortRef.current?.abort();
     mergeSearchAbortRef.current?.abort();
     scanAbortRef.current?.abort();
@@ -223,14 +251,20 @@ export default function SmartApp() {
     return false;
   }
 
-  async function loadAuthenticatedData(): Promise<void> {
+  async function loadAuthenticatedData(sessionOverride?: AuthSession | null): Promise<void> {
+    const activeSession =
+      sessionOverride ??
+      (authState.status === "authenticated" ? authState.session : null);
+    const canAccessAdmin =
+      activeSession !== null && hasSmartDbRole(activeSession.roles, smartDbRoles.admin);
+
     const [dashboardResult, partDbResult, provisionalResult, partTypesResult, latestBatchResult] =
       await Promise.allSettled([
         api.getDashboard(),
         api.getPartDbStatus(),
-        api.getProvisionalPartTypes(),
+        canAccessAdmin ? api.getProvisionalPartTypes() : Promise.resolve([]),
         api.searchPartTypes(""),
-        api.getLatestQrBatch(),
+        canAccessAdmin ? api.getLatestQrBatch() : Promise.resolve(null),
       ]);
 
     for (const result of [dashboardResult, partDbResult, provisionalResult, partTypesResult, latestBatchResult]) {
@@ -402,12 +436,20 @@ export default function SmartApp() {
     }
   }
 
-  async function performScan(code: string, silent = false): Promise<void> {
+  async function performScan(
+    code: string,
+    options: { silent?: boolean; source?: "manual" | "camera" } = {},
+  ): Promise<void> {
+    const { silent = false, source = "manual" } = options;
     scanAbortRef.current?.abort();
     scanRequestRef.current += 1;
     const requestId = scanRequestRef.current;
     const controller = new AbortController();
     scanAbortRef.current = controller;
+
+    if (source === "camera") {
+      setCameraLookupCode(code);
+    }
 
     if (!silent) {
       setPendingAction("scan");
@@ -438,20 +480,7 @@ export default function SmartApp() {
       }
 
       if (response.mode === "interact") {
-        setEventForm({
-          ...defaultEventForm,
-          targetType: response.entity.targetType,
-          targetId: response.entity.id,
-          location: response.entity.location,
-          nextStatus:
-            response.entity.targetType === "instance"
-              ? (response.entity.state as InstanceStatus)
-              : defaultEventForm.nextStatus,
-          nextLevel:
-            response.entity.targetType === "bulk"
-              ? (response.entity.state as BulkLevel)
-              : defaultEventForm.nextLevel,
-        });
+        setEventForm(buildDefaultEventFormForEntity(response.entity));
       }
     } catch (caught) {
       if (controller.signal.aborted) {
@@ -464,6 +493,9 @@ export default function SmartApp() {
 
       addToast(errorMessage(caught), "error");
     } finally {
+      if (source === "camera" && requestId === scanRequestRef.current) {
+        setCameraLookupCode(null);
+      }
       if (!silent && requestId === scanRequestRef.current) {
         setPendingAction(null);
       }
@@ -497,9 +529,50 @@ export default function SmartApp() {
     }
   }
 
+  async function handleDownloadLatestBatchLabels(): Promise<void> {
+    if (!latestBatch) {
+      return;
+    }
+
+    setDownloadingBatchId(latestBatch.id);
+    try {
+      await downloadQrBatchLabelsPdf(latestBatch.id);
+    } catch (caught) {
+      if (!handleApiFailure(caught)) {
+        addToast(errorMessage(caught), "error");
+      }
+    } finally {
+      setDownloadingBatchId(null);
+    }
+  }
+
   async function handleScan(event: FormEvent<HTMLFormElement>): Promise<void> {
     event.preventDefault();
     await performScan(scanCode);
+  }
+
+  async function handleCameraScan(code: string): Promise<void> {
+    if (pendingAction !== null) {
+      addToast("Finish the current action before scanning another item.", "error");
+      return;
+    }
+
+    if (hasInProgressScanWork(scanResult, assignForm, labelSearch.query, eventForm)) {
+      addToast("Finish or clear the current scan form before scanning another item.", "error");
+      return;
+    }
+
+    setScanCode(code);
+    await performScan(code, { source: "camera" });
+  }
+
+  function handleScanNext(): void {
+    setCameraLookupCode(null);
+    setScanCode("");
+    setScanResult(null);
+    setAssignForm(defaultAssignForm);
+    setEventForm(defaultEventForm);
+    setLabelSearch(defaultSearchState);
   }
 
   async function handleAssign(event: FormEvent<HTMLFormElement>): Promise<void> {
@@ -518,7 +591,7 @@ export default function SmartApp() {
       });
       setAssignForm(defaultAssignForm);
       setScanCode(request.qrCode);
-      await performScan(request.qrCode, true);
+      await performScan(request.qrCode, { silent: true });
       await loadAuthenticatedData();
       scanInputRef.current?.focus();
     } catch (caught) {
@@ -550,7 +623,7 @@ export default function SmartApp() {
       });
       setAssignForm(defaultAssignForm);
       setScanCode(request.qrCode);
-      await performScan(request.qrCode, true);
+      await performScan(request.qrCode, { silent: true });
       await loadAuthenticatedData();
       scanInputRef.current?.focus();
     } catch (caught) {
@@ -570,9 +643,9 @@ export default function SmartApp() {
     try {
       const request = buildEventRequest(eventForm);
       const response = await api.recordEvent(request);
-      addToast(`Logged ${response.event} for ${request.targetType} ${request.targetId}.`, "success");
+      addToast(`Saved ${actionLabel(response.event)} for ${request.targetType} ${request.targetId}.`, "success");
       if (scanResult?.mode === "interact") {
-        await performScan(scanResult.qrCode.code, true);
+        await performScan(scanResult.qrCode.code, { silent: true });
       }
       await loadAuthenticatedData();
       scanInputRef.current?.focus();
@@ -615,6 +688,7 @@ export default function SmartApp() {
       await api.mergePartTypes({
         sourcePartTypeId: mergeSourceId,
         destinationPartTypeId: mergeDestinationId,
+        aliasLabel: null,
       });
       addToast("Merged provisional part type into canonical record.", "success");
       setMergeSourceId("");
@@ -637,6 +711,13 @@ export default function SmartApp() {
         : catalogSuggestions;
 
   const mergeOptions = mergeSearch.results.length > 0 ? mergeSearch.results : catalogSuggestions;
+  const assignIssues = getAssignFormIssues(assignForm);
+  const cameraBlockedReason =
+    pendingAction !== null
+      ? "Finish the current action before scanning another item."
+      : hasInProgressScanWork(scanResult, assignForm, labelSearch.query, eventForm)
+        ? "Finish or clear the current scan form before scanning another item."
+        : null;
 
   usePolling(
     () => void loadAuthenticatedData(),
@@ -730,58 +811,74 @@ export default function SmartApp() {
 
       <main className="layout">
         {activeTab === "scan" && (
-          <ScanTab
-            scanCode={scanCode}
-            onScanCodeChange={setScanCode}
-            scanInputRef={scanInputRef}
-            scanResult={scanResult}
-            pendingAction={pendingAction}
-            onScan={handleScan}
-            onCameraScan={(code) => void performScan(code)}
-            labelSearch={labelSearch}
-            labelOptions={labelOptions}
-            assignForm={assignForm}
-            onAssignFormChange={setAssignForm}
-            onLabelSearch={(query) => void performSearch("label", query)}
-            onAssign={handleAssign}
-            sessionUsername={authState.session.username}
-            lastAssignment={lastAssignment}
-            onAssignSame={() => void handleAssignSame()}
-            eventForm={eventForm}
-            onEventFormChange={setEventForm}
-            onRecordEvent={handleRecordEvent}
-          />
+          <section id="panel-scan" role="tabpanel" aria-labelledby="tab-scan">
+            <ScanTab
+              scanCode={scanCode}
+              onScanCodeChange={setScanCode}
+              scanInputRef={scanInputRef}
+              scanResultRef={scanResultRef}
+              scanResult={scanResult}
+              pendingAction={pendingAction}
+              onScan={handleScan}
+              onCameraScan={(code) => void handleCameraScan(code)}
+              onScanNext={handleScanNext}
+              cameraLookupCode={cameraLookupCode}
+              cameraBlockedReason={cameraBlockedReason}
+              labelSearch={labelSearch}
+              labelOptions={labelOptions}
+              assignForm={assignForm}
+              assignIssues={assignIssues}
+              onAssignFormChange={setAssignForm}
+              onLabelSearch={(query) => void performSearch("label", query)}
+              onAssign={handleAssign}
+              sessionUsername={authState.session.username}
+              lastAssignment={lastAssignment}
+              onAssignSame={() => void handleAssignSame()}
+              eventForm={eventForm}
+              onEventFormChange={setEventForm}
+              onRecordEvent={handleRecordEvent}
+            />
+          </section>
         )}
         {activeTab === "activity" && (
-          <ActivityTab
-            dashboard={dashboard}
-            partDbStatus={partDbStatus}
-            scanHistory={scanHistory}
-          />
+          <section id="panel-activity" role="tabpanel" aria-labelledby="tab-activity">
+            <ActivityTab
+              dashboard={dashboard}
+              partDbStatus={partDbStatus}
+              scanHistory={scanHistory}
+            />
+          </section>
         )}
-        {activeTab === "admin" && (
-          <AdminTab
-            sessionUsername={authState.session.username}
-            pendingAction={pendingAction}
-            batchForm={batchForm}
-            onBatchFormChange={setBatchForm}
-            onRegisterBatch={handleRegisterBatch}
-            latestBatch={latestBatch}
-            latestBatchLabelsUrl={latestBatch ? qrBatchLabelsPdfUrl(latestBatch.id) : null}
-            provisionalPartTypes={provisionalPartTypes}
-            mergeSourceId={mergeSourceId}
-            onMergeSourceIdChange={setMergeSourceId}
-            mergeDestinationId={mergeDestinationId}
-            onMergeDestinationIdChange={setMergeDestinationId}
-            mergeSearch={mergeSearch}
-            mergeOptions={mergeOptions}
-            onMergeSearch={(query) => void performSearch("merge", query)}
-            onMerge={() => void handleMergePartTypes()}
-            onApprovePartType={(id) => void handleApprovePartType(id)}
-          />
+        {isAdmin && activeTab === "admin" && (
+          <section id="panel-admin" role="tabpanel" aria-labelledby="tab-admin">
+            <AdminTab
+              sessionUsername={authState.session.username}
+              pendingAction={pendingAction}
+              batchForm={batchForm}
+              onBatchFormChange={setBatchForm}
+              onRegisterBatch={handleRegisterBatch}
+              latestBatch={latestBatch}
+              isDownloadingLabels={downloadingBatchId === latestBatch?.id}
+              onDownloadLabels={() => void handleDownloadLatestBatchLabels()}
+              provisionalPartTypes={provisionalPartTypes}
+              mergeSourceId={mergeSourceId}
+              onMergeSourceIdChange={setMergeSourceId}
+              mergeDestinationId={mergeDestinationId}
+              onMergeDestinationIdChange={setMergeDestinationId}
+              mergeSearch={mergeSearch}
+              mergeOptions={mergeOptions}
+              onMergeSearch={(query) => void performSearch("merge", query)}
+              onMerge={() => void handleMergePartTypes()}
+              onApprovePartType={(id) => void handleApprovePartType(id)}
+            />
+          </section>
         )}
       </main>
-      <TabBar activeTab={activeTab} onTabChange={setActiveTab} />
+      <TabBar
+        activeTab={activeTab}
+        onTabChange={setActiveTab}
+        tabs={isAdmin ? ["scan", "activity", "admin"] : ["scan", "activity"]}
+      />
     </div>
   );
 }
@@ -800,4 +897,50 @@ function consumeAuthError(): string | null {
   url.searchParams.delete("authError");
   window.history.replaceState({}, "", url.toString());
   return authError;
+}
+
+function buildDefaultEventFormForEntity(
+  entity: Extract<ScanResponse, { mode: "interact" }>["entity"],
+): EventFormState {
+  return {
+    ...defaultEventForm,
+    targetType: entity.targetType,
+    targetId: entity.id,
+    location: entity.location,
+    nextLevel: entity.targetType === "bulk" ? (entity.state as BulkLevel) : defaultEventForm.nextLevel,
+  };
+}
+
+function hasInProgressScanWork(
+  scanResult: ScanResponse | null,
+  assignForm: AssignFormState,
+  labelSearchQuery: string,
+  eventForm: EventFormState,
+): boolean {
+  if (scanResult?.mode === "label") {
+    const baselineAssignForm: AssignFormState = {
+      ...defaultAssignForm,
+      qrCode: scanResult.qrCode.code,
+    };
+    return (
+      labelSearchQuery.trim().length > 0 ||
+      JSON.stringify(assignForm) !== JSON.stringify(baselineAssignForm)
+    );
+  }
+
+  if (scanResult?.mode === "interact") {
+    return (
+      JSON.stringify(eventForm) !==
+      JSON.stringify(buildDefaultEventFormForEntity(scanResult.entity))
+    );
+  }
+
+  return false;
+}
+
+function prefersReducedMotion(): boolean {
+  return typeof window !== "undefined" &&
+    typeof window.matchMedia === "function"
+    ? window.matchMedia("(prefers-reduced-motion: reduce)").matches
+    : false;
 }

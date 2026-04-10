@@ -11,7 +11,13 @@ import type {
 import { bulkLevels, instanceStatuses } from "@smart-db/contracts";
 import { PanelTitle } from "../components/PanelTitle";
 import { QRScanner } from "../components/QRScanner";
-import type { AssignFormState, EventFormState } from "../SmartApp.helpers";
+import {
+  actionLabel,
+  formatTimestamp,
+  type AssignFormIssues,
+  type AssignFormState,
+  type EventFormState,
+} from "../SmartApp.helpers";
 
 type SearchState = {
   query: string;
@@ -30,14 +36,19 @@ interface ScanTabProps {
   scanCode: string;
   onScanCodeChange: (value: string) => void;
   scanInputRef: React.RefObject<HTMLInputElement | null>;
+  scanResultRef: React.RefObject<HTMLDivElement | null>;
   scanResult: ScanResponse | null;
   pendingAction: string | null;
   onScan: (event: FormEvent<HTMLFormElement>) => void;
   onCameraScan: (code: string) => void;
+  onScanNext: () => void;
+  cameraLookupCode: string | null;
+  cameraBlockedReason: string | null;
   // Label
   labelSearch: SearchState;
   labelOptions: PartType[];
   assignForm: AssignFormState;
+  assignIssues: AssignFormIssues;
   onAssignFormChange: (updater: (current: AssignFormState) => AssignFormState) => void;
   onLabelSearch: (query: string) => void;
   onAssign: (event: FormEvent<HTMLFormElement>) => void;
@@ -57,12 +68,23 @@ export function ScanTab(props: ScanTabProps) {
     <section className="panel">
       <PanelTitle
         title="Scan"
-        copy="A registered but unassigned QR opens intake. An assigned QR opens lifecycle actions."
+        copy="Scan a sticker to assign it, update it, or look up what it belongs to."
       />
-      <QRScanner onScan={props.onCameraScan} enabled />
+      <QRScanner
+        onScan={props.onCameraScan}
+        enabled
+        isLookingUp={props.cameraLookupCode !== null}
+        blockedReason={props.cameraBlockedReason}
+        onScanNext={props.onScanNext}
+      />
       <form className="scan-form" onSubmit={props.onScan}>
+        <label className="sr-only" htmlFor="scan-code-input">
+          Scan or type a QR / barcode
+        </label>
         <input
+          id="scan-code-input"
           ref={props.scanInputRef}
+          aria-label="Scan or type a QR / barcode"
           placeholder="Scan or type a QR / barcode"
           value={props.scanCode}
           onChange={(event) => props.onScanCodeChange(event.target.value)}
@@ -72,7 +94,7 @@ export function ScanTab(props: ScanTabProps) {
         </button>
       </form>
 
-      <div aria-live="polite">
+      <div aria-live="polite" ref={props.scanResultRef}>
       {props.scanResult?.mode === "unknown" ? (
         <div className="result-card">
           <h3>{props.scanResult.code} is unknown to Smart DB</h3>
@@ -99,45 +121,123 @@ export function ScanTab(props: ScanTabProps) {
             </div>
           )}
           <form className="form-grid" onSubmit={props.onAssign}>
-            <label className="wide">
-              Search existing part types
-              <input
-                value={props.labelSearch.query}
-                onChange={(event) => props.onLabelSearch(event.target.value)}
-                placeholder="Arduino, JST, PLA, cotton..."
-              />
-            </label>
-            {props.labelSearch.error ? <p className="banner error wide">{props.labelSearch.error}</p> : null}
-            <div className="wide picker">
-              {props.labelOptions.map((partType) => (
-                <button
-                  key={partType.id}
-                  type="button"
-                  className={
-                    props.assignForm.partTypeMode === "existing" &&
-                    props.assignForm.existingPartTypeId === partType.id
-                      ? "selected"
-                      : ""
-                  }
-                  onClick={() =>
-                    props.onAssignFormChange((current) => ({
-                      ...current,
-                      entityKind: partType.countable ? "instance" : "bulk",
-                      partTypeMode: "existing",
-                      existingPartTypeId: partType.id,
-                      canonicalName: "",
-                      category: partType.category,
-                      countable: partType.countable,
-                      initialStatus: "available",
-                      initialLevel: "good",
-                    }))
-                  }
-                >
-                  <strong>{partType.canonicalName}</strong>
-                  <span>{partType.category}</span>
-                </button>
-              ))}
+            <div className="wide mode-toggle" role="radiogroup" aria-label="Part type mode">
+              <button
+                type="button"
+                role="radio"
+                className={props.assignForm.partTypeMode === "existing" ? "selected" : ""}
+                aria-checked={props.assignForm.partTypeMode === "existing"}
+                onClick={() =>
+                  props.onAssignFormChange((current) => ({
+                    ...current,
+                    partTypeMode: "existing",
+                    canonicalName: "",
+                    category: "",
+                  }))
+                }
+              >
+                Use existing type
+              </button>
+              <button
+                type="button"
+                role="radio"
+                className={props.assignForm.partTypeMode === "new" ? "selected" : ""}
+                aria-checked={props.assignForm.partTypeMode === "new"}
+                onClick={() =>
+                  props.onAssignFormChange((current) => ({
+                    ...current,
+                    partTypeMode: "new",
+                    existingPartTypeId: "",
+                  }))
+                }
+              >
+                Create new type
+              </button>
             </div>
+            {props.assignForm.partTypeMode === "existing" ? (
+              <>
+                <label className="wide">
+                  Search existing part types
+                  <input
+                    value={props.labelSearch.query}
+                    onChange={(event) => props.onLabelSearch(event.target.value)}
+                    placeholder="Arduino, JST, PLA, cotton..."
+                  />
+                </label>
+                {props.labelSearch.error ? <p className="banner error wide">{props.labelSearch.error}</p> : null}
+                {props.assignIssues.existingPartTypeId ? (
+                  <p className="field-error wide">{props.assignIssues.existingPartTypeId}</p>
+                ) : null}
+                <div className="wide picker" role="radiogroup" aria-label="Existing part types">
+                  {props.labelOptions.length > 0 ? (
+                    props.labelOptions.map((partType) => (
+                      <button
+                        key={partType.id}
+                        type="button"
+                        role="radio"
+                        aria-checked={props.assignForm.existingPartTypeId === partType.id}
+                        className={
+                          props.assignForm.existingPartTypeId === partType.id ? "selected" : ""
+                        }
+                        onClick={() =>
+                          props.onAssignFormChange((current) => ({
+                            ...current,
+                            entityKind: partType.countable ? "instance" : "bulk",
+                            partTypeMode: "existing",
+                            existingPartTypeId: partType.id,
+                            canonicalName: "",
+                            category: partType.category,
+                            countable: partType.countable,
+                            initialStatus: "available",
+                            initialLevel: "good",
+                          }))
+                        }
+                      >
+                        <strong>{partType.canonicalName}</strong>
+                        <span>{partType.category}</span>
+                      </button>
+                    ))
+                  ) : (
+                    <p className="muted-copy">No matching part types yet.</p>
+                  )}
+                </div>
+              </>
+            ) : (
+              <>
+                <label className="wide">
+                  New canonical name
+                  <input
+                    value={props.assignForm.canonicalName}
+                    placeholder="Arduino Uno R3"
+                    onChange={(event) =>
+                      props.onAssignFormChange((current) => ({
+                        ...current,
+                        canonicalName: event.target.value,
+                      }))
+                    }
+                  />
+                  {props.assignIssues.canonicalName ? (
+                    <span className="field-error">{props.assignIssues.canonicalName}</span>
+                  ) : null}
+                </label>
+                <label>
+                  Category
+                  <input
+                    value={props.assignForm.category}
+                    placeholder="Microcontrollers"
+                    onChange={(event) =>
+                      props.onAssignFormChange((current) => ({
+                        ...current,
+                        category: event.target.value,
+                      }))
+                    }
+                  />
+                  {props.assignIssues.category ? (
+                    <span className="field-error">{props.assignIssues.category}</span>
+                  ) : null}
+                </label>
+              </>
+            )}
             <label>
               Location
               <input
@@ -149,6 +249,9 @@ export function ScanTab(props: ScanTabProps) {
                   }))
                 }
               />
+              {props.assignIssues.location ? (
+                <span className="field-error">{props.assignIssues.location}</span>
+              ) : null}
             </label>
             <button
               type="button"
@@ -159,21 +262,30 @@ export function ScanTab(props: ScanTabProps) {
             </button>
             {showAdvanced && (
               <>
-                <label>
-                  Kind
-                  <select
-                    value={props.assignForm.entityKind}
-                    onChange={(event) =>
-                      props.onAssignFormChange((current) => ({
-                        ...current,
-                        entityKind: event.target.value as AssignQrRequest["entityKind"],
-                      }))
-                    }
-                  >
-                    <option value="instance">Physical instance</option>
-                    <option value="bulk">Bulk bin</option>
-                  </select>
-                </label>
+                {props.assignForm.partTypeMode === "new" ? (
+                  <label>
+                    Kind
+                    <select
+                      value={props.assignForm.entityKind}
+                      onChange={(event) =>
+                        props.onAssignFormChange((current) => ({
+                          ...current,
+                          entityKind: event.target.value as AssignQrRequest["entityKind"],
+                        }))
+                      }
+                    >
+                      <option value="instance">Physical instance</option>
+                      <option value="bulk">Bulk bin</option>
+                    </select>
+                  </label>
+                ) : (
+                  <div className="derived-kind">
+                    <strong>Kind</strong>
+                    <span>
+                      {props.assignForm.entityKind === "instance" ? "Physical instance" : "Bulk bin"}
+                    </span>
+                  </div>
+                )}
                 {props.assignForm.entityKind === "instance" ? (
                   <label>
                     Initial status
@@ -213,50 +325,23 @@ export function ScanTab(props: ScanTabProps) {
                     </select>
                   </label>
                 )}
-                <label className="wide">
-                  New canonical name
-                  <input
-                    value={props.assignForm.canonicalName}
-                    placeholder="Leave blank when reusing an existing part type"
-                    onChange={(event) =>
-                      props.onAssignFormChange((current) => ({
-                        ...current,
-                        partTypeMode: "new",
-                        existingPartTypeId: "",
-                        canonicalName: event.target.value,
-                      }))
-                    }
-                  />
-                </label>
-                <label>
-                  Category
-                  <input
-                    value={props.assignForm.category}
-                    onChange={(event) =>
-                      props.onAssignFormChange((current) => ({
-                        ...current,
-                        category: event.target.value,
-                      }))
-                    }
-                  />
-                </label>
-                <label>
-                  Countable
-                  <select
-                    value={String(props.assignForm.countable)}
-                    onChange={(event) =>
-                      props.onAssignFormChange((current) => ({
-                        ...current,
-                        partTypeMode: "new",
-                        existingPartTypeId: "",
-                        countable: event.target.value === "true",
-                      }))
-                    }
-                  >
-                    <option value="true">Discrete items</option>
-                    <option value="false">Bulk / non-countable</option>
-                  </select>
-                </label>
+                {props.assignForm.partTypeMode === "new" ? (
+                  <label>
+                    Countable
+                    <select
+                      value={String(props.assignForm.countable)}
+                      onChange={(event) =>
+                        props.onAssignFormChange((current) => ({
+                          ...current,
+                          countable: event.target.value === "true",
+                        }))
+                      }
+                    >
+                      <option value="true">Discrete items</option>
+                      <option value="false">Bulk / non-countable</option>
+                    </select>
+                  </label>
+                ) : null}
                 <label className="wide">
                   Notes
                   <textarea
@@ -271,7 +356,7 @@ export function ScanTab(props: ScanTabProps) {
                 </label>
               </>
             )}
-            <button type="submit" disabled={props.pendingAction !== null}>
+            <button type="submit" disabled={props.pendingAction !== null || Object.keys(props.assignIssues).length > 0}>
               {props.pendingAction === "assign" ? "Assigning..." : "Assign QR"}
             </button>
           </form>
@@ -287,20 +372,21 @@ export function ScanTab(props: ScanTabProps) {
             {props.scanResult.entity.targetType} in {props.scanResult.entity.location} · current state{" "}
             <strong>{props.scanResult.entity.state}</strong>
           </p>
-          <div className="action-buttons">
-            {props.scanResult.availableActions.map((action) => (
-              <button
-                key={action}
-                type="button"
-                className={props.eventForm.event === action ? "selected" : ""}
-                onClick={() =>
+            <div className="action-buttons">
+              {props.scanResult.availableActions.map((action) => (
+                <button
+                  key={action}
+                  type="button"
+                  aria-pressed={props.eventForm.event === action}
+                  className={props.eventForm.event === action ? "selected" : ""}
+                  onClick={() =>
                   props.onEventFormChange((current) => ({
                     ...current,
                     event: action as StockEventKind,
                   }))
                 }
               >
-                {action}
+                {actionLabel(action)}
               </button>
             ))}
           </div>
@@ -335,7 +421,8 @@ export function ScanTab(props: ScanTabProps) {
                 />
               </label>
             )}
-            {props.eventForm.event === "level_changed" &&
+            {(props.eventForm.event === "level_changed" ||
+              props.eventForm.event === "consumed") &&
               props.scanResult.entity.targetType === "bulk" && (
               <label>
                 Next level
@@ -369,16 +456,16 @@ export function ScanTab(props: ScanTabProps) {
               />
             </label>
             <button type="submit" disabled={props.pendingAction !== null}>
-              {props.pendingAction === "event" ? "Logging..." : "Log event"}
+              {props.pendingAction === "event" ? "Saving..." : `Confirm ${actionLabel(props.eventForm.event)}`}
             </button>
           </form>
 
           <div className="event-list">
             {props.scanResult.recentEvents.map((stockEvent) => (
               <article key={stockEvent.id}>
-                <strong>{stockEvent.event}</strong>
+                <strong>{actionLabel(stockEvent.event)}</strong>
                 <span>
-                  {stockEvent.actor} · {stockEvent.createdAt}
+                  {stockEvent.actor} · {formatTimestamp(stockEvent.createdAt)}
                 </span>
                 <small>
                   {stockEvent.fromState ?? "none"} → {stockEvent.toState ?? "none"}

@@ -1,6 +1,6 @@
 import type { DashboardSummary, PartDbConnectionStatus } from "@smart-db/contracts";
 import { PanelTitle } from "../components/PanelTitle";
-import { Metric } from "../components/Metric";
+import { actionLabel, formatTimestamp } from "../SmartApp.helpers";
 
 export interface ScanHistoryEntry {
   code: string;
@@ -24,12 +24,12 @@ export function ActivityTab(props: ActivityTabProps) {
       <div className="event-list">
         {props.dashboard?.recentEvents.map((stockEvent) => (
           <article key={stockEvent.id}>
-            <strong>{stockEvent.event}</strong>
+            <strong>{actionLabel(stockEvent.event)}</strong>
             <span>
               {stockEvent.targetType} · {stockEvent.actor}
             </span>
             <small>
-              {stockEvent.fromState ?? "none"} → {stockEvent.toState ?? "none"}
+              {stockEvent.fromState ?? "none"} → {stockEvent.toState ?? "none"} · {formatTimestamp(stockEvent.createdAt)}
             </small>
           </article>
         )) ?? <p>No events yet.</p>}
@@ -42,7 +42,7 @@ export function ActivityTab(props: ActivityTabProps) {
             <article key={`${entry.code}-${index}`}>
               <strong>{entry.code}</strong>
               <span>{entry.mode}</span>
-              <small>{entry.timestamp}</small>
+              <small>{formatTimestamp(entry.timestamp)}</small>
             </article>
           ))}
         </div>

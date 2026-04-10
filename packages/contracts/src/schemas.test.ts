@@ -46,7 +46,7 @@ describe("schemas", () => {
     expect(() =>
       registerQrBatchRequestSchema.parse({
         startNumber: 0,
-        count: 10001,
+        count: 501,
       }),
     ).toThrow();
 
@@ -62,12 +62,12 @@ describe("schemas", () => {
       registerQrBatchRequestSchema.parse({
         prefix: "QR_2-A",
         startNumber: 0,
-        count: 10000,
+        count: 500,
       }),
     ).toEqual({
       prefix: "QR_2-A",
       startNumber: 0,
-      count: 10000,
+      count: 500,
     });
   });
 
@@ -136,10 +136,41 @@ describe("schemas", () => {
       targetId: "instance-1",
       event: "checked_out",
       notes: null,
-      location: "Unknown",
-      nextStatus: "available",
+      location: null,
       assignee: null,
     });
+
+    expect(
+      recordEventRequestSchema.parse({
+        targetType: "bulk",
+        targetId: "bulk-1",
+        event: "consumed",
+        nextLevel: "low",
+      }),
+    ).toEqual({
+      targetType: "bulk",
+      targetId: "bulk-1",
+      event: "consumed",
+      notes: null,
+      location: null,
+      nextLevel: "low",
+    });
+
+    expect(() =>
+      recordEventRequestSchema.parse({
+        targetType: "instance",
+        targetId: "instance-1",
+        event: "moved",
+      }),
+    ).toThrow();
+
+    expect(() =>
+      recordEventRequestSchema.parse({
+        targetType: "bulk",
+        targetId: "bulk-1",
+        event: "consumed",
+      }),
+    ).toThrow();
 
     expect(
       mergePartTypesRequestSchema.parse({
@@ -149,12 +180,51 @@ describe("schemas", () => {
     ).toEqual({
       sourcePartTypeId: "source",
       destinationPartTypeId: "destination",
+      aliasLabel: null,
     });
+
+    expect(() =>
+      mergePartTypesRequestSchema.parse({
+        sourcePartTypeId: "same",
+        destinationPartTypeId: "same",
+      }),
+    ).toThrow();
 
     expect(
       scanResponseSchema.parse({
-        mode: "unknown",
-        code: "EAN-1234",
+        mode: "interact",
+        qrCode: {
+          code: "QR-1001",
+          batchId: "batch-1",
+          status: "assigned",
+          assignedKind: "instance",
+          assignedId: "instance-1",
+          createdAt: "2026-01-01T00:00:00.000Z",
+          updatedAt: "2026-01-01T00:00:00.000Z",
+        },
+        entity: {
+          id: "instance-1",
+          targetType: "instance",
+          qrCode: "QR-1001",
+          partType: {
+            id: "part-1",
+            canonicalName: "Arduino Uno",
+            category: "Microcontrollers",
+            aliases: [],
+            imageUrl: null,
+            notes: null,
+            countable: true,
+            needsReview: false,
+            partDbPartId: null,
+            createdAt: "2026-01-01T00:00:00.000Z",
+            updatedAt: "2026-01-01T00:00:00.000Z",
+          },
+          location: "Shelf A",
+          state: "available",
+          assignee: null,
+        },
+        recentEvents: [],
+        availableActions: ["moved", "checked_out"],
         partDb: {
           configured: false,
           connected: false,
@@ -162,8 +232,39 @@ describe("schemas", () => {
         },
       }),
     ).toEqual({
-      mode: "unknown",
-      code: "EAN-1234",
+      mode: "interact",
+      qrCode: {
+        code: "QR-1001",
+        batchId: "batch-1",
+        status: "assigned",
+        assignedKind: "instance",
+        assignedId: "instance-1",
+        createdAt: "2026-01-01T00:00:00.000Z",
+        updatedAt: "2026-01-01T00:00:00.000Z",
+      },
+      entity: {
+        id: "instance-1",
+        targetType: "instance",
+        qrCode: "QR-1001",
+        partType: {
+          id: "part-1",
+          canonicalName: "Arduino Uno",
+          category: "Microcontrollers",
+          aliases: [],
+          imageUrl: null,
+          notes: null,
+          countable: true,
+          needsReview: false,
+          partDbPartId: null,
+          createdAt: "2026-01-01T00:00:00.000Z",
+          updatedAt: "2026-01-01T00:00:00.000Z",
+        },
+        location: "Shelf A",
+        state: "available",
+        assignee: null,
+      },
+      recentEvents: [],
+      availableActions: ["moved", "checked_out"],
       partDb: {
         configured: false,
         connected: false,
@@ -200,6 +301,26 @@ describe("schemas", () => {
         roles: ["smartdb.labeler"],
         issuedAt: "2026-01-01T00:00:00.000Z",
         expiresAt: null,
+      },
+    });
+
+    expect(
+      applicationErrorResponseSchema.parse({
+        error: {
+          code: "forbidden",
+          message: "Admins only.",
+          details: {
+            requiredRole: "smartdb.admin",
+          },
+        },
+      }),
+    ).toEqual({
+      error: {
+        code: "forbidden",
+        message: "Admins only.",
+        details: {
+          requiredRole: "smartdb.admin",
+        },
       },
     });
 

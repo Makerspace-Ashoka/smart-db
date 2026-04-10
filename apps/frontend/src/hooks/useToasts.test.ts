@@ -28,7 +28,7 @@ describe("useToasts", () => {
     expect(result.current.toasts).toHaveLength(0);
   });
 
-  it("auto-dismisses success toasts after 2 seconds", () => {
+  it("auto-dismisses success toasts after 4 seconds", () => {
     const { result } = renderHook(() => useToasts());
 
     act(() => {
@@ -38,7 +38,7 @@ describe("useToasts", () => {
     expect(result.current.toasts).toHaveLength(1);
 
     act(() => {
-      vi.advanceTimersByTime(2000);
+      vi.advanceTimersByTime(4000);
     });
 
     expect(result.current.toasts).toHaveLength(0);
@@ -53,6 +53,17 @@ describe("useToasts", () => {
 
     act(() => {
       vi.advanceTimersByTime(5000);
+    });
+
+    expect(result.current.toasts).toHaveLength(1);
+  });
+
+  it("deduplicates repeated toasts with the same message and type", () => {
+    const { result } = renderHook(() => useToasts());
+
+    act(() => {
+      result.current.addToast("offline", "error");
+      result.current.addToast("offline", "error");
     });
 
     expect(result.current.toasts).toHaveLength(1);

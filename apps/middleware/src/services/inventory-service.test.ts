@@ -189,7 +189,6 @@ describe("InventoryService", () => {
         event: "moved",
         location: "Shelf B",
         notes: null,
-        nextStatus: "available",
         assignee: null,
       }).event,
     ).toBe("moved");
@@ -202,7 +201,6 @@ describe("InventoryService", () => {
         event: "checked_out",
         location: "Workbench",
         notes: "for robotics build",
-        nextStatus: "checked_out",
         assignee: "Ayesha",
       }).toState,
     ).toBe("checked_out");
@@ -214,7 +212,6 @@ describe("InventoryService", () => {
         event: "checked_out",
         location: "" as never,
         notes: null,
-        nextStatus: "checked_out",
         assignee: "" as never,
       }).location,
     ).toBe("Workbench");
@@ -227,7 +224,6 @@ describe("InventoryService", () => {
         event: "returned",
         location: "Shelf B",
         notes: null,
-        nextStatus: "available",
         assignee: null,
       }).toState,
     ).toBe("available");
@@ -240,7 +236,6 @@ describe("InventoryService", () => {
         event: "damaged",
         location: "Repair shelf",
         notes: null,
-        nextStatus: "damaged",
         assignee: null,
       }).toState,
     ).toBe("damaged");
@@ -253,7 +248,6 @@ describe("InventoryService", () => {
         event: "lost",
         location: "Unknown",
         notes: null,
-        nextStatus: "lost",
         assignee: null,
       }).toState,
     ).toBe("lost");
@@ -266,7 +260,6 @@ describe("InventoryService", () => {
         event: "disposed",
         location: "Waste",
         notes: null,
-        nextStatus: "consumed",
         assignee: null,
       }).toState,
     ).toBe("consumed");
@@ -292,7 +285,6 @@ describe("InventoryService", () => {
         event: "consumed",
         location: "Project bin",
         notes: null,
-        nextStatus: "consumed",
         assignee: null,
       }).toState,
     ).toBe("consumed");
@@ -346,7 +338,6 @@ describe("InventoryService", () => {
         event: "moved",
         location: "Fastener wall",
         notes: "drawer audit",
-        nextLevel: "good",
       }).event,
     ).toBe("moved");
     expect(
@@ -380,7 +371,7 @@ describe("InventoryService", () => {
       notes: null,
       nextLevel: "low",
     });
-    expect(
+    expect(() =>
       service.recordEvent({
         targetType: "bulk",
         targetId: bulkSummary.id,
@@ -389,9 +380,9 @@ describe("InventoryService", () => {
         location: "Fastener wall",
         notes: null,
         nextLevel: "not-a-level" as never,
-      }).toState,
-    ).toBe("low");
-    expect(
+      }),
+    ).toThrowError(InvariantError);
+    expect(() =>
       service.recordEvent({
         targetType: "bulk",
         targetId: bulkSummary.id,
@@ -400,8 +391,8 @@ describe("InventoryService", () => {
         location: "" as never,
         notes: null,
         nextLevel: "not-a-level" as never,
-      }).location,
-    ).toBe("Fastener wall");
+      }),
+    ).toThrowError(InvariantError);
 
     const mergeA = service.assignQr({
       qrCode: "QR-1004",
@@ -620,7 +611,6 @@ describe("InventoryService", () => {
         event: "moved",
         location: "Shelf",
         notes: null,
-        nextStatus: "available",
         assignee: null,
       }),
     ).toThrowError(NotFoundError);
@@ -633,7 +623,6 @@ describe("InventoryService", () => {
         event: "moved",
         location: "Bin",
         notes: null,
-        nextLevel: "good",
       }),
     ).toThrowError(NotFoundError);
 
@@ -714,8 +703,48 @@ describe("InventoryService", () => {
         event: "returned",
         location: "Shelf",
         notes: null,
-        nextStatus: "available",
         assignee: null,
+      }),
+    ).toThrowError(ConflictError);
+
+    expect(() =>
+      service.recordEvent({
+        targetType: "instance",
+        targetId: availableItem.id,
+        actor: "lab-admin",
+        event: "moved",
+        location: "Shelf",
+        notes: null,
+      }),
+    ).toThrowError(ConflictError);
+
+    service.registerQrBatch({ actor: "lab-admin", prefix: "QR", startNumber: 3200, count: 1 });
+    const bulkItem = service.assignQr({
+      qrCode: "QR-3200",
+      actor: "labeler",
+      entityKind: "bulk",
+      location: "Drawer",
+      notes: null,
+      partType: {
+        kind: "new",
+        canonicalName: "Move Bulk Test",
+        category: "Misc",
+        aliases: [],
+        notes: null,
+        imageUrl: null,
+        countable: false,
+      },
+      initialLevel: "good",
+    });
+
+    expect(() =>
+      service.recordEvent({
+        targetType: "bulk",
+        targetId: bulkItem.id,
+        actor: "lab-admin",
+        event: "moved",
+        location: "Drawer",
+        notes: null,
       }),
     ).toThrowError(ConflictError);
   });

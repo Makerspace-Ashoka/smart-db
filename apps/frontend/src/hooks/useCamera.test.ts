@@ -75,6 +75,7 @@ describe("useCamera", () => {
     });
 
     expect(result.current.permissionState).toBe("granted");
+    expect(result.current.isScanning).toBe(true);
     expect(mockGetUserMedia).toHaveBeenCalledWith({
       video: { facingMode: "environment" },
     });
@@ -87,6 +88,7 @@ describe("useCamera", () => {
 
     expect(onScan).toHaveBeenCalledWith("QR-1001");
     expect(result.current.lastResult).toBe("QR-1001");
+    expect(result.current.isScanning).toBe(false);
   });
 
   it("sets permission denied when getUserMedia fails", async () => {
@@ -179,6 +181,26 @@ describe("useCamera", () => {
 
     unmount(result);
     expect(mockTrackStop).toHaveBeenCalled();
+  });
+
+  it("stops the camera when the page becomes hidden", async () => {
+    vi.stubGlobal("requestAnimationFrame", vi.fn().mockReturnValue(1));
+    vi.stubGlobal("cancelAnimationFrame", vi.fn());
+
+    const { result } = renderHook(() => useCamera(vi.fn()));
+    (result.current.videoRef as { current: HTMLVideoElement | null }).current = mockVideoElement();
+
+    await act(async () => {
+      await result.current.start();
+    });
+
+    act(() => {
+      Object.defineProperty(document, "hidden", { value: true, configurable: true });
+      document.dispatchEvent(new Event("visibilitychange"));
+    });
+
+    expect(mockTrackStop).toHaveBeenCalled();
+    expect(result.current.isScanning).toBe(false);
   });
 });
 

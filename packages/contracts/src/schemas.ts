@@ -3,6 +3,10 @@ import { z } from "zod";
 const nonEmptyString = z.string().trim().min(1);
 const nullableString = z.string().trim().min(1).nullable();
 const nullableLooseString = z.string().trim().nullable();
+const normalizedOptionalString = z.string().trim().nullish().transform((value) => {
+  const trimmed = value?.trim();
+  return trimmed ? trimmed : null;
+});
 
 export const instanceStatuses = [
   "available",
@@ -26,12 +30,24 @@ export const stockEventKinds = [
   "lost",
   "disposed",
 ] as const;
+export const instanceActionKinds = [
+  "moved",
+  "checked_out",
+  "returned",
+  "consumed",
+  "damaged",
+  "lost",
+  "disposed",
+] as const;
+export const bulkActionKinds = ["moved", "level_changed", "consumed"] as const;
 
 export const instanceStatusSchema = z.enum(instanceStatuses);
 export const bulkLevelSchema = z.enum(bulkLevels);
 export const qrStatusSchema = z.enum(qrStatuses);
 export const inventoryTargetKindSchema = z.enum(inventoryTargetKinds);
 export const stockEventKindSchema = z.enum(stockEventKinds);
+export const instanceActionSchema = z.enum(instanceActionKinds);
+export const bulkActionSchema = z.enum(bulkActionKinds);
 
 const isoTimestampSchema = z.string().datetime();
 const identifierSchema = nonEmptyString;
@@ -174,7 +190,7 @@ export const registerQrBatchRequestSchema = z
     batchId: nonEmptyString.optional(),
     prefix: nonEmptyString.regex(/^[A-Za-z0-9_-]+$/).default("QR"),
     startNumber: z.number().int().nonnegative(),
-    count: z.number().int().positive().max(10_000),
+    count: z.number().int().positive().max(500),
   })
   .strict();
 
@@ -263,46 +279,127 @@ export const assignQrCommandSchema = z.discriminatedUnion("entityKind", [
 ]);
 
 export const instanceRecordEventRequestSchema = z
-  .object({
-    targetType: z.literal("instance"),
-    targetId: identifierSchema,
-    event: z.enum(["moved", "checked_out", "returned", "consumed", "damaged", "lost", "disposed"]),
-    notes: nullableLooseString.default(null),
-    location: nonEmptyString.default("Unknown"),
-    nextStatus: instanceStatusSchema.default("available"),
-    assignee: nullableLooseString.default(null),
-  })
-  .strict();
+  .discriminatedUnion("event", [
+    z
+      .object({
+        targetType: z.literal("instance"),
+        targetId: identifierSchema,
+        event: z.literal("moved"),
+        notes: normalizedOptionalString,
+        location: nonEmptyString,
+      })
+      .strict(),
+    z
+      .object({
+        targetType: z.literal("instance"),
+        targetId: identifierSchema,
+        event: z.literal("checked_out"),
+        notes: normalizedOptionalString,
+        location: normalizedOptionalString,
+        assignee: normalizedOptionalString,
+      })
+      .strict(),
+    z
+      .object({
+        targetType: z.literal("instance"),
+        targetId: identifierSchema,
+        event: z.literal("returned"),
+        notes: normalizedOptionalString,
+        location: normalizedOptionalString,
+      })
+      .strict(),
+    z
+      .object({
+        targetType: z.literal("instance"),
+        targetId: identifierSchema,
+        event: z.literal("consumed"),
+        notes: normalizedOptionalString,
+        location: normalizedOptionalString,
+      })
+      .strict(),
+    z
+      .object({
+        targetType: z.literal("instance"),
+        targetId: identifierSchema,
+        event: z.literal("damaged"),
+        notes: normalizedOptionalString,
+        location: normalizedOptionalString,
+      })
+      .strict(),
+    z
+      .object({
+        targetType: z.literal("instance"),
+        targetId: identifierSchema,
+        event: z.literal("lost"),
+        notes: normalizedOptionalString,
+        location: normalizedOptionalString,
+      })
+      .strict(),
+    z
+      .object({
+        targetType: z.literal("instance"),
+        targetId: identifierSchema,
+        event: z.literal("disposed"),
+        notes: normalizedOptionalString,
+        location: normalizedOptionalString,
+      })
+      .strict(),
+  ]);
 
-export const bulkRecordEventRequestSchema = z
-  .object({
-    targetType: z.literal("bulk"),
-    targetId: identifierSchema,
-    event: z.enum(["moved", "level_changed", "consumed"]),
-    notes: nullableLooseString.default(null),
-    location: nonEmptyString.default("Unknown"),
-    nextLevel: bulkLevelSchema.default("good"),
-  })
-  .strict();
+export const bulkRecordEventRequestSchema = z.discriminatedUnion("event", [
+  z
+    .object({
+      targetType: z.literal("bulk"),
+      targetId: identifierSchema,
+      event: z.literal("moved"),
+      notes: normalizedOptionalString,
+      location: nonEmptyString,
+    })
+    .strict(),
+  z
+    .object({
+      targetType: z.literal("bulk"),
+      targetId: identifierSchema,
+      event: z.literal("level_changed"),
+      notes: normalizedOptionalString,
+      location: normalizedOptionalString,
+      nextLevel: bulkLevelSchema,
+    })
+    .strict(),
+  z
+    .object({
+      targetType: z.literal("bulk"),
+      targetId: identifierSchema,
+      event: z.literal("consumed"),
+      notes: normalizedOptionalString,
+      location: normalizedOptionalString,
+      nextLevel: bulkLevelSchema,
+    })
+    .strict(),
+]);
 
-export const recordEventRequestSchema = z.discriminatedUnion("targetType", [
+export const recordEventRequestSchema = z.union([
   instanceRecordEventRequestSchema,
   bulkRecordEventRequestSchema,
 ]);
 
-export const instanceRecordEventCommandSchema = instanceRecordEventRequestSchema
-  .extend({
+const actorSchema = z
+  .object({
     actor: nonEmptyString,
   })
   .strict();
 
-export const bulkRecordEventCommandSchema = bulkRecordEventRequestSchema
-  .extend({
-    actor: nonEmptyString,
-  })
-  .strict();
+export const instanceRecordEventCommandSchema = z.intersection(
+  instanceRecordEventRequestSchema,
+  actorSchema,
+);
 
-export const recordEventCommandSchema = z.discriminatedUnion("targetType", [
+export const bulkRecordEventCommandSchema = z.intersection(
+  bulkRecordEventRequestSchema,
+  actorSchema,
+);
+
+export const recordEventCommandSchema = z.union([
   instanceRecordEventCommandSchema,
   bulkRecordEventCommandSchema,
 ]);
@@ -311,9 +408,16 @@ export const mergePartTypesRequestSchema = z
   .object({
     sourcePartTypeId: identifierSchema,
     destinationPartTypeId: identifierSchema,
-    aliasLabel: nonEmptyString.optional(),
+    aliasLabel: normalizedOptionalString,
   })
-  .strict();
+  .strict()
+  .refine(
+    (value) => value.sourcePartTypeId !== value.destinationPartTypeId,
+    {
+      message: "Source and destination part types must be different.",
+      path: ["destinationPartTypeId"],
+    },
+  );
 
 export const voidQrRequestSchema = z
   .object({
@@ -370,6 +474,7 @@ export const applicationErrorResponseSchema = z
         code: z.enum([
           "parse_input",
           "unauthenticated",
+          "forbidden",
           "not_found",
           "conflict",
           "integration",
@@ -382,7 +487,33 @@ export const applicationErrorResponseSchema = z
   })
   .strict();
 
-export const scanResponseSchema = z.discriminatedUnion("mode", [
+export const interactInstanceScanResponseSchema = z
+  .object({
+    mode: z.literal("interact"),
+    qrCode: qrCodeSchema,
+    entity: inventoryEntitySummarySchema.extend({
+      targetType: z.literal("instance"),
+    }),
+    recentEvents: z.array(stockEventSchema),
+    availableActions: z.array(instanceActionSchema),
+    partDb: partDbLookupSummarySchema,
+  })
+  .strict();
+
+export const interactBulkScanResponseSchema = z
+  .object({
+    mode: z.literal("interact"),
+    qrCode: qrCodeSchema,
+    entity: inventoryEntitySummarySchema.extend({
+      targetType: z.literal("bulk"),
+    }),
+    recentEvents: z.array(stockEventSchema),
+    availableActions: z.array(bulkActionSchema),
+    partDb: partDbLookupSummarySchema,
+  })
+  .strict();
+
+export const scanResponseSchema = z.union([
   z
     .object({
       mode: z.literal("label"),
@@ -391,16 +522,8 @@ export const scanResponseSchema = z.discriminatedUnion("mode", [
       partDb: partDbLookupSummarySchema,
     })
     .strict(),
-  z
-    .object({
-      mode: z.literal("interact"),
-      qrCode: qrCodeSchema,
-      entity: inventoryEntitySummarySchema,
-      recentEvents: z.array(stockEventSchema),
-      availableActions: z.array(stockEventKindSchema),
-      partDb: partDbLookupSummarySchema,
-    })
-    .strict(),
+  interactInstanceScanResponseSchema,
+  interactBulkScanResponseSchema,
   z
     .object({
       mode: z.literal("unknown"),
@@ -414,6 +537,8 @@ export type InstanceStatus = z.output<typeof instanceStatusSchema>;
 export type BulkLevel = z.output<typeof bulkLevelSchema>;
 export type QrStatus = z.output<typeof qrStatusSchema>;
 export type StockEventKind = z.output<typeof stockEventKindSchema>;
+export type InstanceActionKind = z.output<typeof instanceActionSchema>;
+export type BulkActionKind = z.output<typeof bulkActionSchema>;
 export type InventoryTargetKind = z.output<typeof inventoryTargetKindSchema>;
 export type PartType = z.output<typeof partTypeSchema>;
 export type PhysicalInstance = z.output<typeof physicalInstanceSchema>;

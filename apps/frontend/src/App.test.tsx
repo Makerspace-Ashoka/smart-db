@@ -11,7 +11,7 @@ import type {
 
 const apiMock = vi.hoisted(() => ({
   loginUrl: vi.fn(),
-  qrBatchLabelsPdfUrl: vi.fn(),
+  downloadQrBatchLabelsPdf: vi.fn(),
   getSession: vi.fn(),
   logout: vi.fn(),
   hydrateSessionToken: vi.fn(),
@@ -41,9 +41,9 @@ vi.mock("./api", () => ({
     }
   },
   clearSessionToken: apiMock.clearSessionToken,
+  downloadQrBatchLabelsPdf: apiMock.downloadQrBatchLabelsPdf,
   hydrateSessionToken: apiMock.hydrateSessionToken,
   loginUrl: apiMock.loginUrl,
-  qrBatchLabelsPdfUrl: apiMock.qrBatchLabelsPdfUrl,
   api: apiMock,
 }));
 
@@ -123,15 +123,13 @@ beforeEach(() => {
     mock.mockReset();
   }
   apiMock.loginUrl.mockReturnValue("http://localhost:4000/api/auth/login?returnTo=http%3A%2F%2Flocalhost%3A5173%2F");
-  apiMock.qrBatchLabelsPdfUrl.mockImplementation(
-    (batchId: string) => `http://localhost:4000/api/qr-batches/${batchId}/labels.pdf`,
-  );
+  apiMock.downloadQrBatchLabelsPdf.mockResolvedValue(undefined);
   apiMock.getSession.mockResolvedValue({
     subject: null,
     username: "labeler",
     name: null,
     email: null,
-    roles: [],
+    roles: ["smartdb.admin", "smartdb.labeler"],
     issuedAt: "2026-01-01T00:00:00.000Z",
     expiresAt: null,
   });
@@ -228,6 +226,25 @@ describe("App", () => {
     );
   });
 
+  it("hides admin navigation and skips admin-only fetches for non-admin sessions", async () => {
+    apiMock.getSession.mockResolvedValueOnce({
+      subject: null,
+      username: "labeler",
+      name: null,
+      email: null,
+      roles: ["smartdb.labeler"],
+      issuedAt: "2026-01-01T00:00:00.000Z",
+      expiresAt: null,
+    });
+
+    render(<SmartApp />);
+
+    expect(await screen.findByPlaceholderText("Scan or type a QR / barcode")).toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: "Admin" })).not.toBeInTheDocument();
+    expect(apiMock.getProvisionalPartTypes).not.toHaveBeenCalled();
+    expect(apiMock.getLatestQrBatch).not.toHaveBeenCalled();
+  });
+
   it("surfaces session-restore failures and stays on the login shell", async () => {
     const AuthError = (await import("./api")).ApiClientError;
     apiMock.getSession.mockRejectedValueOnce(new AuthError("integration", "zitadel offline"));
@@ -235,7 +252,7 @@ describe("App", () => {
     render(<SmartApp />);
 
     expect(await screen.findByText("Sign In With Makerspace SSO")).toBeInTheDocument();
-    expect((await screen.findAllByText("integration: zitadel offline")).length).toBeGreaterThan(0);
+    expect((await screen.findAllByText("zitadel offline")).length).toBeGreaterThan(0);
   });
 
   it("falls back to the login shell when the session is invalid", async () => {
@@ -265,7 +282,11 @@ describe("App", () => {
 
   it("shows the upstream token expiry when Part-DB reports one", async () => {
     apiMock.getSession.mockResolvedValueOnce({
+      subject: null,
       username: "labeler",
+      name: null,
+      email: null,
+      roles: ["smartdb.admin", "smartdb.labeler"],
       issuedAt: "2026-01-01T00:00:00.000Z",
       expiresAt: "2026-01-02T00:00:00.000Z",
     });
@@ -306,12 +327,9 @@ describe("App", () => {
     expect(screen.getByText("Part-DB degraded")).toBeInTheDocument();
     expect(screen.getByText("Unassigned QRs")).toBeInTheDocument();
 
-    await user.click(screen.getByRole("button", { name: "Admin" }));
+    await user.click(screen.getByRole("tab", { name: "Admin" }));
     expect(screen.getByText(/batch-latest/)).toBeInTheDocument();
-    expect(screen.getByRole("link", { name: "Download PDF Labels" })).toHaveAttribute(
-      "href",
-      "http://localhost:4000/api/qr-batches/batch-latest/labels.pdf",
-    );
+    expect(screen.getByRole("button", { name: "Download PDF Labels" })).toBeInTheDocument();
     expect(screen.getByLabelText("Prefix")).toHaveValue("QR");
     expect(screen.getByLabelText("Start number")).toHaveValue(1025);
     await user.clear(screen.getByLabelText("Prefix"));
@@ -358,7 +376,7 @@ describe("App", () => {
 
     render(<SmartApp />);
     await screen.findByRole("button", { name: "Logout" });
-    await user.click(screen.getByRole("button", { name: "Admin" }));
+    await user.click(screen.getByRole("tab", { name: "Admin" }));
     await user.clear(screen.getByLabelText("Prefix"));
     await user.type(screen.getByLabelText("Prefix"), "LAB");
     await user.clear(screen.getByLabelText("Start number"));
@@ -370,17 +388,14 @@ describe("App", () => {
     await waitFor(() => {
       expect(screen.getByText(/25 labels · created by/)).toBeInTheDocument();
     });
-    expect(screen.getByRole("link", { name: "Download PDF Labels" })).toHaveAttribute(
-      "href",
-      "http://localhost:4000/api/qr-batches/batch-new/labels.pdf",
-    );
+    expect(screen.getByRole("button", { name: "Download PDF Labels" })).toBeInTheDocument();
   });
 
   it("auto-increments batch start number after successful registration", async () => {
     const user = userEvent.setup();
     render(<SmartApp />);
     await screen.findByRole("button", { name: "Logout" });
-    await user.click(screen.getByRole("button", { name: "Admin" }));
+    await user.click(screen.getByRole("tab", { name: "Admin" }));
     await user.click(screen.getByRole("button", { name: "Register batch" }));
 
     await waitFor(() => {
@@ -507,12 +522,12 @@ describe("App", () => {
     fireEvent.change(within(card).getByLabelText("Search existing part types"), {
       target: { value: "bulk" },
     });
-    expect(await within(card).findByRole("button", { name: /M3 Screw/ })).toBeInTheDocument();
+    expect(await within(card).findByRole("radio", { name: /M3 Screw/ })).toBeInTheDocument();
 
     fireEvent.change(within(card).getByLabelText("Search existing part types"), {
       target: { value: "" },
     });
-    expect(await within(card).findByRole("button", { name: /Arduino Uno R3/ })).toBeInTheDocument();
+    expect(await within(card).findByRole("radio", { name: /Arduino Uno R3/ })).toBeInTheDocument();
   });
 
   it("surfaces batch registration failures", async () => {
@@ -521,7 +536,7 @@ describe("App", () => {
 
     render(<SmartApp />);
     await screen.findByRole("button", { name: "Logout" });
-    await user.click(screen.getByRole("button", { name: "Admin" }));
+    await user.click(screen.getByRole("tab", { name: "Admin" }));
     await user.click(screen.getByRole("button", { name: "Register batch" }));
     expect(await screen.findByText("batch failed")).toBeInTheDocument();
   });
@@ -595,7 +610,7 @@ describe("App", () => {
     if (!assignCard) {
       throw new Error("assign card was not rendered");
     }
-    await user.click(within(assignCard).getByRole("button", { name: /Arduino Uno R3/ }));
+    await user.click(within(assignCard).getByRole("radio", { name: /Arduino Uno R3/ }));
     await user.click(within(assignCard).getByRole("button", { name: "More options" }));
     await user.selectOptions(within(assignCard).getByLabelText("Initial status"), "damaged");
     await user.click(screen.getByRole("button", { name: "Assign QR" }));
@@ -680,7 +695,7 @@ describe("App", () => {
       throw new Error("assign card was not rendered");
     }
 
-    await user.click(within(assignCard).getByRole("button", { name: /M3 Screw/ }));
+    await user.click(within(assignCard).getByRole("radio", { name: /M3 Screw/ }));
     await user.type(within(assignCard).getByLabelText("Search existing part types"), "screw");
     await waitFor(() => {
       expect(apiMock.searchPartTypes).toHaveBeenLastCalledWith(
@@ -688,14 +703,15 @@ describe("App", () => {
         expect.any(AbortSignal),
       );
     });
-    await user.clear(within(assignCard).getByLabelText("Location"));
-    await user.type(within(assignCard).getByLabelText("Location"), "Fastener wall");
+    await user.click(within(assignCard).getByRole("radio", { name: "Create new type" }));
+    await user.clear(within(assignCard).getByLabelText(/^Location/));
+    await user.type(within(assignCard).getByLabelText(/^Location/), "Fastener wall");
     await user.click(within(assignCard).getByRole("button", { name: "More options" }));
     await user.selectOptions(within(assignCard).getByLabelText("Kind"), "bulk");
     await user.selectOptions(within(assignCard).getByLabelText("Initial level"), "low");
-    await user.type(within(assignCard).getByLabelText("New canonical name"), "M3 Screw");
-    await user.clear(within(assignCard).getByLabelText("Category"));
-    await user.type(within(assignCard).getByLabelText("Category"), "Fasteners");
+    await user.type(within(assignCard).getByLabelText(/^New canonical name/), "M3 Screw");
+    await user.clear(within(assignCard).getByLabelText(/^Category/));
+    await user.type(within(assignCard).getByLabelText(/^Category/), "Fasteners");
     await user.selectOptions(within(assignCard).getByLabelText("Countable"), "false");
     await user.type(within(assignCard).getByLabelText("Notes"), "drawer stock");
     await user.click(within(assignCard).getByRole("button", { name: "Assign QR" }));
@@ -757,9 +773,9 @@ describe("App", () => {
 
     await user.type(within(assignCard).getByLabelText("Search existing part types"), "broken");
     expect(await screen.findByText("search failed")).toBeInTheDocument();
-    await user.click(within(assignCard).getByRole("button", { name: "More options" }));
-    await user.type(within(assignCard).getByLabelText("New canonical name"), "Widget");
-    await user.type(within(assignCard).getByLabelText("Category"), "Misc");
+    await user.click(within(assignCard).getByRole("radio", { name: "Create new type" }));
+    await user.type(within(assignCard).getByLabelText(/^New canonical name/), "Widget");
+    await user.type(within(assignCard).getByLabelText(/^Category/), "Misc");
     await user.click(within(assignCard).getByRole("button", { name: "Assign QR" }));
     expect(await screen.findByText("assign failed")).toBeInTheDocument();
   });
@@ -847,11 +863,11 @@ describe("App", () => {
     await user.click(screen.getByRole("button", { name: "Open" }));
     expect(await screen.findByText(/Arduino Uno R3 · QR-1001/)).toBeInTheDocument();
 
-    await user.click(screen.getByRole("button", { name: "checked_out" }));
+    await user.click(screen.getByRole("button", { name: "Check out" }));
     await user.type(screen.getByLabelText("Assignee"), "Ayesha");
     await user.clear(screen.getByLabelText("Location"));
     await user.type(screen.getByLabelText("Location"), "Workbench");
-    await user.click(screen.getByRole("button", { name: "Log event" }));
+    await user.click(screen.getByRole("button", { name: "Confirm Check out" }));
 
     await waitFor(() => {
       expect(apiMock.recordEvent).toHaveBeenCalledWith({
@@ -860,11 +876,10 @@ describe("App", () => {
         event: "checked_out",
         location: "Workbench",
         notes: null,
-        nextStatus: "available",
         assignee: "Ayesha",
       });
     });
-    expect(await screen.findByText(/Logged checked_out/)).toBeInTheDocument();
+    expect(await screen.findByText(/Saved Check out/)).toBeInTheDocument();
   });
 
   it("covers bulk interaction controls and record failures", async () => {
@@ -910,12 +925,12 @@ describe("App", () => {
       throw new Error("interact card was not rendered");
     }
 
-    await user.click(within(interactCard).getByRole("button", { name: "level_changed" }));
+    await user.click(within(interactCard).getByRole("button", { name: "Update level" }));
     await user.clear(within(interactCard).getByLabelText("Location"));
     await user.type(within(interactCard).getByLabelText("Location"), "Drawer wall");
     await user.selectOptions(within(interactCard).getByLabelText("Next level"), "empty");
     await user.type(within(interactCard).getByLabelText("Notes"), "used up");
-    await user.click(within(interactCard).getByRole("button", { name: "Log event" }));
+    await user.click(within(interactCard).getByRole("button", { name: "Confirm Update level" }));
 
     await waitFor(() => {
       expect(apiMock.recordEvent).toHaveBeenCalledWith({
@@ -937,10 +952,10 @@ describe("App", () => {
 
     render(<SmartApp />);
     await screen.findByRole("button", { name: "Logout" });
-    await user.click(screen.getByRole("button", { name: "Admin" }));
+    await user.click(screen.getByRole("tab", { name: "Admin" }));
 
     await user.selectOptions(screen.getByLabelText("Provisional source"), "part-1");
-    await user.click(screen.getAllByRole("button", { name: /Arduino Uno R3/ })[0]);
+    await user.click(screen.getAllByRole("radio", { name: /Arduino Uno R3/ })[0]);
     await user.click(screen.getByRole("button", { name: "Merge provisional type" }));
     expect(await screen.findByText("merge failed")).toBeInTheDocument();
   });
@@ -951,7 +966,7 @@ describe("App", () => {
 
     render(<SmartApp />);
     expect(await screen.findByText("Something went wrong.")).toBeInTheDocument();
-    await user.click(screen.getByRole("button", { name: "Activity" }));
+    await user.click(screen.getByRole("tab", { name: "Activity" }));
     expect(await screen.findByText("No events yet.")).toBeInTheDocument();
   });
 
@@ -983,7 +998,7 @@ describe("App", () => {
 
     render(<SmartApp />);
     expect(await screen.findByText("Part-DB linked")).toBeInTheDocument();
-    await user.click(screen.getByRole("button", { name: "Admin" }));
+    await user.click(screen.getByRole("tab", { name: "Admin" }));
     await user.click(screen.getByRole("button", { name: "Merge provisional type" }));
     expect(await screen.findByText("Select both a provisional source and a canonical destination.")).toBeInTheDocument();
 
@@ -995,7 +1010,7 @@ describe("App", () => {
         expect.any(AbortSignal),
       );
     });
-    await user.click(screen.getAllByRole("button", { name: /Arduino Uno R3/ })[0]);
+    await user.click(screen.getAllByRole("radio", { name: /Arduino Uno R3/ })[0]);
     await user.click(screen.getByRole("button", { name: "Merge provisional type" }));
     expect(await screen.findByText("Merged provisional part type into canonical record.")).toBeInTheDocument();
   });
@@ -1008,7 +1023,7 @@ describe("App", () => {
 
     render(<SmartApp />);
     await screen.findByRole("button", { name: "Logout" });
-    await user.click(screen.getByRole("button", { name: "Admin" }));
+    await user.click(screen.getByRole("tab", { name: "Admin" }));
 
     await user.type(screen.getByLabelText("Find canonical destination"), "cable");
     expect(await screen.findByText("merge search failed")).toBeInTheDocument();
@@ -1074,10 +1089,10 @@ describe("App", () => {
 
     render(<SmartApp />);
     await screen.findByRole("button", { name: "Logout" });
-    await user.click(screen.getByRole("button", { name: "Activity" }));
+    await user.click(screen.getByRole("tab", { name: "Activity" }));
     expect(await screen.findAllByText(/none → none/)).not.toHaveLength(0);
 
-    await user.click(screen.getByRole("button", { name: "Scan" }));
+    await user.click(screen.getByRole("tab", { name: "Scan" }));
     await user.type(screen.getByPlaceholderText("Scan or type a QR / barcode"), "QR-1008");
     await user.click(screen.getByRole("button", { name: "Open" }));
     expect(await screen.findAllByText(/none → none/)).not.toHaveLength(0);
@@ -1205,7 +1220,7 @@ describe("App", () => {
     });
 
     secondSearch.resolve([bulkType]);
-    expect(await within(card).findByRole("button", { name: /M3 Screw/ })).toBeInTheDocument();
+    expect(await within(card).findByRole("radio", { name: /M3 Screw/ })).toBeInTheDocument();
     firstSearch.resolve([partType]);
     await waitFor(() => {
       expect(within(card).queryByRole("button", { name: /Arduino Uno R3/ })).toBeNull();
@@ -1226,7 +1241,7 @@ describe("App", () => {
     await user.click(screen.getByRole("button", { name: "Open" }));
     await screen.findByText("QR-HIST-1 is unknown to Smart DB");
 
-    await user.click(screen.getByRole("button", { name: "Activity" }));
+    await user.click(screen.getByRole("tab", { name: "Activity" }));
     expect(await screen.findByText("Recent Scans")).toBeInTheDocument();
     expect(screen.getByText("QR-HIST-1")).toBeInTheDocument();
   });
@@ -1245,7 +1260,7 @@ describe("App", () => {
     const user = userEvent.setup();
     render(<SmartApp />);
     await screen.findByRole("button", { name: "Logout" });
-    await user.click(screen.getByRole("button", { name: "Admin" }));
+    await user.click(screen.getByRole("tab", { name: "Admin" }));
 
     await user.selectOptions(screen.getByLabelText("Provisional source"), "part-1");
     await user.click(screen.getByRole("button", { name: "Keep As-Is" }));
@@ -1303,7 +1318,7 @@ describe("App", () => {
     await user.click(screen.getByRole("button", { name: "Open" }));
     const assignHeading = await screen.findByText("Assign QR-2001");
     const card = assignHeading.closest(".result-card")!;
-    await user.click(within(card).getByRole("button", { name: /Arduino Uno R3/ }));
+    await user.click(within(card).getByRole("radio", { name: /Arduino Uno R3/ }));
     await user.click(screen.getByRole("button", { name: "Assign QR" }));
     await waitFor(() => { expect(apiMock.assignQr).toHaveBeenCalledTimes(1); });
 
@@ -1435,12 +1450,12 @@ describe("App", () => {
       throw new Error("assign card was not rendered");
     }
 
-    await user.click(within(assignCard).getByRole("button", { name: "More options" }));
-    await user.type(within(assignCard).getByLabelText("New canonical name"), "Fresh Widget");
-    await user.clear(within(assignCard).getByLabelText("Category"));
-    await user.type(within(assignCard).getByLabelText("Category"), "Widgets");
-    await user.clear(within(assignCard).getByLabelText("Location"));
-    await user.type(within(assignCard).getByLabelText("Location"), "Shelf Z");
+    await user.click(within(assignCard).getByRole("radio", { name: "Create new type" }));
+    await user.type(within(assignCard).getByLabelText(/^New canonical name/), "Fresh Widget");
+    await user.clear(within(assignCard).getByLabelText(/^Category/));
+    await user.type(within(assignCard).getByLabelText(/^Category/), "Widgets");
+    await user.clear(within(assignCard).getByLabelText(/^Location/));
+    await user.type(within(assignCard).getByLabelText(/^Location/), "Shelf Z");
     await user.click(within(assignCard).getByRole("button", { name: "Assign QR" }));
     await waitFor(() => {
       expect(apiMock.assignQr).toHaveBeenCalledTimes(1);
@@ -1508,7 +1523,7 @@ describe("App", () => {
 
     firstSearch.reject(new DOMException("aborted", "AbortError"));
     secondSearch.resolve([bulkType]);
-    expect(await within(card).findByRole("button", { name: /M3 Screw/ })).toBeInTheDocument();
+    expect(await within(card).findByRole("radio", { name: /M3 Screw/ })).toBeInTheDocument();
     expect(screen.queryByText("aborted")).toBeNull();
   });
 });

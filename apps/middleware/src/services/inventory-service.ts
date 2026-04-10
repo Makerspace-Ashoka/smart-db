@@ -242,15 +242,29 @@ export class InventoryService {
         .all(entity.targetType, entity.id)
         .map((row) => mapStockEvent(row as SqlRow));
 
+      if (entity.targetType === "instance") {
+        return {
+          mode: "interact",
+          qrCode,
+          entity: {
+            ...entity,
+            targetType: "instance",
+          },
+          recentEvents,
+          availableActions: getAvailableInstanceActions(entity.state as PhysicalInstance["status"]),
+          partDb,
+        };
+      }
+
       return {
         mode: "interact",
         qrCode,
-        entity,
+        entity: {
+          ...entity,
+          targetType: "bulk",
+        },
         recentEvents,
-        availableActions:
-          entity.targetType === "instance"
-            ? getAvailableInstanceActions(entity.state as PhysicalInstance["status"])
-            : getAvailableBulkActions(entity.state as BulkLevel),
+        availableActions: getAvailableBulkActions(entity.state as BulkLevel),
         partDb,
       };
     }
@@ -383,7 +397,10 @@ export class InventoryService {
       }
 
       const current = mapPhysicalInstance(row);
-      const location = input.location?.trim() || current.location;
+      const location =
+        input.event === "moved"
+          ? requireChangedLocation(input.location, current.location, input.event)
+          : input.location?.trim() || current.location;
 
       const nextStatus = getNextInstanceStatus(current.status, input.event);
       if (nextStatus === null) {
@@ -435,9 +452,15 @@ export class InventoryService {
     }
 
     const current = mapBulkStock(row);
-    const location = input.location?.trim() || current.location;
+    const location =
+      input.event === "moved"
+        ? requireChangedLocation(input.location, current.location, input.event)
+        : input.location?.trim() || current.location;
 
-    const requestedLevel = validBulkLevel(input.nextLevel) ? input.nextLevel : undefined;
+    const requestedLevel =
+      input.event === "moved"
+        ? undefined
+        : requireBulkNextLevel(input.nextLevel, input.event);
     const nextLevel = getNextBulkLevel(current.level, input.event, requestedLevel);
     if (nextLevel === null) {
       throw new ConflictError(
@@ -1059,6 +1082,41 @@ function enforcePartTypeCompatibility(
       partTypeId: partType.id,
     });
   }
+}
+
+function requireChangedLocation(
+  location: string | null | undefined,
+  currentLocation: string,
+  event: "moved",
+): string {
+  const normalized = location?.trim();
+  if (!normalized) {
+    throw new InvariantError(`Parsed '${event}' command is missing a destination location.`, {
+      event,
+    });
+  }
+
+  if (normalized === currentLocation) {
+    throw new ConflictError(`Cannot perform '${event}' without changing location.`, {
+      event,
+      currentLocation,
+    });
+  }
+
+  return normalized;
+}
+
+function requireBulkNextLevel(
+  nextLevel: unknown,
+  event: "level_changed" | "consumed",
+): BulkLevel {
+  if (!validBulkLevel(nextLevel)) {
+    throw new InvariantError(`Parsed '${event}' command is missing a valid next level.`, {
+      event,
+    });
+  }
+
+  return nextLevel;
 }
 
 export const inventoryServiceTestInternals = {

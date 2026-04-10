@@ -1,15 +1,13 @@
-import type { BulkLevel, InstanceStatus, StockEventKind } from "./schemas.js";
-
-type InstanceEventKind = Extract<
-  StockEventKind,
-  "moved" | "checked_out" | "returned" | "consumed" | "damaged" | "lost" | "disposed"
->;
-
-type BulkEventKind = Extract<StockEventKind, "moved" | "level_changed" | "consumed">;
+import type {
+  BulkActionKind,
+  BulkLevel,
+  InstanceActionKind,
+  InstanceStatus,
+} from "./schemas.js";
 
 export const INSTANCE_TRANSITIONS: Record<
   InstanceStatus,
-  Partial<Record<InstanceEventKind, InstanceStatus>>
+  Partial<Record<InstanceActionKind, InstanceStatus>>
 > = {
   available: {
     moved: "available",
@@ -43,7 +41,7 @@ export const INSTANCE_TRANSITIONS: Record<
 
 export const BULK_TRANSITIONS: Record<
   BulkLevel,
-  Partial<Record<BulkEventKind, "keep">>
+  Partial<Record<BulkActionKind, "keep">>
 > = {
   full: { moved: "keep", level_changed: "keep", consumed: "keep" },
   good: { moved: "keep", level_changed: "keep", consumed: "keep" },
@@ -51,12 +49,12 @@ export const BULK_TRANSITIONS: Record<
   empty: { moved: "keep", level_changed: "keep" },
 };
 
-export function getAvailableInstanceActions(status: InstanceStatus): InstanceEventKind[] {
-  return Object.keys(INSTANCE_TRANSITIONS[status]) as InstanceEventKind[];
+export function getAvailableInstanceActions(status: InstanceStatus): InstanceActionKind[] {
+  return Object.keys(INSTANCE_TRANSITIONS[status]) as InstanceActionKind[];
 }
 
-export function getAvailableBulkActions(level: BulkLevel): BulkEventKind[] {
-  return Object.keys(BULK_TRANSITIONS[level]) as BulkEventKind[];
+export function getAvailableBulkActions(level: BulkLevel): BulkActionKind[] {
+  return Object.keys(BULK_TRANSITIONS[level]) as BulkActionKind[];
 }
 
 export function getNextInstanceStatus(
@@ -64,7 +62,7 @@ export function getNextInstanceStatus(
   event: string,
 ): InstanceStatus | null {
   const transitions = INSTANCE_TRANSITIONS[current];
-  const next = transitions[event as InstanceEventKind];
+  const next = transitions[event as InstanceActionKind];
   return next ?? null;
 }
 

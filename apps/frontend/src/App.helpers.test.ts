@@ -1,8 +1,12 @@
 import { describe, expect, it } from "vitest";
 import { InvariantError } from "@smart-db/contracts";
+import { ApiClientError } from "./api";
 import {
   buildAssignRequest,
   buildEventRequest,
+  errorMessage,
+  getAssignFormIssues,
+  hasAssignFormIssues,
   narrowBulkEvent,
   narrowInstanceEvent,
   normalizeNullable,
@@ -133,7 +137,6 @@ describe("App helpers", () => {
         targetId: "instance-1",
         event: "checked_out",
         location: "Workbench",
-        nextStatus: "checked_out",
         nextLevel: "good",
         assignee: "Ayesha",
         notes: "",
@@ -144,7 +147,6 @@ describe("App helpers", () => {
       event: "checked_out",
       location: "Workbench",
       notes: null,
-      nextStatus: "checked_out",
       assignee: "Ayesha",
     });
 
@@ -154,7 +156,6 @@ describe("App helpers", () => {
         targetId: "bulk-1",
         event: "level_changed",
         location: "Wall",
-        nextStatus: "available",
         nextLevel: "low",
         assignee: "",
         notes: "running low",
@@ -174,7 +175,6 @@ describe("App helpers", () => {
         targetId: "bulk-1",
         event: "moved",
         location: "Shelf B",
-        nextStatus: "available",
         nextLevel: "good",
         assignee: "",
         notes: "",
@@ -185,7 +185,6 @@ describe("App helpers", () => {
       event: "moved",
       location: "Shelf B",
       notes: null,
-      nextLevel: "good",
     });
   });
 
@@ -208,6 +207,91 @@ describe("App helpers", () => {
         initialStatus: "available",
         initialLevel: "good",
       }),
-    ).toThrowError("Existing part type selection requires a part type id.");
+    ).toThrowError("Choose an existing part type or switch to creating a new one.");
+    expect(
+      getAssignFormIssues({
+        qrCode: "QR-1006",
+        entityKind: "instance",
+        location: " ",
+        notes: "",
+        partTypeMode: "new",
+        existingPartTypeId: "",
+        canonicalName: "",
+        category: "",
+        countable: true,
+        initialStatus: "available",
+        initialLevel: "good",
+      }),
+    ).toEqual({
+      location: "Location is required.",
+      canonicalName: "Name the new part type.",
+      category: "Category is required for a new part type.",
+    });
+    expect(
+      hasAssignFormIssues(
+        getAssignFormIssues({
+          qrCode: "QR-1007",
+          entityKind: "instance",
+          location: "Shelf A",
+          notes: "",
+          partTypeMode: "existing",
+          existingPartTypeId: "",
+          canonicalName: "",
+          category: "",
+          countable: true,
+          initialStatus: "available",
+          initialLevel: "good",
+        }),
+      ),
+    ).toBe(true);
+    expect(() =>
+      buildEventRequest({
+        targetType: "instance",
+        targetId: "instance-1",
+        event: "moved",
+        location: "   ",
+        nextLevel: "good",
+        assignee: "",
+        notes: "",
+      }),
+    ).toThrowError("Moved event requires a destination location.");
+    expect(() =>
+      buildEventRequest({
+        targetType: "bulk",
+        targetId: "bulk-1",
+        event: "moved",
+        location: "",
+        nextLevel: "good",
+        assignee: "",
+        notes: "",
+      }),
+    ).toThrowError("Moved event requires a destination location.");
+  });
+
+  it("humanizes structured API failures", () => {
+    expect(
+      errorMessage(
+        new ApiClientError("parse_input", "Could not parse assignment form.", {
+          issues: [{ path: "location", message: "Location is required." }],
+        }),
+      ),
+    ).toBe("Location is required.");
+    expect(
+      errorMessage(
+        new ApiClientError("unauthenticated", "Authentication is required."),
+      ),
+    ).toBe("Your session has expired. Sign in again.");
+    expect(
+      errorMessage(
+        new ApiClientError("conflict", "in progress", { idempotencyKey: "abc" }),
+      ),
+    ).toBe("That action is already being processed.");
+    expect(
+      errorMessage(
+        new ApiClientError("integration", "Part-DB integration failed: timeout", {
+          integration: "Part-DB",
+        }),
+      ),
+    ).toBe("Part-DB is unavailable right now.");
   });
 });

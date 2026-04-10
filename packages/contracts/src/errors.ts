@@ -1,6 +1,7 @@
 export type ApplicationErrorCode =
   | "parse_input"
   | "unauthenticated"
+  | "forbidden"
   | "not_found"
   | "conflict"
   | "integration"
@@ -56,6 +57,12 @@ export class NotFoundError extends ApplicationError {
 export class UnauthenticatedError extends ApplicationError {
   constructor(message = "Authentication is required.", details: Record<string, unknown> = {}, options?: ErrorOptions) {
     super("unauthenticated", 401, message, details, options);
+  }
+}
+
+export class ForbiddenError extends ApplicationError {
+  constructor(message = "You do not have permission to perform this action.", details: Record<string, unknown> = {}, options?: ErrorOptions) {
+    super("forbidden", 403, message, details, options);
   }
 }
 

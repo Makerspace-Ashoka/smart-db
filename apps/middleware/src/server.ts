@@ -1,5 +1,13 @@
 import type { DatabaseSync } from "node:sqlite";
-import { InvariantError, UnauthenticatedError, isApplicationError } from "@smart-db/contracts";
+import {
+  ForbiddenError,
+  hasSmartDbRole,
+  InvariantError,
+  smartDbRoles,
+  type SmartDbRole,
+  UnauthenticatedError,
+  isApplicationError,
+} from "@smart-db/contracts";
 import cookie from "@fastify/cookie";
 import cors from "@fastify/cors";
 import Fastify, { type preHandlerAsyncHookHandler } from "fastify";
@@ -8,7 +16,7 @@ import { AuthService } from "./auth/auth-service.js";
 import { SessionStore } from "./auth/session-store.js";
 import "./auth/types.js";
 import { createDatabase } from "./db/database.js";
-import { registerIdempotencyHooks } from "./middleware/idempotency.js";
+import { createIdempotencyHooks } from "./middleware/idempotency.js";
 import { PartDbClient } from "./partdb/partdb-client.js";
 import { registerAuthRoutes } from "./routes/auth-routes.js";
 import { registerInventoryRoutes } from "./routes/inventory-routes.js";
@@ -64,19 +72,25 @@ export async function buildServer(options: BuildServerOptions = {}) {
     options.inventoryService ??
     new InventoryService(db, partDbClient);
 
-  registerIdempotencyHooks(app, db);
+  const idempotency = createIdempotencyHooks(db);
 
-  const requireAuth: preHandlerAsyncHookHandler = async (request, reply) => {
+  const requireMutationOrigin = async (request: Parameters<preHandlerAsyncHookHandler>[0]) => {
     if (
       request.method !== "GET" &&
       request.method !== "HEAD" &&
       request.headers.origin !== activeConfig.frontendOrigin
     ) {
-      throw new UnauthenticatedError("Cross-origin mutation requests are not allowed.");
+      throw new ForbiddenError("Cross-origin mutation requests are not allowed.");
     }
+  };
 
-    const session = authService.getSession(request.cookies[activeConfig.sessionCookieName]);
-    if (!session) {
+  const loadAuthenticatedSession = async (
+    request: Parameters<preHandlerAsyncHookHandler>[0],
+    reply: Parameters<preHandlerAsyncHookHandler>[1],
+  ) => {
+    const sessionId = request.cookies[activeConfig.sessionCookieName];
+    const session = sessionId ? authService.getSession(sessionId) : null;
+    if (!sessionId || !session) {
       reply.clearCookie(
         activeConfig.sessionCookieName,
         sessionCookieOptions(activeConfig.publicBaseUrl, null),
@@ -84,12 +98,34 @@ export async function buildServer(options: BuildServerOptions = {}) {
       throw new UnauthenticatedError();
     }
     request.authContext = {
+      sessionId,
       session,
     };
   };
 
+  const requireAuth: preHandlerAsyncHookHandler = async (request, reply) => {
+    await requireMutationOrigin(request);
+    await loadAuthenticatedSession(request, reply);
+  };
+
+  const requireRole = (requiredRole: SmartDbRole): preHandlerAsyncHookHandler =>
+    async function (request, reply) {
+      await requireAuth.call(this, request, reply);
+      if (!hasSmartDbRole(request.authContext!.session.roles, requiredRole)) {
+        throw new ForbiddenError("You do not have permission to perform this action.", {
+          requiredRole,
+        });
+      }
+    };
+
+  const requireAdmin = requireRole(smartDbRoles.admin);
+
   await registerAuthRoutes(app, activeConfig, authService, requireAuth);
-  await registerInventoryRoutes(app, inventoryService, requireAuth);
+  await registerInventoryRoutes(app, inventoryService, {
+    requireAuth,
+    requireAdmin,
+    idempotency,
+  });
 
   app.setErrorHandler((error, _request, reply) => {
     const applicationError = isApplicationError(error)

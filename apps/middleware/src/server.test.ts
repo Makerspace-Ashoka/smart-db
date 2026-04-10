@@ -91,7 +91,7 @@ const authSession = {
   username: "labeler",
   name: "Labeler User",
   email: "labeler@example.com",
-  roles: ["smartdb.labeler"],
+  roles: ["smartdb.admin", "smartdb.labeler"],
   issuedAt: "2026-01-01T00:00:00.000Z",
   expiresAt: null,
 };
@@ -206,6 +206,33 @@ describe("buildServer", () => {
     await app.close();
   });
 
+  it("sanitizes auth callback failures before redirecting back to the frontend", async () => {
+    const authService = makeAuthService({
+      completeLogin: vi.fn(async () => {
+        throw new Error("jwt verification failed");
+      }),
+    });
+    const app = await buildServer({
+      configOverride: makeConfig(),
+      authService,
+    });
+
+    const callback = await app.inject({
+      method: "GET",
+      url: "/api/auth/callback?code=auth-code&state=state-1",
+      cookies: {
+        smartdb_auth_request: "auth-request-cookie",
+      },
+    });
+
+    expect(callback.statusCode).toBe(302);
+    expect(callback.headers.location).toBe(
+      "http://localhost:5173/?authError=Sign-in+failed.+Please+try+again.",
+    );
+
+    await app.close();
+  });
+
   it("can build a real server with its own inventory service", async () => {
     const app = await buildServer({
       configOverride: makeConfig(),
@@ -246,6 +273,46 @@ describe("buildServer", () => {
     expect(response.statusCode).toBe(200);
     await app.close();
     process.env.NODE_ENV = previousNodeEnv;
+  });
+
+  it("returns 403 for admin-only routes when the session lacks the admin role", async () => {
+    const authService = makeAuthService({
+      getSession: vi.fn((sessionId: string | undefined) =>
+        sessionId === "session-1"
+          ? {
+              ...authSession,
+              roles: ["smartdb.labeler"],
+            }
+          : null,
+      ),
+    });
+    const app = await buildServer({
+      configOverride: makeConfig(),
+      authService,
+    });
+
+    const response = await app.inject({
+      method: "POST",
+      url: "/api/qr-batches",
+      payload: {
+        startNumber: 1001,
+        count: 2,
+      },
+      headers: sessionHeaders,
+    });
+
+    expect(response.statusCode).toBe(403);
+    expect(response.json()).toEqual({
+      error: {
+        code: "forbidden",
+        message: "You do not have permission to perform this action.",
+        details: {
+          requiredRole: "smartdb.admin",
+        },
+      },
+    });
+
+    await app.close();
   });
 
   it("serves the route surface and delegates to the inventory service", async () => {
@@ -375,6 +442,7 @@ describe("buildServer", () => {
           targetType: "instance",
           targetId: "instance-1",
           event: "moved",
+          location: "Shelf B",
         },
         headers: sessionHeaders,
       }),

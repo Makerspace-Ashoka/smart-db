@@ -3,25 +3,30 @@ export type TabId = "scan" | "activity" | "admin";
 interface TabBarProps {
   activeTab: TabId;
   onTabChange: (tab: TabId) => void;
+  tabs?: TabId[];
 }
 
-const tabs: { id: TabId; label: string }[] = [
-  { id: "scan", label: "Scan" },
-  { id: "activity", label: "Activity" },
-  { id: "admin", label: "Admin" },
-];
+const tabLabels: Record<TabId, string> = {
+  scan: "Scan",
+  activity: "Activity",
+  admin: "Admin",
+};
 
-export function TabBar({ activeTab, onTabChange }: TabBarProps) {
+export function TabBar({ activeTab, onTabChange, tabs = ["scan", "activity", "admin"] }: TabBarProps) {
   return (
-    <nav className="tab-bar">
+    <nav className="tab-bar" role="tablist" aria-label="Primary navigation">
       {tabs.map((tab) => (
         <button
-          key={tab.id}
+          key={tab}
           type="button"
-          className={activeTab === tab.id ? "active" : ""}
-          onClick={() => onTabChange(tab.id)}
+          role="tab"
+          id={`tab-${tab}`}
+          className={activeTab === tab ? "active" : ""}
+          aria-selected={activeTab === tab}
+          aria-controls={`panel-${tab}`}
+          onClick={() => onTabChange(tab)}
         >
-          {tab.label}
+          {tabLabels[tab]}
         </button>
       ))}
     </nav>

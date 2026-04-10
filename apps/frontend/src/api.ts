@@ -198,6 +198,52 @@ export function qrBatchLabelsPdfUrl(batchId: string): string {
   return apiUrl(`/api/qr-batches/${encodeURIComponent(batchId)}/labels.pdf`);
 }
 
+export async function downloadQrBatchLabelsPdf(batchId: string): Promise<void> {
+  const response = await fetch(apiUrl(`/api/qr-batches/${encodeURIComponent(batchId)}/labels.pdf`), {
+    credentials: "include",
+  });
+
+  if (!response.ok) {
+    const body = await response.json().catch(() => null);
+    const parsedError =
+      body === null
+        ? null
+        : applicationErrorResponseSchema.safeParse(body);
+    if (parsedError?.success) {
+      throw new ApiClientError(
+        parsedError.data.error.code,
+        parsedError.data.error.message,
+        parsedError.data.error.details,
+      );
+    }
+
+    throw new ApiClientError("transport", `Request failed with ${response.status}`);
+  }
+
+  const blob = await response.blob();
+  const objectUrl = URL.createObjectURL(blob);
+  const anchor = document.createElement("a");
+  anchor.href = objectUrl;
+  anchor.download = filenameFromContentDisposition(
+    response.headers.get("Content-Disposition"),
+    `${batchId}-labels.pdf`,
+  );
+  anchor.click();
+  URL.revokeObjectURL(objectUrl);
+}
+
+function filenameFromContentDisposition(
+  header: string | null,
+  fallback: string,
+): string {
+  if (!header) {
+    return fallback;
+  }
+
+  const match = header.match(/filename="([^"]+)"/i);
+  return match?.[1] ?? fallback;
+}
+
 function apiUrl(path: string): string {
   return configuredApiBaseUrl ? `${configuredApiBaseUrl}${path}` : path;
 }

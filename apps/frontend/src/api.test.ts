@@ -4,6 +4,7 @@ import {
   ApiClientError,
   api,
   clearSessionToken,
+  downloadQrBatchLabelsPdf,
   hydrateSessionToken,
   loginUrl,
   qrBatchLabelsPdfUrl,
@@ -240,8 +241,6 @@ describe("frontend api", () => {
         event: "moved",
         location: "Shelf B",
         notes: null,
-        nextStatus: "available",
-        assignee: null,
       }),
     ).resolves.toMatchObject({ id: "event-1" });
     await expect(
@@ -337,6 +336,35 @@ describe("frontend api", () => {
     );
   });
 
+  it("downloads batch labels through fetch and a blob URL", async () => {
+    const createObjectURL = vi.fn(() => "blob:labels");
+    const revokeObjectURL = vi.fn();
+    const click = vi.fn();
+    vi.stubGlobal("fetch", vi.fn().mockResolvedValue({
+      ok: true,
+      blob: async () => new Blob(["pdf"], { type: "application/pdf" }),
+      headers: {
+        get: (name: string) =>
+          name === "Content-Disposition" ? 'attachment; filename="batch-123-labels.pdf"' : null,
+      },
+    }));
+    vi.stubGlobal("URL", {
+      createObjectURL,
+      revokeObjectURL,
+    });
+    vi.spyOn(document, "createElement").mockReturnValue({
+      click,
+      set href(_value: string) {},
+      set download(_value: string) {},
+    } as unknown as HTMLAnchorElement);
+
+    await downloadQrBatchLabelsPdf("batch-123");
+
+    expect(createObjectURL).toHaveBeenCalled();
+    expect(click).toHaveBeenCalled();
+    expect(revokeObjectURL).toHaveBeenCalledWith("blob:labels");
+  });
+
   it("passes explicit abort signals through search and session calls", async () => {
     const controller = new AbortController();
     const fetch = vi
@@ -404,8 +432,6 @@ describe("frontend api", () => {
       event: "moved",
       location: "Shelf B",
       notes: null,
-      nextStatus: "available",
-      assignee: null,
     });
 
     expect(fetch.mock.calls[0]?.[1]?.headers?.["Content-Type"]).toBe("application/json");

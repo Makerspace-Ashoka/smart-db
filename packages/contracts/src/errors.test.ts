@@ -2,6 +2,7 @@ import { describe, expect, it } from "vitest";
 import {
   ApplicationError,
   ConflictError,
+  ForbiddenError,
   IntegrationError,
   InvariantError,
   NotFoundError,
@@ -26,6 +27,7 @@ describe("application errors", () => {
 
   it("builds typed domain and integration failures", () => {
     const notFound = new NotFoundError("QR code", "QR-1001");
+    const forbidden = new ForbiddenError("Admins only.");
     const conflict = new ConflictError("Already assigned.", { qrCode: "QR-1001" });
     const integration = new IntegrationError("Part-DB", "upstream timed out", {
       requestId: "abc",
@@ -35,6 +37,7 @@ describe("application errors", () => {
     });
 
     expect(notFound.httpStatus).toBe(404);
+    expect(forbidden.httpStatus).toBe(403);
     expect(conflict.httpStatus).toBe(409);
     expect(integration.httpStatus).toBe(502);
     expect(invariant.httpStatus).toBe(500);
@@ -42,4 +45,3 @@ describe("application errors", () => {
     expect(isApplicationError(new Error("plain"))).toBe(false);
   });
 });
-

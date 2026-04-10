@@ -17,7 +17,8 @@ interface AdminTabProps {
   onBatchFormChange: (updater: (current: RegisterQrBatchRequest) => RegisterQrBatchRequest) => void;
   onRegisterBatch: (event: FormEvent<HTMLFormElement>) => void;
   latestBatch: QrBatch | null;
-  latestBatchLabelsUrl: string | null;
+  isDownloadingLabels: boolean;
+  onDownloadLabels: () => void;
   // Merge
   provisionalPartTypes: PartType[];
   mergeSourceId: string;
@@ -39,6 +40,9 @@ export function AdminTab(props: AdminTabProps) {
           title="Print QR batches"
           copy={`Pre-register sticker ranges. This batch will be attributed to ${props.sessionUsername}.`}
         />
+        <p className="muted-copy batch-preview">
+          Next range preview: {props.batchForm.prefix}-{props.batchForm.startNumber} to {props.batchForm.prefix}-{props.batchForm.startNumber + props.batchForm.count - 1} ({props.batchForm.count} labels)
+        </p>
         {props.latestBatch ? (
           <div className="latest-batch-card">
             <div>
@@ -53,11 +57,13 @@ export function AdminTab(props: AdminTabProps) {
                 {props.latestBatch.actor}
               </small>
             </div>
-            {props.latestBatchLabelsUrl ? (
-              <a className="button-link" href={props.latestBatchLabelsUrl}>
-                Download PDF Labels
-              </a>
-            ) : null}
+            <button
+              type="button"
+              onClick={props.onDownloadLabels}
+              disabled={props.isDownloadingLabels}
+            >
+              {props.isDownloadingLabels ? "Downloading..." : "Download PDF Labels"}
+            </button>
           </div>
         ) : (
           <p className="muted-copy">No QR batch has been registered yet.</p>
@@ -67,6 +73,7 @@ export function AdminTab(props: AdminTabProps) {
             Prefix
             <input
               value={props.batchForm.prefix}
+              maxLength={20}
               onChange={(event) =>
                 props.onBatchFormChange((current) => ({
                   ...current,
@@ -80,6 +87,7 @@ export function AdminTab(props: AdminTabProps) {
             <input
               type="number"
               value={props.batchForm.startNumber}
+              min={0}
               onChange={(event) =>
                 props.onBatchFormChange((current) => ({
                   ...current,
@@ -93,6 +101,8 @@ export function AdminTab(props: AdminTabProps) {
             <input
               type="number"
               value={props.batchForm.count}
+              min={1}
+              max={500}
               onChange={(event) =>
                 props.onBatchFormChange((current) => ({
                   ...current,
@@ -145,11 +155,13 @@ export function AdminTab(props: AdminTabProps) {
             />
           </label>
           {props.mergeSearch.error ? <p className="banner error">{props.mergeSearch.error}</p> : null}
-          <div className="picker">
+          <div className="picker" role="radiogroup" aria-label="Canonical destination">
             {props.mergeOptions.map((partType) => (
               <button
                 key={partType.id}
                 type="button"
+                role="radio"
+                aria-checked={props.mergeDestinationId === partType.id}
                 className={props.mergeDestinationId === partType.id ? "selected" : ""}
                 onClick={() => props.onMergeDestinationIdChange(partType.id)}
               >
