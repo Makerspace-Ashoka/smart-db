@@ -36,13 +36,21 @@ import {
   getNextBulkLevel,
 } from "@smart-db/contracts";
 import { PartDbClient } from "../partdb/partdb-client.js";
+import type { PartDbOutbox } from "../outbox/partdb-outbox.js";
+import type { OutboxTarget } from "../outbox/outbox-types.js";
 
 type SqlRow = Record<string, unknown>;
+type LotOutboxTarget = {
+  table: "physical_instances" | "bulk_stocks";
+  rowId: string;
+  column: "partdb_lot_id";
+};
 
 export class InventoryService {
   constructor(
     private readonly db: DatabaseSync,
     private readonly partDbClient: PartDbClient,
+    private readonly partDbOutbox: PartDbOutbox | null = null,
   ) {}
 
   getDashboardSummary(): DashboardSummary {
@@ -311,9 +319,12 @@ export class InventoryService {
     const partType = this.resolvePartType(input.partType);
     enforcePartTypeCompatibility(input.entityKind, partType);
     const timestamp = nowIso();
+    const correlationId = randomUUID();
     let summary: InventoryEntitySummary | null = null;
 
     this.withTransaction(() => {
+      const partSyncDependencyId = this.ensurePartTypeSync(partType, correlationId);
+
       if (input.entityKind === "instance") {
         const initialStatus = validInstanceStatus(input.initialStatus)
           ? input.initialStatus
@@ -330,6 +341,20 @@ export class InventoryService {
           .run(id, qrCodeValue, partType.id, initialStatus, location, timestamp, timestamp);
 
         this.updateQrAssignment(qrCodeValue, "instance", id, timestamp);
+        this.enqueueCreateLot(
+          {
+            table: "physical_instances",
+            rowId: id,
+            column: "partdb_lot_id",
+          },
+          correlationId,
+          partType,
+          location,
+          qrCodeValue,
+          input.notes ?? "",
+          1,
+          partSyncDependencyId,
+        );
         this.insertEvent({
           targetType: "instance",
           targetId: id,
@@ -355,6 +380,20 @@ export class InventoryService {
           .run(id, qrCodeValue, partType.id, initialLevel, location, timestamp, timestamp);
 
         this.updateQrAssignment(qrCodeValue, "bulk", id, timestamp);
+        this.enqueueCreateLot(
+          {
+            table: "bulk_stocks",
+            rowId: id,
+            column: "partdb_lot_id",
+          },
+          correlationId,
+          partType,
+          location,
+          qrCodeValue,
+          input.notes ?? "",
+          quantityFromBulkLevel(initialLevel),
+          partSyncDependencyId,
+        );
         this.insertEvent({
           targetType: "bulk",
           targetId: id,
@@ -387,6 +426,7 @@ export class InventoryService {
     const actor = input.actor;
     const targetId = input.targetId;
     const timestamp = nowIso();
+    const correlationId = randomUUID();
 
     if (input.targetType === "instance") {
       const row = this.db
@@ -439,6 +479,20 @@ export class InventoryService {
           notes: input.notes ?? null,
           createdAt: timestamp,
         });
+
+        if (input.event === "moved") {
+          this.enqueueLotUpdate(
+            {
+              table: "physical_instances",
+              rowId: current.id,
+              column: "partdb_lot_id",
+            },
+            correlationId,
+            {
+              storageLocationName: location,
+            },
+          );
+        }
       });
 
       return this.latestEvent("instance", current.id);
@@ -491,6 +545,32 @@ export class InventoryService {
         notes: input.notes ?? null,
         createdAt: timestamp,
       });
+
+      if (input.event === "moved") {
+        this.enqueueLotUpdate(
+          {
+            table: "bulk_stocks",
+            rowId: current.id,
+            column: "partdb_lot_id",
+          },
+          correlationId,
+          {
+            storageLocationName: location,
+          },
+        );
+      } else {
+        this.enqueueLotUpdate(
+          {
+            table: "bulk_stocks",
+            rowId: current.id,
+            column: "partdb_lot_id",
+          },
+          correlationId,
+          {
+            amount: quantityFromBulkLevel(nextLevel),
+          },
+        );
+      }
     });
 
     return this.latestEvent("bulk", current.id);
@@ -574,6 +654,7 @@ export class InventoryService {
     }
 
     const timestamp = nowIso();
+    const correlationId = randomUUID();
 
     this.withTransaction(() => {
       if (qrCode.status === "assigned" && qrCode.assignedKind && qrCode.assignedId) {
@@ -597,6 +678,14 @@ export class InventoryService {
               notes: "Voided via QR void",
               createdAt: timestamp,
             });
+            this.enqueueDeleteLot(
+              {
+                table: "physical_instances",
+                rowId: instance.id,
+                column: "partdb_lot_id",
+              },
+              correlationId,
+            );
           }
         } else {
           const row = this.db
@@ -618,6 +707,14 @@ export class InventoryService {
               notes: "Voided via QR void",
               createdAt: timestamp,
             });
+            this.enqueueDeleteLot(
+              {
+                table: "bulk_stocks",
+                rowId: bulk.id,
+                column: "partdb_lot_id",
+              },
+              correlationId,
+            );
           }
         }
       }
@@ -722,6 +819,167 @@ export class InventoryService {
       );
 
     return partType;
+  }
+
+  private ensurePartTypeSync(partType: PartType, correlationId: string): string | null {
+    if (!this.partDbOutbox || partType.partDbPartId) {
+      return null;
+    }
+
+    const existing = this.partDbOutbox.findLatestPendingTarget(
+      "part_types",
+      partType.id,
+      "partdb_part_id",
+    );
+    if (existing) {
+      return existing.id;
+    }
+
+    return this.partDbOutbox.enqueue(
+      {
+        kind: "create_part",
+        payload: {
+          name: partType.canonicalName,
+          categoryIri: partType.partDbCategoryId ? `/api/categories/${partType.partDbCategoryId}` : null,
+          categoryPath: partType.categoryPath,
+          unitIri: partType.partDbUnitId ? `/api/measurement_units/${partType.partDbUnitId}` : null,
+          unit: partType.unit,
+          description: partType.notes ?? "",
+          tags: partType.aliases,
+          needsReview: partType.needsReview,
+          minAmount: null,
+        },
+        target: {
+          table: "part_types",
+          rowId: partType.id,
+          column: "partdb_part_id",
+        },
+        dependsOnId: null,
+      },
+      correlationId,
+    );
+  }
+
+  private enqueueCreateLot(
+    target: OutboxTarget,
+    correlationId: string,
+    partType: PartType,
+    location: string,
+    qrCode: string,
+    description: string,
+    amount: number,
+    partDependencyId: string | null,
+  ): void {
+    if (!this.partDbOutbox) {
+      return;
+    }
+
+    const existing = this.partDbOutbox.findLatestPendingTarget(
+      target.table,
+      target.rowId,
+      target.column,
+    );
+    if (existing) {
+      return;
+    }
+
+    this.partDbOutbox.enqueue(
+      {
+        kind: "create_lot",
+        payload: {
+          partIri: partType.partDbPartId ? `/api/parts/${partType.partDbPartId}` : null,
+          storageLocationName: location,
+          amount,
+          description,
+          userBarcode: qrCode,
+          instockUnknown: false,
+        },
+        target,
+        dependsOnId: partDependencyId,
+      },
+      correlationId,
+    );
+  }
+
+  private enqueueLotUpdate(
+    target: LotOutboxTarget,
+    correlationId: string,
+    patch: {
+      amount?: number | undefined;
+      storageLocationName?: string | undefined;
+    },
+  ): void {
+    if (!this.partDbOutbox) {
+      return;
+    }
+
+    const dependency = this.partDbOutbox.findLatestPendingTarget(
+      target.table,
+      target.rowId,
+      target.column,
+    );
+    const lotId = this.readSyncedLotId(target.table, target.rowId);
+    if (!lotId && !dependency) {
+      return;
+    }
+
+    this.partDbOutbox.enqueue(
+      {
+        kind: "update_lot",
+        payload: {
+          lotIri: lotId ? `/api/part_lots/${lotId}` : null,
+          patch,
+        },
+        target: null,
+        dependsOnId: dependency?.id ?? null,
+      },
+      correlationId,
+    );
+  }
+
+  private enqueueDeleteLot(
+    target: LotOutboxTarget,
+    correlationId: string,
+  ): void {
+    if (!this.partDbOutbox) {
+      return;
+    }
+
+    const dependency = this.partDbOutbox.findLatestPendingTarget(
+      target.table,
+      target.rowId,
+      target.column,
+    );
+    const lotId = this.readSyncedLotId(target.table, target.rowId);
+    if (!lotId && !dependency) {
+      return;
+    }
+
+    this.partDbOutbox.enqueue(
+      {
+        kind: "delete_lot",
+        payload: {
+          lotIri: lotId ? `/api/part_lots/${lotId}` : null,
+        },
+        target: null,
+        dependsOnId: dependency?.id ?? null,
+      },
+      correlationId,
+    );
+  }
+
+  private readSyncedLotId(table: "physical_instances" | "bulk_stocks", rowId: string): string | null {
+    if (table === "physical_instances") {
+      const row = this.db.prepare(
+        `SELECT partdb_lot_id FROM physical_instances WHERE id = ?`,
+      ).get(rowId) as SqlRow | undefined;
+      return stringOrNull(row?.partdb_lot_id);
+    }
+
+    const row = this.db.prepare(
+      `SELECT partdb_lot_id FROM bulk_stocks WHERE id = ?`,
+    ).get(rowId) as SqlRow | undefined;
+    return stringOrNull(row?.partdb_lot_id);
   }
 
   private findPartType(id: string): PartType | null {
@@ -1082,6 +1340,19 @@ function validBulkLevel(value: unknown): value is BulkLevel {
 
 function validInstanceStatus(value: unknown): value is PhysicalInstance["status"] {
   return typeof value === "string" && instanceStatuses.includes(value as PhysicalInstance["status"]);
+}
+
+function quantityFromBulkLevel(level: BulkLevel): number {
+  switch (level) {
+    case "full":
+      return 100;
+    case "good":
+      return 75;
+    case "low":
+      return 25;
+    case "empty":
+      return 0;
+  }
 }
 
 function parseAliases(value: unknown): string[] {

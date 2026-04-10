@@ -10,11 +10,13 @@ import {
   type PartDbLookupSummary,
 } from "@smart-db/contracts";
 import { createDatabase } from "../db/database";
+import { PartDbOutbox } from "../outbox/partdb-outbox.js";
 import { InventoryService, inventoryServiceTestInternals } from "./inventory-service";
 
-function makeService() {
+function makeService(options: { withOutbox?: boolean } = {}) {
   const directory = mkdtempSync(join(tmpdir(), "smart-db-service-"));
   const db = createDatabase(join(directory, "smart.db"));
+  const outbox = options.withOutbox ? new PartDbOutbox(db) : null;
   const partDbLookupSummary: PartDbLookupSummary = {
     configured: false,
     connected: false,
@@ -42,11 +44,120 @@ function makeService() {
 
   return {
     db,
-    service: new InventoryService(db, partDbClient as never),
+    outbox,
+    service: new InventoryService(
+      db,
+      partDbClient as never,
+      outbox,
+    ),
   };
 }
 
+function dbRows(db: ReturnType<typeof createDatabase>) {
+  return db
+    .prepare(`SELECT operation, target_table AS targetTable, target_column AS targetColumn, status, depends_on_id AS dependsOnId, id FROM partdb_outbox ORDER BY created_at, id`)
+    .all() as Array<{
+    operation: string;
+    targetTable: string | null;
+    targetColumn: string | null;
+    status: string;
+    dependsOnId: string | null;
+    id: string;
+  }>;
+}
+
 describe("InventoryService", () => {
+  it("enqueues part and lot sync work when assigning a new part type", () => {
+    const { db, service, outbox } = makeService({ withOutbox: true });
+    if (!outbox) {
+      throw new Error("outbox was not created");
+    }
+
+    service.registerQrBatch({
+      actor: "lab-admin",
+      prefix: "SYNC",
+      startNumber: 1,
+      count: 1,
+    });
+
+    const summary = service.assignQr({
+      qrCode: "SYNC-1",
+      actor: "labeler",
+      entityKind: "instance",
+      location: "Shelf A",
+      notes: "starter board",
+      partType: {
+        kind: "new",
+        canonicalName: "Arduino Uno R3",
+        category: "Microcontrollers",
+        aliases: ["uno r3"],
+        notes: null,
+        imageUrl: null,
+        countable: true,
+      },
+      initialStatus: "available",
+    });
+
+    expect(summary.targetType).toBe("instance");
+
+    const allRows = dbRows(db);
+    expect(allRows.map((row) => row.operation)).toEqual(["create_part", "create_lot"]);
+    expect(allRows[0]).toMatchObject({
+      targetTable: "part_types",
+      targetColumn: "partdb_part_id",
+      status: "pending",
+    });
+    expect(allRows[1]).toMatchObject({
+      targetTable: "physical_instances",
+      targetColumn: "partdb_lot_id",
+      status: "pending",
+      dependsOnId: allRows[0]?.id,
+    });
+  });
+
+  it("enqueues lot updates and deletes for synced inventory rows", () => {
+    const { db, service, outbox } = makeService({ withOutbox: true });
+    if (!outbox) {
+      throw new Error("outbox was not created");
+    }
+
+    service.registerQrBatch({ actor: "admin", prefix: "L", startNumber: 1, count: 1 });
+    const summary = service.assignQr({
+      qrCode: "L-1",
+      actor: "labeler",
+      entityKind: "instance",
+      location: "Shelf A",
+      notes: null,
+      partType: {
+        kind: "new",
+        canonicalName: "Sync Item",
+        category: "Misc",
+        aliases: [],
+        notes: null,
+        imageUrl: null,
+        countable: true,
+      },
+      initialStatus: "available",
+    });
+
+    db.prepare(`UPDATE physical_instances SET partdb_lot_id = ? WHERE id = ?`).run("41", summary.id);
+
+    service.recordEvent({
+      targetType: "instance",
+      targetId: summary.id,
+      actor: "admin",
+      event: "moved",
+      location: "Shelf B",
+      notes: null,
+      assignee: null,
+    });
+    service.voidQrCode("L-1", "admin");
+
+    const operations = dbRows(db).map((row) => row.operation);
+    expect(operations).toContain("update_lot");
+    expect(operations).toContain("delete_lot");
+  });
+
   it("supports the full intake and lifecycle flow for instances and bulk stock", async () => {
     const { service } = makeService();
 
