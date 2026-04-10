@@ -4,6 +4,7 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 import type {
   DashboardSummary,
   PartDbConnectionStatus,
+  PartDbSyncBackfillResponse,
   PartDbSyncDrainResponse,
   PartDbSyncFailure,
   PartDbSyncStatusResponse,
@@ -34,6 +35,7 @@ const apiMock = vi.hoisted(() => ({
   voidQr: vi.fn(),
   approvePartType: vi.fn(),
   drainPartDbSync: vi.fn(),
+  backfillPartDbSync: vi.fn(),
   retryPartDbSync: vi.fn(),
 }));
 
@@ -222,6 +224,11 @@ beforeEach(() => {
     delivered: 0,
     failed: 0,
   } satisfies PartDbSyncDrainResponse);
+  apiMock.backfillPartDbSync.mockResolvedValue({
+    queuedPartTypes: 0,
+    queuedLots: 0,
+    skipped: 0,
+  } satisfies PartDbSyncBackfillResponse);
   apiMock.retryPartDbSync.mockResolvedValue(undefined);
 });
 
@@ -282,21 +289,21 @@ describe("App", () => {
 
   it("shows sync health in the header and humanized failures in the admin tab", async () => {
     const user = userEvent.setup();
-    apiMock.getPartDbStatus.mockResolvedValueOnce({
+    apiMock.getPartDbStatus.mockResolvedValue({
       ...partDbStatus,
       configured: true,
       connected: true,
       baseUrl: "https://partdb.example.com",
       message: "Connected.",
     });
-    apiMock.getPartDbSyncStatus.mockResolvedValueOnce({
+    apiMock.getPartDbSyncStatus.mockResolvedValue({
       enabled: true,
       pending: 1,
       inFlight: 1,
       failedLast24h: 1,
       deadTotal: 0,
     });
-    apiMock.getPartDbSyncFailures.mockResolvedValueOnce([
+    apiMock.getPartDbSyncFailures.mockResolvedValue([
       {
         id: "sync-1",
         operation: "create_part",
@@ -322,6 +329,8 @@ describe("App", () => {
     await user.click(screen.getByRole("tab", { name: "Admin" }));
 
     expect(await screen.findByText("Part-DB rejected the payload: name This value is already used.")).toBeInTheDocument();
+    await user.click(screen.getByRole("button", { name: "Queue backfill" }));
+    expect(apiMock.backfillPartDbSync).toHaveBeenCalledTimes(1);
     await user.click(screen.getByRole("button", { name: "Retry sync" }));
     expect(apiMock.retryPartDbSync).toHaveBeenCalledWith("sync-1");
   });

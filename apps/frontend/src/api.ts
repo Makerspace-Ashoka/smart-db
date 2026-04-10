@@ -11,6 +11,7 @@ import {
   parseWithSchema,
   partDbConnectionStatusSchema,
   partDbSyncDrainResponseSchema,
+  partDbSyncBackfillResponseSchema,
   partDbSyncFailureSchema,
   partDbSyncStatusResponseSchema,
   partTypeSchema,
@@ -28,6 +29,7 @@ import {
   type MergePartTypesRequest,
   type PartDbConnectionStatus,
   type PartDbSyncDrainResponse,
+  type PartDbSyncBackfillResponse,
   type PartDbSyncFailure,
   type PartDbSyncStatusResponse,
   type PartType,
@@ -135,6 +137,13 @@ export const api = {
   },
   drainPartDbSync(): Promise<PartDbSyncDrainResponse> {
     return request(partDbSyncDrainResponseSchema, "/api/partdb/sync/drain", {
+      method: "POST",
+      body: JSON.stringify({}),
+      headers: idempotencyHeaders(),
+    });
+  },
+  backfillPartDbSync(): Promise<PartDbSyncBackfillResponse> {
+    return request(partDbSyncBackfillResponseSchema, "/api/partdb/sync/backfill", {
       method: "POST",
       body: JSON.stringify({}),
       headers: idempotencyHeaders(),

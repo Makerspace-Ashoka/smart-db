@@ -189,6 +189,7 @@ export async function buildServer(options: BuildServerOptions = {}) {
       enabled: syncEnabled,
       outbox: partDbOutbox,
       worker: partDbWorker,
+      inventoryService,
     },
     requireAdmin,
   );

@@ -1,5 +1,6 @@
 import type { FastifyInstance, preHandlerAsyncHookHandler } from "fastify";
 import {
+  partDbSyncBackfillResponseSchema,
   parseWithSchema,
   partDbSyncDrainResponseSchema,
   partDbSyncFailureSchema,
@@ -7,11 +8,13 @@ import {
 } from "@smart-db/contracts";
 import type { PartDbOutbox } from "../outbox/partdb-outbox.js";
 import type { PartDbOutboxWorker } from "../outbox/partdb-worker.js";
+import type { InventoryService } from "../services/inventory-service.js";
 
 interface PartDbSyncServices {
   enabled: boolean;
   outbox: PartDbOutbox | null;
   worker: PartDbOutboxWorker | null;
+  inventoryService: InventoryService;
 }
 
 export async function registerPartDbAdminRoutes(
@@ -61,6 +64,14 @@ export async function registerPartDbAdminRoutes(
       partDbSyncDrainResponseSchema,
       services.worker ? await services.worker.tick() : { claimed: 0, delivered: 0, failed: 0 },
       "partdb sync drain response",
+    ),
+  );
+
+  app.post("/api/partdb/sync/backfill", { preHandler: requireAdmin }, async () =>
+    parseWithSchema(
+      partDbSyncBackfillResponseSchema,
+      services.inventoryService.backfillPartDbSync(),
+      "partdb sync backfill response",
     ),
   );
 }

@@ -33,6 +33,7 @@ interface AdminTabProps {
   partDbSyncStatus: PartDbSyncStatusResponse | null;
   partDbSyncFailures: PartDbSyncFailure[];
   onDrainSync: () => void;
+  onBackfillSync: () => void;
   onRetrySync: (id: string) => void;
   // Merge
   provisionalPartTypes: PartType[];
@@ -82,6 +83,13 @@ export function AdminTab(props: AdminTabProps) {
             disabled={!syncEnabled || props.pendingAction !== null}
           >
             {props.pendingAction === "sync" ? "Syncing..." : "Run sync now"}
+          </button>
+          <button
+            type="button"
+            onClick={props.onBackfillSync}
+            disabled={!syncEnabled || props.pendingAction !== null}
+          >
+            {props.pendingAction === "sync" ? "Queuing..." : "Queue backfill"}
           </button>
         </div>
         {!syncEnabled ? (

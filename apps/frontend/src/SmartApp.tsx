@@ -579,6 +579,24 @@ export default function SmartApp() {
     }
   }
 
+  async function handleBackfillPartDbSync(): Promise<void> {
+    setPendingAction("sync");
+    try {
+      const result = await api.backfillPartDbSync();
+      addToast(
+        `Queued Part-DB backfill: ${result.queuedPartTypes} part types and ${result.queuedLots} lots.`,
+        "success",
+      );
+      await loadAuthenticatedData();
+    } catch (caught) {
+      if (!handleApiFailure(caught)) {
+        addToast(errorMessage(caught), "error");
+      }
+    } finally {
+      setPendingAction(null);
+    }
+  }
+
   async function handleRetryPartDbSync(id: string): Promise<void> {
     setPendingAction("sync");
     try {
@@ -914,6 +932,7 @@ export default function SmartApp() {
               partDbSyncStatus={partDbSyncStatus}
               partDbSyncFailures={partDbSyncFailures}
               onDrainSync={() => void handleDrainPartDbSync()}
+              onBackfillSync={() => void handleBackfillPartDbSync()}
               onRetrySync={(id) => void handleRetryPartDbSync(id)}
               provisionalPartTypes={provisionalPartTypes}
               mergeSourceId={mergeSourceId}

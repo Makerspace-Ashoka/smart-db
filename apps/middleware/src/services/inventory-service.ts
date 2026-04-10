@@ -48,6 +48,12 @@ type LotOutboxTarget = {
   column: "partdb_lot_id";
 };
 
+interface PartDbBackfillResult {
+  queuedPartTypes: number;
+  queuedLots: number;
+  skipped: number;
+}
+
 export class InventoryService {
   constructor(
     private readonly db: DatabaseSync,
@@ -784,6 +790,153 @@ export class InventoryService {
 
   async getPartDbStatus(): Promise<PartDbConnectionStatus> {
     return this.partDbClient.getConnectionStatus();
+  }
+
+  backfillPartDbSync(): PartDbBackfillResult {
+    const outbox = this.partDbOutbox;
+    if (!outbox) {
+      return {
+        queuedPartTypes: 0,
+        queuedLots: 0,
+        skipped: 0,
+      };
+    }
+
+    const correlationId = randomUUID();
+    let queuedPartTypes = 0;
+    let queuedLots = 0;
+    let skipped = 0;
+
+    this.withTransaction(() => {
+      const partTypes = this.db
+        .prepare(`SELECT * FROM part_types ORDER BY created_at, id`)
+        .all()
+        .map((row) => mapPartType(row as SqlRow));
+      const partTypesById = new Map(partTypes.map((partType) => [partType.id, partType]));
+      const partDependencies = new Map<string, string | null>();
+
+      for (const partType of partTypes) {
+        if (partType.partDbPartId) {
+          skipped += 1;
+          continue;
+        }
+
+        const existing = outbox.findLatestPendingTarget(
+          "part_types",
+          partType.id,
+          "partdb_part_id",
+        );
+        if (existing) {
+          partDependencies.set(partType.id, existing.id);
+          skipped += 1;
+          continue;
+        }
+
+        const dependencyId = this.ensurePartTypeSync(partType, correlationId);
+        partDependencies.set(partType.id, dependencyId);
+        if (dependencyId) {
+          queuedPartTypes += 1;
+        } else {
+          skipped += 1;
+        }
+      }
+
+      const instances = this.db
+        .prepare(`SELECT id, qr_code, part_type_id, location FROM physical_instances ORDER BY created_at, id`)
+        .all() as Array<{ id: string; qr_code: string; part_type_id: string; location: string }>;
+
+      for (const instance of instances) {
+        if (this.readSyncedLotId("physical_instances", instance.id)) {
+          skipped += 1;
+          continue;
+        }
+
+        const pending = outbox.findLatestPendingTarget(
+          "physical_instances",
+          instance.id,
+          "partdb_lot_id",
+        );
+        if (pending) {
+          skipped += 1;
+          continue;
+        }
+
+        const partType = partTypesById.get(instance.part_type_id);
+        if (!partType) {
+          throw new InvariantError("Physical instance is missing its part type during Part-DB backfill.", {
+            partTypeId: instance.part_type_id,
+            targetId: instance.id,
+          });
+        }
+
+        this.enqueueCreateLot(
+          {
+            table: "physical_instances",
+            rowId: instance.id,
+            column: "partdb_lot_id",
+          },
+          correlationId,
+          partType,
+          instance.location,
+          instance.qr_code,
+          "",
+          1,
+          partDependencies.get(partType.id) ?? null,
+        );
+        queuedLots += 1;
+      }
+
+      const bulkStocks = this.db
+        .prepare(`SELECT id, qr_code, part_type_id, location, quantity FROM bulk_stocks ORDER BY created_at, id`)
+        .all() as Array<{ id: string; qr_code: string; part_type_id: string; location: string; quantity: number }>;
+
+      for (const bulkStock of bulkStocks) {
+        if (this.readSyncedLotId("bulk_stocks", bulkStock.id)) {
+          skipped += 1;
+          continue;
+        }
+
+        const pending = outbox.findLatestPendingTarget(
+          "bulk_stocks",
+          bulkStock.id,
+          "partdb_lot_id",
+        );
+        if (pending) {
+          skipped += 1;
+          continue;
+        }
+
+        const partType = partTypesById.get(bulkStock.part_type_id);
+        if (!partType) {
+          throw new InvariantError("Bulk stock is missing its part type during Part-DB backfill.", {
+            partTypeId: bulkStock.part_type_id,
+            targetId: bulkStock.id,
+          });
+        }
+
+        this.enqueueCreateLot(
+          {
+            table: "bulk_stocks",
+            rowId: bulkStock.id,
+            column: "partdb_lot_id",
+          },
+          correlationId,
+          partType,
+          bulkStock.location,
+          bulkStock.qr_code,
+          "",
+          Number(bulkStock.quantity),
+          partDependencies.get(partType.id) ?? null,
+        );
+        queuedLots += 1;
+      }
+    });
+
+    return {
+      queuedPartTypes,
+      queuedLots,
+      skipped,
+    };
   }
 
   private resolvePartType(draft: PartTypeDraft): PartType {

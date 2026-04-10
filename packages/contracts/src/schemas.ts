@@ -615,6 +615,14 @@ export const partDbSyncDrainResponseSchema = z
   })
   .strict();
 
+export const partDbSyncBackfillResponseSchema = z
+  .object({
+    queuedPartTypes: z.number().int().nonnegative(),
+    queuedLots: z.number().int().nonnegative(),
+    skipped: z.number().int().nonnegative(),
+  })
+  .strict();
+
 export const applicationErrorResponseSchema = z
   .object({
     error: z
@@ -722,6 +730,7 @@ export type PartDbLookupSummary = z.output<typeof partDbLookupSummarySchema>;
 export type PartDbSyncStatusResponse = z.output<typeof partDbSyncStatusResponseSchema>;
 export type PartDbSyncFailure = z.output<typeof partDbSyncFailureSchema>;
 export type PartDbSyncDrainResponse = z.output<typeof partDbSyncDrainResponseSchema>;
+export type PartDbSyncBackfillResponse = z.output<typeof partDbSyncBackfillResponseSchema>;
 export type ApplicationErrorResponse = z.output<typeof applicationErrorResponseSchema>;
 export type ScanResponse = z.output<typeof scanResponseSchema>;
 

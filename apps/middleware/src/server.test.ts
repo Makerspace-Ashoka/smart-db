@@ -365,6 +365,18 @@ describe("buildServer", () => {
       failed: 0,
     });
 
+    const backfill = await app.inject({
+      method: "POST",
+      url: "/api/partdb/sync/backfill",
+      headers: sessionHeaders,
+    });
+    expect(backfill.statusCode).toBe(200);
+    expect(backfill.json()).toEqual({
+      queuedPartTypes: 0,
+      queuedLots: 0,
+      skipped: 0,
+    });
+
     await app.close();
   });
 

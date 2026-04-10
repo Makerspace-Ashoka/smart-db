@@ -211,6 +211,95 @@ describe("InventoryService", () => {
     expect(operations).toContain("delete_lot");
   });
 
+  it("backfills existing unsynced inventory into the Part-DB outbox", () => {
+    const initial = makeService();
+
+    initial.service.registerQrBatch({ actor: "admin", prefix: "BF", startNumber: 1, count: 2 });
+    initial.service.assignQr({
+      qrCode: "BF-1",
+      actor: "labeler",
+      entityKind: "instance",
+      location: "Shelf A",
+      notes: null,
+      partType: {
+        kind: "new",
+        canonicalName: "Backfill Instance",
+        category: "Electronics",
+        aliases: [],
+        notes: null,
+        imageUrl: null,
+        countable: true,
+      },
+      initialStatus: "available",
+    });
+    initial.service.assignQr({
+      qrCode: "BF-2",
+      actor: "labeler",
+      entityKind: "bulk",
+      location: "Bin A",
+      notes: null,
+      partType: {
+        kind: "new",
+        canonicalName: "Backfill Bulk",
+        category: "Hardware",
+        aliases: [],
+        notes: null,
+        imageUrl: null,
+        countable: false,
+      },
+      initialQuantity: 12,
+      minimumQuantity: 3,
+    });
+
+    const outbox = new PartDbOutbox(initial.db);
+    const lookupSummary: PartDbLookupSummary = {
+      configured: false,
+      connected: false,
+      message: "Part-DB credentials are not configured.",
+    };
+    const connectionStatus: PartDbConnectionStatus = {
+      configured: false,
+      connected: false,
+      baseUrl: null,
+      tokenLabel: null,
+      userLabel: null,
+      message: "Part-DB credentials are not configured.",
+      discoveredResources: {
+        tokenInfoPath: "/api/tokens/current",
+        openApiPath: "/api/docs.json",
+        partsPath: null,
+        partLotsPath: null,
+        storageLocationsPath: null,
+      },
+    };
+    const backfillService = new InventoryService(
+      initial.db,
+      {
+        getLookupSummary: vi.fn(async () => lookupSummary),
+        getConnectionStatus: vi.fn(async () => connectionStatus),
+      } as never,
+      outbox,
+    );
+
+    expect(backfillService.backfillPartDbSync()).toEqual({
+      queuedPartTypes: 2,
+      queuedLots: 2,
+      skipped: 0,
+    });
+    expect(dbRows(initial.db).map((row) => row.operation).sort()).toEqual([
+      "create_lot",
+      "create_lot",
+      "create_part",
+      "create_part",
+    ]);
+
+    expect(backfillService.backfillPartDbSync()).toEqual({
+      queuedPartTypes: 0,
+      queuedLots: 0,
+      skipped: 4,
+    });
+  });
+
   it("supports the full intake and lifecycle flow for instances and bulk stock", async () => {
     const { service } = makeService();
 
