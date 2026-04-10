@@ -152,6 +152,7 @@ describe("InventoryService", () => {
 
     const allRows = dbRows(db);
     expect(allRows.map((row) => row.operation).sort()).toEqual(["create_lot", "create_part"]);
+    expect(service.searchPartTypes("Arduino Uno R3")[0]?.partDbSyncStatus).toBe("pending");
     const partRow = allRows.find((row) => row.operation === "create_part");
     const lotRow = allRows.find((row) => row.operation === "create_lot");
     expect(partRow).toMatchObject({

@@ -66,13 +66,13 @@ export type OutboxOperation =
           description?: string | undefined;
         };
       };
-      target: null;
+      target: OutboxTarget | null;
       dependsOnId: string | null;
     }
   | {
       kind: "delete_lot";
       payload: { lotIri: string | null };
-      target: null;
+      target: OutboxTarget | null;
       dependsOnId: string | null;
     };
 

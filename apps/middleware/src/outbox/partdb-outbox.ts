@@ -20,7 +20,7 @@ export class PartDbOutbox {
     const id = randomUUID();
     const nowIso = new Date().toISOString();
 
-    this.db.prepare(`
+    const result = this.db.prepare(`
       INSERT OR IGNORE INTO partdb_outbox
         (id, idempotency_key, correlation_id, operation, payload_json,
          depends_on_id, target_table, target_row_id, target_column,
@@ -39,6 +39,10 @@ export class PartDbOutbox {
       nowIso,
       nowIso,
     );
+
+    if (result.changes > 0) {
+      this.setTargetSyncStatus(operation.target, "pending");
+    }
 
     const existing = this.db.prepare(
       `SELECT id FROM partdb_outbox WHERE idempotency_key = ?`,
@@ -97,6 +101,7 @@ export class PartDbOutbox {
   }
 
   retry(id: string, nowIso: string = new Date().toISOString()): void {
+    const row = this.getById(id);
     this.db.prepare(`
       UPDATE partdb_outbox
       SET status = 'pending',
@@ -106,6 +111,9 @@ export class PartDbOutbox {
           leased_at = NULL
       WHERE id = ? AND status IN ('failed', 'dead')
     `).run(nowIso, id);
+    if (row && (row.status === "failed" || row.status === "dead")) {
+      this.setTargetSyncStatus(targetFromRow(row), "pending");
+    }
   }
 
   getDependencyResponseIri(id: string): string | null {
@@ -206,7 +214,7 @@ export class PartDbOutbox {
       `).run(JSON.stringify(response.body), response.iri, completedAt, id);
 
       const row = this.db.prepare(`
-        SELECT target_table, target_row_id, target_column
+        SELECT operation, target_table, target_row_id, target_column
         FROM partdb_outbox
         WHERE id = ?
       `).get(id) as SqlRow | undefined;
@@ -215,13 +223,24 @@ export class PartDbOutbox {
         row &&
         typeof row.target_table === "string" &&
         typeof row.target_row_id === "string" &&
-        typeof row.target_column === "string" &&
-        response.iri
+        typeof row.target_column === "string"
       ) {
-        const targetValue = String(extractIdFromIri(response.iri));
-        this.db.prepare(
-          `UPDATE ${row.target_table} SET ${row.target_column} = ? WHERE id = ?`,
-        ).run(targetValue, row.target_row_id);
+        if (row.operation === "delete_lot") {
+          this.db.prepare(
+            `UPDATE ${row.target_table} SET ${row.target_column} = NULL WHERE id = ?`,
+          ).run(row.target_row_id);
+        } else if (response.iri) {
+          const targetValue = String(extractIdFromIri(response.iri));
+          this.db.prepare(
+            `UPDATE ${row.target_table} SET ${row.target_column} = ? WHERE id = ?`,
+          ).run(targetValue, row.target_row_id);
+        }
+
+        if (targetTableHasSyncStatus(row.target_table)) {
+          this.db.prepare(
+            `UPDATE ${row.target_table} SET partdb_sync_status = 'synced' WHERE id = ?`,
+          ).run(row.target_row_id);
+        }
       }
 
       this.db.exec("COMMIT");
@@ -249,6 +268,11 @@ export class PartDbOutbox {
           leased_at = NULL
       WHERE id = ?
     `).run(status, nextAttemptAt, JSON.stringify(error), failedAt, status, failedAt, id);
+
+    const row = this.getById(id);
+    if (row) {
+      this.setTargetSyncStatus(targetFromRow(row), "failed");
+    }
   }
 
   hydrateOperation(row: OutboxRow): OutboxOperation {
@@ -270,6 +294,37 @@ export class PartDbOutbox {
       "partdb outbox operation",
     );
   }
+
+  private setTargetSyncStatus(
+    target: OutboxOperation["target"],
+    status: "pending" | "failed" | "synced",
+  ): void {
+    if (!target || !targetTableHasSyncStatus(target.table)) {
+      return;
+    }
+
+    this.db.prepare(
+      `UPDATE ${target.table} SET partdb_sync_status = ? WHERE id = ?`,
+    ).run(status, target.rowId);
+  }
+}
+
+type SyncStatusTable = "part_types" | "bulk_stocks";
+
+function targetTableHasSyncStatus(table: string): table is SyncStatusTable {
+  return table === "part_types" || table === "bulk_stocks";
+}
+
+function targetFromRow(row: OutboxRow): OutboxOperation["target"] {
+  if (!row.targetTable || !row.targetRowId || !row.targetColumn) {
+    return null;
+  }
+
+  return {
+    table: row.targetTable,
+    rowId: row.targetRowId,
+    column: row.targetColumn,
+  };
 }
 
 function computeIdempotencyKey(operation: OutboxOperation): string {

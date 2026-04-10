@@ -84,6 +84,6 @@ export const outboxOperationSchema = z.discriminatedUnion("kind", [
   z.object({ kind: z.literal("create_part"), payload: createPartPayloadSchema, target: targetSchema, dependsOnId: z.string().trim().min(1).nullable() }).strict(),
   z.object({ kind: z.literal("create_storage_location"), payload: createStorageLocationPayloadSchema, target: z.null(), dependsOnId: z.null() }).strict(),
   z.object({ kind: z.literal("create_lot"), payload: createLotPayloadSchema, target: targetSchema, dependsOnId: z.string().trim().min(1).nullable() }).strict(),
-  z.object({ kind: z.literal("update_lot"), payload: updateLotPayloadSchema, target: z.null(), dependsOnId: z.string().trim().min(1).nullable() }).strict(),
-  z.object({ kind: z.literal("delete_lot"), payload: deleteLotPayloadSchema, target: z.null(), dependsOnId: z.string().trim().min(1).nullable() }).strict(),
+  z.object({ kind: z.literal("update_lot"), payload: updateLotPayloadSchema, target: targetSchema.nullable(), dependsOnId: z.string().trim().min(1).nullable() }).strict(),
+  z.object({ kind: z.literal("delete_lot"), payload: deleteLotPayloadSchema, target: targetSchema.nullable(), dependsOnId: z.string().trim().min(1).nullable() }).strict(),
 ]);

@@ -947,7 +947,7 @@ export class InventoryService {
           lotIri: lotId ? `/api/part_lots/${lotId}` : null,
           patch,
         },
-        target: null,
+        target,
         dependsOnId: dependency?.id ?? null,
       },
       correlationId,
@@ -978,7 +978,7 @@ export class InventoryService {
         payload: {
           lotIri: lotId ? `/api/part_lots/${lotId}` : null,
         },
-        target: null,
+        target,
         dependsOnId: dependency?.id ?? null,
       },
       correlationId,
