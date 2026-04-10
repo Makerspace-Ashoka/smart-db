@@ -27,4 +27,17 @@ export class PartDbCategoriesResource {
       { resource: "category" },
     );
   }
+
+  async findByNameAndParent(
+    name: string,
+    parentIri: string | null,
+  ): Promise<Result<PartDbCategoryResponse | null, PartDbError>> {
+    const listed = await this.list(new URLSearchParams({ name }));
+    if (!listed.ok) {
+      return listed;
+    }
+
+    const match = listed.value.find((category) => (category.parent ?? null) === parentIri) ?? null;
+    return { ok: true, value: match };
+  }
 }

@@ -26,4 +26,14 @@ export class PartDbStorageLocationsResource {
       { resource: "storage_location" },
     );
   }
+
+  async findByName(name: string): Promise<Result<PartDbStorageLocationResponse | null, PartDbError>> {
+    const listed = await this.list(new URLSearchParams({ name }));
+    if (!listed.ok) {
+      return listed;
+    }
+
+    const match = listed.value.find((location) => location.name === name) ?? null;
+    return { ok: true, value: match };
+  }
 }

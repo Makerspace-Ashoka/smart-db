@@ -26,4 +26,14 @@ export class PartDbMeasurementUnitsResource {
       { resource: "measurement_unit" },
     );
   }
+
+  async findByName(name: string): Promise<Result<PartDbMeasurementUnitResponse | null, PartDbError>> {
+    const listed = await this.list(new URLSearchParams({ name }));
+    if (!listed.ok) {
+      return listed;
+    }
+
+    const match = listed.value.find((unit) => unit.name === name) ?? null;
+    return { ok: true, value: match };
+  }
 }
