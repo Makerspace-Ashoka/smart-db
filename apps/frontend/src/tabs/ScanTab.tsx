@@ -346,7 +346,7 @@ export function ScanTab(props: ScanTabProps) {
                       const matches = query
                         ? props.knownCategories.filter((cat) => cat.toLowerCase().includes(query))
                         : props.knownCategories;
-                      const top = matches.slice(0, 12);
+                      const top = matches.slice(0, 6);
                       if (top.length === 0) {
                         return <p className="muted-copy">No matches. What you typed will be a new category.</p>;
                       }
@@ -475,7 +475,7 @@ export function ScanTab(props: ScanTabProps) {
                   const matches = query
                     ? props.knownLocations.filter((loc) => loc.toLowerCase().includes(query))
                     : props.knownLocations;
-                  const top = matches.slice(0, 12);
+                  const top = matches.slice(0, 6);
                   if (top.length === 0) {
                     return <p className="muted-copy">No matches — what you typed will be a new location.</p>;
                   }
@@ -763,6 +763,19 @@ export function ScanTab(props: ScanTabProps) {
           </div>
         </div>
       ) : null}
+
+      {props.scanResult && !props.cameraLookupCode && (
+        <button
+          type="button"
+          className="scan-next-bottom"
+          onClick={() => {
+            props.onScanNext();
+          }}
+          disabled={props.pendingAction !== null}
+        >
+          Scan next item
+        </button>
+      )}
       </div>
     </section>
   );

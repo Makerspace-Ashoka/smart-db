@@ -522,6 +522,7 @@ export default function SmartApp() {
         setAssignForm({
           ...defaultAssignForm,
           qrCode: response.qrCode.code,
+          location: lastAssignment?.location ?? "",
         });
         setLabelSearch({
           query: "",
