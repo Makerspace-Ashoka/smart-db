@@ -1,5 +1,6 @@
 import { useMemo, useState } from "react";
 import { api, type InventorySummaryRow, type PartTypeItemsResponse } from "../api";
+import { formatQuantity } from "../SmartApp.helpers";
 
 interface InventoryTabProps {
   rows: InventorySummaryRow[];
@@ -7,32 +8,28 @@ interface InventoryTabProps {
   onRefresh: () => void;
 }
 
-function formatQty(value: number, isInteger: boolean): string {
-  if (isInteger) return Math.round(value).toString();
-  return value.toFixed(value % 1 === 0 ? 0 : 1);
-}
-
 export function InventoryTab({ rows, isLoading, onRefresh }: InventoryTabProps) {
   const [query, setQuery] = useState("");
   const [showEmpty, setShowEmpty] = useState(false);
   const [expandedId, setExpandedId] = useState<string | null>(null);
-  const [expandedItems, setExpandedItems] = useState<PartTypeItemsResponse | null>(null);
+  const [itemsCache, setItemsCache] = useState<Map<string, PartTypeItemsResponse>>(new Map());
   const [expandLoading, setExpandLoading] = useState(false);
+
+  const expandedItems = expandedId ? itemsCache.get(expandedId) ?? null : null;
 
   async function toggleExpand(partTypeId: string): Promise<void> {
     if (expandedId === partTypeId) {
       setExpandedId(null);
-      setExpandedItems(null);
       return;
     }
     setExpandedId(partTypeId);
-    setExpandedItems(null);
+    if (itemsCache.has(partTypeId)) return;
     setExpandLoading(true);
     try {
       const items = await api.getPartTypeItems(partTypeId);
-      setExpandedItems(items);
+      setItemsCache((prev) => new Map(prev).set(partTypeId, items));
     } catch {
-      setExpandedItems({ bulkStocks: [], instances: [] });
+      setItemsCache((prev) => new Map(prev).set(partTypeId, { bulkStocks: [], instances: [] }));
     } finally {
       setExpandLoading(false);
     }
@@ -111,7 +108,7 @@ export function InventoryTab({ rows, isLoading, onRefresh }: InventoryTabProps) 
         <input
           type="search"
           value={query}
-          placeholder="Filter by name, category, or unit…"
+          placeholder="Filter by name, category, or unit..."
           onChange={(event) => setQuery(event.target.value)}
         />
         <label className="inventory-toggle">
@@ -123,7 +120,7 @@ export function InventoryTab({ rows, isLoading, onRefresh }: InventoryTabProps) 
           Show empty
         </label>
         <button type="button" onClick={onRefresh} disabled={isLoading}>
-          {isLoading ? "Refreshing…" : "Refresh"}
+          {isLoading ? "Refreshing..." : "Refresh"}
         </button>
       </div>
 
@@ -162,7 +159,7 @@ export function InventoryTab({ rows, isLoading, onRefresh }: InventoryTabProps) 
                         ) : (
                           <>
                             <span className="qty-value">
-                              {formatQty(row.onHand, row.unit.isInteger)}
+                              {formatQuantity(row.onHand)}
                             </span>
                             <span className="qty-unit">{row.unit.symbol}</span>
                           </>
@@ -171,7 +168,7 @@ export function InventoryTab({ rows, isLoading, onRefresh }: InventoryTabProps) 
                     </button>
                     {isExpanded ? (
                       <div className="inventory-row-detail">
-                        {expandLoading ? (
+                        {expandLoading && !expandedItems ? (
                           <p className="muted-copy">Loading...</p>
                         ) : expandedItems && (expandedItems.bulkStocks.length > 0 || expandedItems.instances.length > 0) ? (
                           <ul className="inventory-detail-list">
@@ -179,7 +176,7 @@ export function InventoryTab({ rows, isLoading, onRefresh }: InventoryTabProps) 
                               <li key={bs.id} className="inventory-detail-item">
                                 <code>{bs.qrCode}</code>
                                 <span>{bs.location}</span>
-                                <strong>{formatQty(bs.quantity, row.unit.isInteger)} {row.unit.symbol}</strong>
+                                <strong>{formatQuantity(bs.quantity)} {row.unit.symbol}</strong>
                               </li>
                             ))}
                             {expandedItems.instances.map((inst) => (

@@ -205,6 +205,14 @@ export function getEventFormIssues(form: EventFormState): EventFormIssues {
     if (!form.location.trim()) {
       issues.location = "Destination location is required.";
     }
+    if (form.splitQuantity.trim()) {
+      const splitQty = parsePositiveNumber(form.splitQuantity);
+      if (splitQty === null) {
+        issues.splitQuantity = "Enter a positive number.";
+      } else if (form.quantityIsInteger && !Number.isInteger(splitQty)) {
+        issues.splitQuantity = "This unit only allows whole numbers.";
+      }
+    }
     return issues;
   }
 

@@ -250,6 +250,7 @@ export default function SmartApp() {
     setLatestBatch(null);
     setCatalogSuggestions([]);
     setKnownLocations([]);
+    setKnownCategories([]);
     setInventorySummary([]);
     setProvisionalPartTypes([]);
     setLabelSearch(defaultSearchState);
@@ -296,7 +297,7 @@ export default function SmartApp() {
     const canAccessAdmin =
       activeSession !== null && hasSmartDbRole(activeSession.roles, smartDbRoles.admin);
 
-    const [dashboardResult, partDbResult, syncStatusResult, syncFailuresResult, provisionalResult, partTypesResult, latestBatchResult, locationsResult, inventoryResult, categoriesResult] =
+    const [dashboardResult, partDbResult, syncStatusResult, syncFailuresResult, provisionalResult, partTypesResult, latestBatchResult, locationsResult, inventoryResult] =
       await Promise.allSettled([
         api.getDashboard(),
         api.getPartDbStatus(),
@@ -307,10 +308,9 @@ export default function SmartApp() {
         canAccessAdmin ? api.getLatestQrBatch() : Promise.resolve(null),
         api.getKnownLocations(),
         api.getInventorySummary(),
-        api.getKnownCategories(),
       ]);
 
-    for (const result of [dashboardResult, partDbResult, syncStatusResult, syncFailuresResult, provisionalResult, partTypesResult, latestBatchResult, locationsResult, inventoryResult, categoriesResult]) {
+    for (const result of [dashboardResult, partDbResult, syncStatusResult, syncFailuresResult, provisionalResult, partTypesResult, latestBatchResult, locationsResult, inventoryResult]) {
       if (result.status === "rejected" && handleApiFailure(result.reason)) {
         return;
       }
@@ -328,10 +328,9 @@ export default function SmartApp() {
 
     if (inventoryResult.status === "fulfilled") {
       setInventorySummary(inventoryResult.value);
-    }
-
-    if (categoriesResult.status === "fulfilled") {
-      setKnownCategories(categoriesResult.value);
+      // Derive known categories from the inventory summary (avoids a separate API call)
+      const cats = Array.from(new Set(inventoryResult.value.map((r) => r.categoryPath.join(" / ")))).sort();
+      setKnownCategories(cats);
     }
 
     if (partDbResult.status === "fulfilled") {
