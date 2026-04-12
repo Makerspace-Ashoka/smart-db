@@ -66,4 +66,6 @@ jobs:
           exit 1
 
       - name: Verify frontend
-        run: curl -skf https://localhost/health || (echo "Gateway unreachable" && exit 1)
+        run: |
+          sleep 5
+          curl -skf https://10.42.200.4/health || curl -skf https://localhost/health || (echo "Gateway unreachable" && exit 1)
