@@ -952,9 +952,6 @@ export default function SmartApp() {
         <div className="header-status">
           <div className={`pill ${partDbHealth.tone}`}>{partDbHealth.label}</div>
           {partDbSync ? <div className={`pill ${partDbSync.tone}`}>{partDbSync.label}</div> : null}
-          {authState.session.expiresAt ? (
-            <small>Token/session expires at {authState.session.expiresAt}</small>
-          ) : null}
         </div>
         <button
           type="button"

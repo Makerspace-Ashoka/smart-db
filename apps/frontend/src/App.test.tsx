@@ -379,7 +379,7 @@ describe("App", () => {
     expect(apiMock.logout).not.toHaveBeenCalled();
   });
 
-  it("shows the upstream token expiry when Part-DB reports one", async () => {
+  it("authenticates with a session that has an expiry", async () => {
     apiMock.getSession.mockResolvedValueOnce({
       subject: null,
       username: "labeler",
@@ -392,7 +392,8 @@ describe("App", () => {
 
     render(<SmartApp />);
 
-    expect(await screen.findByText(/Token\/session expires at 2026-01-02T00:00:00.000Z/)).toBeInTheDocument();
+    // Token expiry is no longer shown in the header, but the session loads successfully
+    expect(await screen.findByRole("button", { name: "Logout" })).toBeInTheDocument();
   });
 
   it("logs out and clears the authenticated shell", async () => {
