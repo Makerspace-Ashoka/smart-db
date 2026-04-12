@@ -45,6 +45,7 @@ import {
   getAssignFormIssues,
   type AssignFormState,
   type EventFormState,
+  type SearchState,
 } from "./SmartApp.helpers";
 
 type PendingAction = "login" | "logout" | "batch" | "scan" | "assign" | "event" | "merge" | "sync" | null;
@@ -65,13 +66,6 @@ type AuthState =
       session: AuthSession;
       error: string | null;
     };
-
-type SearchState = {
-  query: string;
-  results: PartType[];
-  status: "idle" | "loading" | "error";
-  error: string | null;
-};
 
 const defaultBatchForm: RegisterQrBatchRequest = {
   prefix: "QR",
@@ -448,21 +442,10 @@ export default function SmartApp() {
     requestRef.current += 1;
     const requestId = requestRef.current;
 
-    if (!normalizedQuery.trim()) {
-      setState({
-        query: normalizedQuery,
-        results: catalogSuggestions,
-        status: "idle",
-        error: null,
-      });
-      return;
-    }
-
     const controller = new AbortController();
     abortRef.current = controller;
     setState((current) => ({
       ...current,
-      query: normalizedQuery,
       status: "loading",
       error: null,
     }));
@@ -909,6 +892,15 @@ export default function SmartApp() {
       );
     }
   }, [sessionTimer.isExpiringSoon]); // eslint-disable-line react-hooks/exhaustive-deps
+
+  if (authState.status === "checking") {
+    return (
+      <div className="shell">
+        <p className="eyebrow">Smart DB</p>
+        <p className="muted-copy">Checking session...</p>
+      </div>
+    );
+  }
 
   if (authState.status !== "authenticated") {
     return (

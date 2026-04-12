@@ -11,14 +11,8 @@ import {
   describePartDbSyncFailure,
   formatCategoryPath,
   formatTimestamp,
+  type SearchState,
 } from "../SmartApp.helpers";
-
-type SearchState = {
-  query: string;
-  results: PartType[];
-  status: "idle" | "loading" | "error";
-  error: string | null;
-};
 
 interface AdminTabProps {
   sessionUsername: string;

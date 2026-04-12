@@ -21,14 +21,8 @@ import {
   type AssignFormState,
   type EventFormIssues,
   type EventFormState,
+  type SearchState,
 } from "../SmartApp.helpers";
-
-type SearchState = {
-  query: string;
-  results: PartType[];
-  status: "idle" | "loading" | "error";
-  error: string | null;
-};
 
 export interface LastAssignment {
   partTypeName: string;

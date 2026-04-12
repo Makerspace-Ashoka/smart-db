@@ -13,7 +13,15 @@ import {
   describeCategoryPathParseError,
   parseCategoryPathInput,
 } from "@smart-db/contracts";
+import type { PartType } from "@smart-db/contracts";
 import { ApiClientError } from "./api";
+
+export type SearchState = {
+  query: string;
+  results: PartType[];
+  status: "idle" | "loading" | "error";
+  error: string | null;
+};
 
 export type AssignFormState = {
   qrCode: string;
