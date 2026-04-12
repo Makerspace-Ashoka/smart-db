@@ -4,6 +4,10 @@ A fast-ingest inventory system for university makerspaces. Built for the Mphasis
 
 [![CI](https://github.com/psygos/smart-db/actions/workflows/ci.yml/badge.svg)](https://github.com/psygos/smart-db/actions/workflows/ci.yml)
 
+<p align="center">
+  <img src="docs/images/main_page.png" alt="Smart DB main interface" width="320" />
+</p>
+
 ## Problem
 
 Lab equipment arrives in bulk. Purchase orders list 60+ line items across motors, sensors, filaments, batteries, dev boards. Each item needs to be cataloged, counted, located, and eventually tracked when handed out to students. Doing this in a spreadsheet is slow and error-prone. Part-DB provides a rich catalog UI but has no fast-intake workflow.
@@ -14,10 +18,22 @@ Smart DB puts a phone-first scanning interface in front of a typed inventory bac
 
 ### Intake flow
 
+<p align="center">
+  <img src="docs/images/scan_section.png" alt="Barcode scanning interface" width="300" />
+</p>
+
 1. Scan a manufacturer barcode on a product box. Smart DB looks up the part type from the catalog.
 2. If the barcode is new, a registration form opens with category, unit, and location fields.
 3. First scan creates the record. Subsequent scans of the same barcode increment the bulk quantity.
 4. Pre-printed QR stickers can be assigned to individual items for lifecycle tracking (checked out, returned, damaged, lost).
+
+### Stock overview
+
+<p align="center">
+  <img src="docs/images/stock_page.png" alt="Inventory stock page with technical drawing wallpaper" width="320" />
+</p>
+
+The stock page shows all part types grouped by category with live quantities. Each row expands to reveal individual bins with QR codes and locations. The background features a tiling SVG wallpaper of technical drawings (gears, resistors, IC chips, bolts, spools) on graph paper -- a nod to the makerspace environment.
 
 ### Part-DB sync
 
@@ -37,7 +53,7 @@ Phone/Scanner --> Caddy (TLS) --> Fastify API --> SQLite
 | `apps/middleware` | Fastify 5, node:sqlite | API server, domain logic, outbox worker |
 | `apps/frontend` | React 19, Vite | Phone-first scanning and management UI |
 
-Deployed via Docker Compose. Three containers: Caddy gateway, Node.js middleware, Part-DB.
+Deployed via Docker Compose on a self-hosted runner with CI/CD through GitHub Actions. Three containers: Caddy gateway, Node.js middleware, Part-DB.
 
 ## Barcode scanning
 
@@ -78,7 +94,7 @@ pnpm typecheck        # tsc --noEmit, strict mode
 pnpm test             # 229 tests, 42 files
 ```
 
-TypeScript strict mode with `noUncheckedIndexedAccess` and `exactOptionalPropertyTypes`. Zod validation at all system boundaries. 100% test coverage enforced on core modules.
+TypeScript strict mode with `noUncheckedIndexedAccess` and `exactOptionalPropertyTypes`. Zod validation at all system boundaries.
 
 ## Deployment
 
@@ -88,7 +104,7 @@ docker compose build --no-cache
 docker compose up -d
 ```
 
-Environment variables in `deploy/config/*.env` (gitignored). Example files with placeholders are committed. See `deploy/README.md` for server setup.
+Pushes to `main` trigger CI (typecheck + test on GitHub cloud) then auto-deploy via a self-hosted runner on the lab server. Environment variables in `deploy/config/*.env` (gitignored).
 
 ## Catalog seeding
 
