@@ -62,8 +62,8 @@ jobs:
             sleep 1
           done
           echo "Health check failed after 30s"
-          docker compose -f /opt/smart-db/deploy/docker-compose.yml logs middleware --tail 20
+          cd /opt/smart-db/deploy && docker compose logs middleware --tail 20
           exit 1
 
       - name: Verify frontend
-        run: curl -sf https://10.42.200.4/health || (echo "Gateway unreachable" && exit 1)
+        run: curl -skf https://localhost/health || (echo "Gateway unreachable" && exit 1)
