@@ -79,36 +79,33 @@ export function InventoryTab({ rows, isLoading, onRefresh }: InventoryTabProps) 
       aria-labelledby="tab-inventory"
       className="panel"
     >
-      <header className="panel-title">
-        <p className="eyebrow">Stock on hand</p>
-        <h2>Inventory</h2>
-        <p>Live view of every part type tied to your QR codes.</p>
+      <header className="stock-header">
+        <div className="stock-title">
+          <p className="eyebrow">Inventory</p>
+          <h2>{totals.parts} part types</h2>
+        </div>
+        <button type="button" className="stock-refresh" onClick={onRefresh} disabled={isLoading}>
+          {isLoading ? "..." : "Refresh"}
+        </button>
       </header>
 
-      <div className="metrics">
-        <div className="metric">
-          <span>Part types</span>
-          <strong>{totals.parts}</strong>
+      <div className="stock-stats">
+        <div className="stock-stat">
+          <span className="stock-stat-value">{totals.bulks + totals.instances}</span>
+          <span className="stock-stat-label">tracked items</span>
         </div>
-        <div className="metric">
-          <span>Bulk bins</span>
-          <strong>{totals.bulks}</strong>
-        </div>
-        <div className="metric">
-          <span>Instances</span>
-          <strong>{totals.instances}</strong>
-        </div>
-        <div className="metric">
-          <span>Total on hand</span>
-          <strong>{totals.onHand.toFixed(1)}</strong>
+        <div className="stock-stat">
+          <span className="stock-stat-value">{rows.filter(r => r.onHand === 0 && r.bins === 0 && r.instanceCount === 0).length}</span>
+          <span className="stock-stat-label">empty</span>
         </div>
       </div>
 
-      <div className="inventory-controls">
+      <div className="stock-controls">
         <input
           type="search"
+          aria-label="Filter inventory"
           value={query}
-          placeholder="Filter by name, category, or unit..."
+          placeholder="Search..."
           onChange={(event) => setQuery(event.target.value)}
         />
         <label className="inventory-toggle">
@@ -119,9 +116,6 @@ export function InventoryTab({ rows, isLoading, onRefresh }: InventoryTabProps) 
           />
           Show empty
         </label>
-        <button type="button" onClick={onRefresh} disabled={isLoading}>
-          {isLoading ? "Refreshing..." : "Refresh"}
-        </button>
       </div>
 
       {grouped.length === 0 ? (

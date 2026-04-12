@@ -111,11 +111,24 @@ export function ScanTab(props: ScanTabProps) {
         </button>
       </form>
 
-      {props.scanMode === "increment" ? (
-        <p className="scan-mode-hint">Each scan adds +1 to count</p>
-      ) : (
-        <p className="scan-mode-hint">View only — scanning won't change quantities</p>
-      )}
+      <div className="scan-mode-bar">
+        <button
+          type="button"
+          className={`scan-mode-btn ${props.scanMode === "increment" ? "active" : ""}`}
+          onClick={() => props.onScanModeChange("increment")}
+        >
+          <span className="scan-mode-icon">+1</span>
+          Auto-count
+        </button>
+        <button
+          type="button"
+          className={`scan-mode-btn ${props.scanMode === "inspect" ? "active" : ""}`}
+          onClick={() => props.onScanModeChange("inspect")}
+        >
+          <span className="scan-mode-icon">◇</span>
+          View only
+        </button>
+      </div>
 
 
 
