@@ -131,6 +131,24 @@ export const inventorySummaryRowSchema = z.object({
 });
 export type InventorySummaryRow = z.output<typeof inventorySummaryRowSchema>;
 
+export const partTypeItemsResponseSchema = z.object({
+  bulkStocks: z.array(z.object({
+    id: z.string(),
+    qrCode: z.string(),
+    quantity: z.number(),
+    location: z.string(),
+    minimumQuantity: z.number().nullable(),
+  })),
+  instances: z.array(z.object({
+    id: z.string(),
+    qrCode: z.string(),
+    status: z.string(),
+    location: z.string(),
+    assignee: z.string().nullable(),
+  })),
+});
+export type PartTypeItemsResponse = z.output<typeof partTypeItemsResponseSchema>;
+
 export const api = {
   getSession(signal?: AbortSignal): Promise<AuthSession> {
     return request(authSessionSchema, "/api/auth/session", signal ? { signal } : undefined);
@@ -184,6 +202,9 @@ export const api = {
   },
   getKnownCategories(): Promise<string[]> {
     return request(z.array(z.string()), "/api/categories");
+  },
+  getPartTypeItems(partTypeId: string): Promise<PartTypeItemsResponse> {
+    return request(partTypeItemsResponseSchema, `/api/part-types/${encodeURIComponent(partTypeId)}/items`);
   },
   getInventorySummary(): Promise<InventorySummaryRow[]> {
     return request(inventorySummaryRowSchema.array(), "/api/inventory/summary");

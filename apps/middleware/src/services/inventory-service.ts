@@ -148,6 +148,43 @@ export class InventoryService {
     return paths.sort((a, b) => a.localeCompare(b));
   }
 
+  getPartTypeItems(partTypeId: string): {
+    bulkStocks: Array<{ id: string; qrCode: string; quantity: number; location: string; minimumQuantity: number | null }>;
+    instances: Array<{ id: string; qrCode: string; status: string; location: string; assignee: string | null }>;
+  } {
+    const pt = this.db
+      .prepare(`SELECT id FROM part_types WHERE id = ?`)
+      .get(partTypeId) as { id: string } | undefined;
+    if (!pt) {
+      throw new NotFoundError("Part type", partTypeId);
+    }
+
+    const bulkStocks = this.db
+      .prepare(`SELECT id, qr_code, quantity, location, minimum_quantity FROM bulk_stocks WHERE part_type_id = ? ORDER BY location, qr_code`)
+      .all(partTypeId) as Array<{ id: string; qr_code: string; quantity: number; location: string; minimum_quantity: number | null }>;
+
+    const instances = this.db
+      .prepare(`SELECT id, qr_code, status, location, assignee FROM physical_instances WHERE part_type_id = ? ORDER BY location, qr_code`)
+      .all(partTypeId) as Array<{ id: string; qr_code: string; status: string; location: string; assignee: string | null }>;
+
+    return {
+      bulkStocks: bulkStocks.map((r) => ({
+        id: r.id,
+        qrCode: r.qr_code,
+        quantity: Number(r.quantity),
+        location: r.location,
+        minimumQuantity: r.minimum_quantity !== null ? Number(r.minimum_quantity) : null,
+      })),
+      instances: instances.map((r) => ({
+        id: r.id,
+        qrCode: r.qr_code,
+        status: r.status,
+        location: r.location,
+        assignee: r.assignee !== null ? String(r.assignee) : null,
+      })),
+    };
+  }
+
   getInventorySummary(): Array<{
     id: string;
     canonicalName: string;

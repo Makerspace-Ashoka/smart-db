@@ -1,5 +1,5 @@
 import { useMemo, useState } from "react";
-import type { InventorySummaryRow } from "../api";
+import { api, type InventorySummaryRow, type PartTypeItemsResponse } from "../api";
 
 interface InventoryTabProps {
   rows: InventorySummaryRow[];
@@ -15,6 +15,28 @@ function formatQty(value: number, isInteger: boolean): string {
 export function InventoryTab({ rows, isLoading, onRefresh }: InventoryTabProps) {
   const [query, setQuery] = useState("");
   const [showEmpty, setShowEmpty] = useState(false);
+  const [expandedId, setExpandedId] = useState<string | null>(null);
+  const [expandedItems, setExpandedItems] = useState<PartTypeItemsResponse | null>(null);
+  const [expandLoading, setExpandLoading] = useState(false);
+
+  async function toggleExpand(partTypeId: string): Promise<void> {
+    if (expandedId === partTypeId) {
+      setExpandedId(null);
+      setExpandedItems(null);
+      return;
+    }
+    setExpandedId(partTypeId);
+    setExpandedItems(null);
+    setExpandLoading(true);
+    try {
+      const items = await api.getPartTypeItems(partTypeId);
+      setExpandedItems(items);
+    } catch {
+      setExpandedItems({ bulkStocks: [], instances: [] });
+    } finally {
+      setExpandLoading(false);
+    }
+  }
 
   const grouped = useMemo(() => {
     const q = query.trim().toLowerCase();
@@ -118,30 +140,62 @@ export function InventoryTab({ rows, isLoading, onRefresh }: InventoryTabProps) 
               {items.map((row) => {
                 const subPath = row.categoryPath.slice(1).join(" / ");
                 const isStocked = row.bins > 0 || row.instanceCount > 0;
+                const isExpanded = expandedId === row.id;
                 return (
-                  <li
-                    key={row.id}
-                    className={`inventory-row ${isStocked ? "stocked" : "empty"}`}
-                  >
-                    <div className="inventory-row-name">
-                      <strong>{row.canonicalName}</strong>
-                      {subPath ? <span>{subPath}</span> : null}
-                    </div>
-                    <div className="inventory-row-quantity">
-                      {row.countable ? (
-                        <>
-                          <span className="qty-value">{row.instanceCount}</span>
-                          <span className="qty-unit">items</span>
-                        </>
-                      ) : (
-                        <>
-                          <span className="qty-value">
-                            {formatQty(row.onHand, row.unit.isInteger)}
-                          </span>
-                          <span className="qty-unit">{row.unit.symbol}</span>
-                        </>
-                      )}
-                    </div>
+                  <li key={row.id}>
+                    <button
+                      type="button"
+                      className={`inventory-row ${isStocked ? "stocked" : "empty"} ${isExpanded ? "expanded" : ""}`}
+                      onClick={() => void toggleExpand(row.id)}
+                      aria-expanded={isExpanded}
+                    >
+                      <div className="inventory-row-name">
+                        <strong>{row.canonicalName}</strong>
+                        {subPath ? <span>{subPath}</span> : null}
+                      </div>
+                      <div className="inventory-row-quantity">
+                        {row.countable ? (
+                          <>
+                            <span className="qty-value">{row.instanceCount}</span>
+                            <span className="qty-unit">items</span>
+                          </>
+                        ) : (
+                          <>
+                            <span className="qty-value">
+                              {formatQty(row.onHand, row.unit.isInteger)}
+                            </span>
+                            <span className="qty-unit">{row.unit.symbol}</span>
+                          </>
+                        )}
+                      </div>
+                    </button>
+                    {isExpanded ? (
+                      <div className="inventory-row-detail">
+                        {expandLoading ? (
+                          <p className="muted-copy">Loading...</p>
+                        ) : expandedItems && (expandedItems.bulkStocks.length > 0 || expandedItems.instances.length > 0) ? (
+                          <ul className="inventory-detail-list">
+                            {expandedItems.bulkStocks.map((bs) => (
+                              <li key={bs.id} className="inventory-detail-item">
+                                <code>{bs.qrCode}</code>
+                                <span>{bs.location}</span>
+                                <strong>{formatQty(bs.quantity, row.unit.isInteger)} {row.unit.symbol}</strong>
+                              </li>
+                            ))}
+                            {expandedItems.instances.map((inst) => (
+                              <li key={inst.id} className="inventory-detail-item">
+                                <code>{inst.qrCode}</code>
+                                <span>{inst.location}</span>
+                                <strong>{inst.status}</strong>
+                                {inst.assignee ? <span>{inst.assignee}</span> : null}
+                              </li>
+                            ))}
+                          </ul>
+                        ) : (
+                          <p className="muted-copy">No items assigned to this part type.</p>
+                        )}
+                      </div>
+                    ) : null}
                   </li>
                 );
               })}

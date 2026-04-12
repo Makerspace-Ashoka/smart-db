@@ -62,6 +62,11 @@ export async function registerInventoryRoutes(
     inventoryService.getKnownCategories(),
   );
 
+  app.get("/api/part-types/:id/items", authenticated, async (request) => {
+    const params = request.params as { id: string };
+    return inventoryService.getPartTypeItems(params.id);
+  });
+
   app.get("/api/part-types/provisional", admin, async () =>
     inventoryService.getProvisionalPartTypes(),
   );
