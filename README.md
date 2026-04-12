@@ -37,7 +37,7 @@ Phone/Scanner --> Caddy (TLS) --> Fastify API --> SQLite
 | `apps/middleware` | Fastify 5, node:sqlite | API server, domain logic, outbox worker |
 | `apps/frontend` | React 19, Vite | Phone-first scanning and management UI |
 
-Deployed via Docker Compose on a Raspberry Pi 5. Three containers: Caddy gateway, Node.js middleware, Part-DB.
+Deployed via Docker Compose. Three containers: Caddy gateway, Node.js middleware, Part-DB.
 
 ## Barcode scanning
 
