@@ -638,3 +638,10 @@ button:disabled { opacity: 0.4; cursor: not-allowed; }
   background: none;
   padding: 0;
 }
+
+.header-user {
+  font-family: var(--mono);
+  font-size: 0.75rem;
+  color: var(--ink-2);
+  font-weight: 500;
+}

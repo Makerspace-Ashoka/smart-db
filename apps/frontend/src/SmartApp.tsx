@@ -950,6 +950,7 @@ export default function SmartApp() {
       <header className="header-bar">
         <strong className="header-brand">Smart DB</strong>
         <div className="header-status">
+          <span className="header-user">{authState.session.username}</span>
           <div className={`pill ${partDbHealth.tone}`}>{partDbHealth.label}</div>
           {partDbSync ? <div className={`pill ${partDbSync.tone}`}>{partDbSync.label}</div> : null}
         </div>
@@ -958,7 +959,7 @@ export default function SmartApp() {
           onClick={() => void handleLogout()}
           disabled={pendingAction === "logout"}
         >
-          {pendingAction === "logout" ? "Signing out..." : "Logout"}
+          {pendingAction === "logout" ? "..." : "Logout"}
         </button>
       </header>
 
