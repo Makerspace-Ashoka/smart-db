@@ -9,7 +9,6 @@ export default defineConfig({
   },
   test: {
     environmentMatchGlobs: [["apps/frontend/**/*.test.ts?(x)", "jsdom"]],
-    setupFiles: ["./vitest.setup.ts"],
     coverage: {
       provider: "v8",
       reporter: ["text", "lcov"],
@@ -22,8 +21,6 @@ export default defineConfig({
       exclude: [
         "**/*.test.*",
         "apps/frontend/src/vite-env.d.ts",
-        "apps/frontend/src/App.tsx",
-        "apps/frontend/src/SmartApp.tsx",
         "apps/middleware/src/auth/types.ts",
       ],
       thresholds: {

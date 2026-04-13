@@ -863,7 +863,7 @@ describe("InventoryService", () => {
       }).state,
     ).toBe("available");
 
-    expect(() =>
+    expect(
       service.assignQr({
         qrCode: "QR-2002",
         actor: "labeler",
@@ -876,8 +876,8 @@ describe("InventoryService", () => {
         },
         initialQuantity: 10,
         minimumQuantity: null,
-      }),
-    ).toThrowError(ConflictError);
+      }).targetType,
+    ).toBe("bulk");
 
     service.registerQrBatch({
       actor: "lab-admin",
@@ -926,7 +926,10 @@ describe("InventoryService", () => {
     ).toThrowError(ConflictError);
 
     await expect(service.scanCode("QR-2002")).resolves.toMatchObject({
-      mode: "label",
+      mode: "interact",
+      entity: {
+        targetType: "bulk",
+      },
     });
     db.prepare(`UPDATE qrcodes SET status = 'voided' WHERE code = ?`).run("QR-2002");
     await expect(service.scanCode("QR-2002")).resolves.toMatchObject({
@@ -1076,6 +1079,119 @@ describe("InventoryService", () => {
         event: "moved",
         location: "Drawer",
         notes: null,
+      }),
+    ).toThrowError(ConflictError);
+  });
+
+  it("allows a countable part type to own both tracked units and pooled stock", () => {
+    const { service } = makeService();
+
+    service.registerQrBatch({
+      actor: "lab-admin",
+      prefix: "QR",
+      startNumber: 6100,
+      count: 2,
+    });
+
+    const tracked = service.assignQr({
+      qrCode: "QR-6100",
+      actor: "labeler",
+      entityKind: "instance",
+      location: "Shelf A",
+      notes: null,
+      partType: {
+        kind: "new",
+        canonicalName: "Arduino Uno R4",
+        category: "Microcontrollers",
+        aliases: [],
+        notes: null,
+        imageUrl: null,
+        countable: true,
+      },
+      initialStatus: "available",
+    });
+
+    const pooled = service.assignQr({
+      qrCode: "QR-6101",
+      actor: "labeler",
+      entityKind: "bulk",
+      location: "Shelf A",
+      notes: null,
+      partType: {
+        kind: "existing",
+        existingPartTypeId: tracked.partType.id,
+      },
+      initialQuantity: 12,
+      minimumQuantity: 2,
+    });
+
+    const summary = service.getInventorySummary();
+    expect(summary).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          id: tracked.partType.id,
+          countable: true,
+          bins: 1,
+          instanceCount: 1,
+          onHand: 12,
+        }),
+      ]),
+    );
+
+    expect(pooled.targetType).toBe("bulk");
+    expect(pooled.partType.id).toBe(tracked.partType.id);
+  });
+
+  it("rejects piece-counted bulk pools when the part type unit is fractional", () => {
+    const { db, service } = makeService();
+    const now = new Date().toISOString();
+    db.prepare(`
+      INSERT INTO part_types (
+        id, canonical_name, category, category_path_json, aliases_json, image_url, notes,
+        countable, unit_symbol, unit_name, unit_is_integer, needs_review,
+        partdb_part_id, partdb_category_id, partdb_unit_id, partdb_sync_status, created_at, updated_at
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+    `).run(
+      "part-fractional-piece-pool",
+      "Fractional Piece Pool",
+      "Materials",
+      JSON.stringify(["Materials"]),
+      "[]",
+      null,
+      null,
+      1,
+      "kg",
+      "Kilograms",
+      0,
+      0,
+      null,
+      null,
+      null,
+      "never",
+      now,
+      now,
+    );
+
+    service.registerQrBatch({
+      actor: "lab-admin",
+      prefix: "QR",
+      startNumber: 6200,
+      count: 1,
+    });
+
+    expect(() =>
+      service.assignQr({
+        qrCode: "QR-6200",
+        actor: "labeler",
+        entityKind: "bulk",
+        location: "Resin shelf",
+        notes: null,
+        partType: {
+          kind: "existing",
+          existingPartTypeId: "part-fractional-piece-pool",
+        },
+        initialQuantity: 2,
+        minimumQuantity: 1,
       }),
     ).toThrowError(ConflictError);
   });

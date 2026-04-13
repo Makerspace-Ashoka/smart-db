@@ -98,7 +98,7 @@ Five FSMs govern all stateful entities (full transition tables in [CLAUDE.md](CL
 pnpm install
 pnpm dev              # frontend :5173 + middleware :4000
 pnpm typecheck        # tsc --noEmit, strict mode
-pnpm test             # 229 tests, 42 files
+pnpm test             # state/failure-focused test suite
 ```
 
 TypeScript strict mode with `noUncheckedIndexedAccess` and `exactOptionalPropertyTypes`. Zod validation at all system boundaries.
@@ -123,40 +123,34 @@ Seed scripts parse purchase orders into typed part-type records with hierarchica
 | `seed-fdm-filaments.ts` | 44 eSUN/SunLU FDM filaments | kg |
 | `seed-sla-resins.ts` | 15 SLA/MSLA resins | L/kg |
 
-## Roadmap
+## Rewrite Status
 
-This is a working prototype. It solves the intake problem and is used daily. The next version will be a ground-up rewrite.
+The rewrite is now the active frontend.
 
-### Architecture rewrite
+### Frontend architecture
 
-The current frontend is a single 1200-line React component with 28 pieces of state and 33 props drilled into the scan tab. This was the fastest way to ship but is now the bottleneck for every new feature. The rewrite will:
-
-- Drop React. Pure TypeScript, CSS, and HTML. No framework, no virtual DOM, no build-time JSX transform. Web components where encapsulation matters, plain DOM manipulation everywhere else.
-- Replace the god component with route-level modules. Scan, Stock, Activity, and Admin become independent entry points that share a typed event bus, not a prop chain.
-- Move state management to explicit finite state machines (XState or a lightweight equivalent). The FSM transition tables already exist in `packages/contracts` — the UI should be driven by them directly instead of mirroring them in useState.
-- Server-render the shell. The current SPA loads a blank page, fetches a session, then renders. The rewrite will serve a usable HTML page from the middleware on first request.
+- React has been removed from the live UI. The browser entrypoint is now plain TypeScript, HTML, and CSS.
+- The old god component is gone. The rewrite uses a typed controller, route-oriented render modules, and explicit machine boundaries for auth and scan flows.
+- Auth and scan lifecycle are driven by XState actors. Form submission no longer depends on loose request bags or placeholder values.
+- The initial HTML shell is present in `index.html`, so the app no longer boots from a blank page while JavaScript starts.
 
 ### Data model
 
-The current model forces a choice between instance tracking (QR per item, lifecycle states) and bulk tracking (quantity counter, no identity) at part-type creation time. In practice, the same part type needs both: a bulk count of how many arrived, plus individual QR tracking when units are handed out. The rewrite will unify these into a single model where every part type has a quantity pool and optionally has individually tracked units pulled from that pool.
+- Countable part types can now own both individually tracked units and pooled stock.
+- The database schema remains unchanged. The mixed model is implemented in the service and UI layers by allowing one `part_type_id` to back both `physical_instances` and `bulk_stocks`.
+- This means intake can begin as a quantity pool and later branch into tracked units without forcing a duplicate part type.
 
-### Deployment
+### Error handling
 
-- Git-based deploys on the server (currently rsync). The self-hosted GitHub Actions runner is a step toward this but the server still has no `.git` history of its own.
-- Proper secrets management instead of `.env` files with plaintext tokens.
-- Health check dashboards beyond the current `/health` endpoint.
+- Form submission is parse-first. Assignment, event, batch, and merge flows use typed parsers that return `Result` values with structured failures.
+- Camera scanning has an explicit failure taxonomy for capability, permission, acquisition, playback, scan-frame, and unexpected errors.
+- Error messages are field-specific and recovery-aware instead of generic transport copy.
 
 ### Testing
 
-- Integration tests against a real Part-DB instance in CI (currently only unit tests with mocked HTTP).
-- End-to-end scan flow tests using Playwright on a phone viewport.
-- The current test suite was partially rewritten to match UI changes rather than testing behavior. The rewrite will test state transitions, not DOM text.
-
-### Design
-
-- Design system in Figma before writing CSS. The current visual direction (light base, blue structure, SVG technical wallpaper) was found through trial and error across four rewrites in one session.
-- Component library with isolated stories for each state (empty, loading, error, populated).
-- Proper dark mode as a first-class theme, not an afterthought.
+- The frontend test suite is now centered on state machines, parser failures, camera lifecycle failures, controller state transitions, and backend resilience.
+- Performative React-only component tests were removed with the React shell.
+- Middleware tests still cover inventory behavior, sync resilience, migrations, idempotency, auth, and end-to-end intake/lifecycle flows.
 
 ## License
 

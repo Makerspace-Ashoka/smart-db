@@ -2065,9 +2065,10 @@ function enforcePartTypeCompatibility(
     });
   }
 
-  if (entityKind === "bulk" && partType.countable) {
-    throw new ConflictError("Countable part types cannot be assigned as bulk stock.", {
+  if (entityKind === "bulk" && partType.countable && !partType.unit.isInteger) {
+    throw new ConflictError("Piece-counted bulk stock requires a whole-number unit.", {
       partTypeId: partType.id,
+      unitSymbol: partType.unit.symbol,
     });
   }
 }
