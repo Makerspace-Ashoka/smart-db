@@ -123,34 +123,19 @@ Seed scripts parse purchase orders into typed part-type records with hierarchica
 | `seed-fdm-filaments.ts` | 44 eSUN/SunLU FDM filaments | kg |
 | `seed-sla-resins.ts` | 15 SLA/MSLA resins | L/kg |
 
-## Rewrite Status
+## Frontend
 
-The rewrite is now the active frontend.
+No framework. The frontend is vanilla TypeScript, HTML, and CSS.
 
-### Frontend architecture
-
-- React has been removed from the live UI. The browser entrypoint is now plain TypeScript, HTML, and CSS.
-- The old god component is gone. The rewrite uses a typed controller, route-oriented render modules, and explicit machine boundaries for auth and scan flows.
-- Auth and scan lifecycle are driven by XState actors. Form submission no longer depends on loose request bags or placeholder values.
-- The initial HTML shell is present in `index.html`, so the app no longer boots from a blank page while JavaScript starts.
+- **Controller** (`app-controller.ts`) owns all state and delegates rendering to a DOM-first `render.ts` module. No virtual DOM, no reconciliation.
+- **State machines** (XState) drive auth and scan lifecycle. The auth machine handles session restore, login redirect, logout, and expiry. The scan session machine handles the full flow from idle through lookup, unknown/label/instance/bulk resolution, assignment, and event recording.
+- **Parse-first forms.** Every submission (assign, event, batch, merge) goes through a dedicated parser that returns `Result<Command, Failure[]>` before any API call. Field-level errors with recovery guidance.
+- **Camera service** (`camera-scanner-service.ts`) manages getUserMedia, jsQR detection, and barcode-detector polyfill with an explicit failure taxonomy: capability, permission, acquisition, playback, scan-frame.
+- **Scan mode** defaults to view-only on every page load. Auto-count (+1 per scan) is opt-in per session.
 
 ### Data model
 
-- Countable part types can now own both individually tracked units and pooled stock.
-- The database schema remains unchanged. The mixed model is implemented in the service and UI layers by allowing one `part_type_id` to back both `physical_instances` and `bulk_stocks`.
-- This means intake can begin as a quantity pool and later branch into tracked units without forcing a duplicate part type.
-
-### Error handling
-
-- Form submission is parse-first. Assignment, event, batch, and merge flows use typed parsers that return `Result` values with structured failures.
-- Camera scanning has an explicit failure taxonomy for capability, permission, acquisition, playback, scan-frame, and unexpected errors.
-- Error messages are field-specific and recovery-aware instead of generic transport copy.
-
-### Testing
-
-- The frontend test suite is now centered on state machines, parser failures, camera lifecycle failures, controller state transitions, and backend resilience.
-- Performative React-only component tests were removed with the React shell.
-- Middleware tests still cover inventory behavior, sync resilience, migrations, idempotency, auth, and end-to-end intake/lifecycle flows.
+A part type can own both individually QR-tracked units and a pooled bulk quantity. Intake starts as a quantity pool. Individual units are pulled from the pool when QR stickers are assigned. The database schema is unchanged; the mixed model is implemented in the service layer.
 
 ## License
 
