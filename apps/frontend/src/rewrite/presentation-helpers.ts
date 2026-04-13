@@ -14,7 +14,7 @@ import {
   parseCategoryPathInput,
 } from "@smart-db/contracts";
 import type { PartType } from "@smart-db/contracts";
-import { ApiClientError } from "./api";
+import { ApiClientError } from "../api";
 
 export type SearchState = {
   query: string;

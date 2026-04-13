@@ -39,11 +39,14 @@ describe("parseBatchForm", () => {
       source: "form",
       details: { issueCount: 3 },
     });
+    expect(result.error.message).toBe(
+      "Could not parse batch form: Prefix may contain only letters, numbers, hyphens, and underscores.",
+    );
     expect(result.error.issues).toEqual(
       expect.arrayContaining([
         {
           path: "prefix",
-          message: "Prefix may only contain letters, numbers, hyphens, and underscores.",
+          message: "Prefix may contain only letters, numbers, hyphens, and underscores.",
         },
         {
           path: "startNumber",
@@ -51,7 +54,7 @@ describe("parseBatchForm", () => {
         },
         {
           path: "count",
-          message: "Batch count must be between 1 and 500.",
+          message: "Batch size must be between 1 and 500.",
         },
       ]),
     );

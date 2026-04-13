@@ -15,7 +15,7 @@ export function parseBatchForm(input: unknown): ParseResult<BatchCommand> {
   if (!prefixPattern.test(prefix)) {
     issues.push({
       path: "prefix",
-      message: "Prefix may only contain letters, numbers, hyphens, and underscores.",
+      message: "Prefix may contain only letters, numbers, hyphens, and underscores.",
     });
   }
 
@@ -30,12 +30,12 @@ export function parseBatchForm(input: unknown): ParseResult<BatchCommand> {
     record,
     "count",
     issues,
-    "Batch count must be between 1 and 500.",
+    "Batch size must be between 1 and 500.",
     { integer: true, positive: true, max: 500 },
   );
 
   if (issues.length > 0) {
-    return failParse("admin.registerBatch", "Could not parse batch form.", issues);
+    return failParse("admin.registerBatch", issues);
   }
 
   return Ok({

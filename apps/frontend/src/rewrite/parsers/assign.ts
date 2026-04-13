@@ -33,7 +33,12 @@ export function parseAssignForm(input: unknown): ParseResult<AssignCommand> {
     issues,
     "Choose whether the QR tracks a discrete item or bulk stock.",
   );
-  const location = readRequiredString(record, "location", issues, "Location is required.");
+  const location = readRequiredString(
+    record,
+    "location",
+    issues,
+    "Choose the location where this item will live.",
+  );
   const notes = readOptionalString(record, "notes", issues);
   const partTypeMode = readLiteral(
     record,
@@ -44,12 +49,30 @@ export function parseAssignForm(input: unknown): ParseResult<AssignCommand> {
   );
 
   if (!qrCode || !entityKind || !location || !partTypeMode) {
-    return failParse("scan.assign", "Could not parse assignment form.", issues);
+    return failParse("scan.assign", issues);
   }
 
-  const existingPartTypeId = readOptionalString(record, "existingPartTypeId", issues);
-  const canonicalName = readOptionalString(record, "canonicalName", issues);
-  const category = readOptionalString(record, "category", issues);
+  const existingPartTypeIdInput = record.existingPartTypeId;
+  const canonicalNameInput = record.canonicalName;
+  const categoryInput = record.category;
+  const existingPartTypeId = readOptionalString(
+    record,
+    "existingPartTypeId",
+    issues,
+    "Enter the existing part type identifier.",
+  );
+  const canonicalName = readOptionalString(
+    record,
+    "canonicalName",
+    issues,
+    "Enter the new part type name.",
+  );
+  const category = readOptionalString(
+    record,
+    "category",
+    issues,
+    "Enter the category path for the new part type.",
+  );
   const initialStatus = readInstanceStatus(
     record,
     "initialStatus",
@@ -83,71 +106,58 @@ export function parseAssignForm(input: unknown): ParseResult<AssignCommand> {
         "Choose a valid unit of measure.",
       )
     : null;
+  let parsedCountable: boolean | null = null;
 
-  if (partTypeMode === "existing" && !existingPartTypeId) {
+  if (partTypeMode === "existing" && !existingPartTypeId && isMissingTextInput(existingPartTypeIdInput)) {
     issues.push({
       path: "existingPartTypeId",
-      message: "Choose an existing part type.",
+      message: "Choose an existing part type to attach.",
     });
   }
 
   if (partTypeMode === "new") {
-    const countable = readBoolean(
+    if (!canonicalName && isMissingTextInput(canonicalNameInput)) {
+      issues.push({
+        path: "canonicalName",
+        message: "Give the new part type a canonical name.",
+      });
+    }
+
+    if (isMissingTextInput(categoryInput)) {
+      issues.push({
+        path: "category",
+        message: "Choose the category for the new part type.",
+      });
+    } else if (typeof categoryInput === "string") {
+      readCategoryPath(record, "category", issues);
+    }
+
+    parsedCountable = readBoolean(
       record,
       "countable",
       issues,
       "Choose whether the part type tracks discrete items or measured stock.",
     );
 
-    if (countable !== null) {
-      if (entityKind === "instance" && !countable) {
+    if (parsedCountable !== null) {
+      if (entityKind === "instance" && !parsedCountable) {
         issues.push({
           path: "countable",
-          message: "Discrete part types must be countable.",
+          message: "Discrete items must use countable part types.",
         });
       }
 
-      if (entityKind === "bulk" && countable) {
+      if (entityKind === "bulk" && parsedCountable && bulkUnit && !bulkUnit.isInteger) {
         issues.push({
-          path: "countable",
-          message: "Bulk part types must not be countable.",
+          path: "unitSymbol",
+          message: "Piece-counted bulk stock must use a whole-number unit such as pcs.",
         });
       }
     }
-
-    if (!canonicalName) {
-      issues.push({
-        path: "canonicalName",
-        message: "Name the new part type.",
-      });
-    }
-
-    if (!category) {
-      issues.push({
-        path: "category",
-        message: "Category is required.",
-      });
-    } else {
-      readCategoryPath(record, "category", issues);
-    }
-
-    if (entityKind === "bulk" && !bulkUnit) {
-      issues.push({
-        path: "unitSymbol",
-        message: "Choose a valid unit of measure.",
-      });
-    }
-  }
-
-  if (entityKind === "instance" && !initialStatus) {
-    issues.push({
-      path: "initialStatus",
-      message: "Choose a valid initial instance status.",
-    });
   }
 
   if (issues.length > 0) {
-    return failParse("scan.assign", "Could not parse assignment form.", issues);
+    return failParse("scan.assign", issues);
   }
 
   const normalizedNotes = notes;
@@ -210,15 +220,23 @@ export function parseAssignForm(input: unknown): ParseResult<AssignCommand> {
     notes: normalizedNotes,
     partType: {
       kind: "new",
-      canonicalName: canonicalName ?? "",
-      category: category ?? "",
-      aliases: [],
-      notes: null,
-      imageUrl: null,
-      countable: false,
-      unit: bulkUnit ?? defaultMeasurementUnit,
-    },
+        canonicalName: canonicalName ?? "",
+        category: category ?? "",
+        aliases: [],
+        notes: null,
+        imageUrl: null,
+        countable: parsedCountable ?? false,
+        unit: bulkUnit ?? defaultMeasurementUnit,
+      },
     initialQuantity: bulkInitialQuantity ?? 0,
     minimumQuantity: bulkMinimumQuantity,
   });
+}
+
+function isMissingTextInput(value: unknown): boolean {
+  return (
+    value === undefined ||
+    value === null ||
+    (typeof value === "string" && value.trim().length === 0)
+  );
 }

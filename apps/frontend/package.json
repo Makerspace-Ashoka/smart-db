@@ -9,20 +9,16 @@
     "typecheck": "tsc -p tsconfig.json --noEmit"
   },
   "dependencies": {
-    "@smart-db/contracts": "workspace:*",
-    "react": "^19.1.0",
-    "react-dom": "^19.1.0",
-    "zod": "^3.24.2",
-    "barcode-detector": "^3.0.3",
     "@fontsource-variable/fraunces": "^5.0.0",
-    "@fontsource/ibm-plex-sans": "^5.0.0",
     "@fontsource/ibm-plex-mono": "^5.0.0",
-    "jsqr": "^1.4.0"
+    "@fontsource/ibm-plex-sans": "^5.0.0",
+    "@smart-db/contracts": "workspace:*",
+    "barcode-detector": "^3.0.3",
+    "jsqr": "^1.4.0",
+    "xstate": "^5.30.0",
+    "zod": "^3.24.2"
   },
   "devDependencies": {
-    "@types/react": "^19.1.6",
-    "@types/react-dom": "^19.1.5",
-    "@vitejs/plugin-react": "^4.5.2",
     "typescript": "^5.8.3",
     "vite": "^6.3.5"
   }

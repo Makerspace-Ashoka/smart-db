@@ -39,10 +39,13 @@ describe("parseMergeForm", () => {
       source: "form",
       details: { issueCount: 1 },
     });
+    expect(result.error.message).toBe(
+      "Could not parse merge form: Choose two different part types; a part type cannot be merged into itself.",
+    );
     expect(result.error.issues).toEqual([
       {
         path: "destinationPartTypeId",
-        message: "Source and destination part types must be different.",
+        message: "Choose two different part types; a part type cannot be merged into itself.",
       },
     ]);
   });

@@ -1,7 +1,6 @@
 {
   "extends": "../../tsconfig.base.json",
   "compilerOptions": {
-    "jsx": "react-jsx",
     "lib": [
       "ES2023",
       "DOM",
@@ -15,7 +14,6 @@
     "src"
   ],
   "exclude": [
-    "src/App.tsx",
     "src/**/*.test.ts",
     "src/**/*.test.tsx"
   ]

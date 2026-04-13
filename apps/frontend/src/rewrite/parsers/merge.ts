@@ -21,22 +21,27 @@ export function parseMergeForm(input: unknown): ParseResult<MergeCommand> {
     issues,
     "Choose a destination part type.",
   );
-  const aliasLabel = readOptionalString(record, "aliasLabel", issues);
+  const normalizedAliasLabel = readOptionalString(
+    record,
+    "aliasLabel",
+    issues,
+    "Alias labels must be plain text.",
+  );
 
   if (sourcePartTypeId && destinationPartTypeId && sourcePartTypeId === destinationPartTypeId) {
     issues.push({
       path: "destinationPartTypeId",
-      message: "Source and destination part types must be different.",
+      message: "Choose two different part types; a part type cannot be merged into itself.",
     });
   }
 
   if (issues.length > 0) {
-    return failParse("admin.mergePartType", "Could not parse merge form.", issues);
+    return failParse("admin.mergePartType", issues);
   }
 
   return Ok({
     sourcePartTypeId: sourcePartTypeId ?? "",
     destinationPartTypeId: destinationPartTypeId ?? "",
-    aliasLabel,
+    aliasLabel: normalizedAliasLabel,
   });
 }

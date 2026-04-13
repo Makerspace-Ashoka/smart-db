@@ -19,7 +19,6 @@ import {
   type ParseResult,
 } from "./shared";
 
-type EventTargetType = RecordEventRequest["targetType"];
 type InstanceEventKind = Extract<StockEventKind, (typeof instanceActionKinds)[number]>;
 type BulkEventKind = Extract<StockEventKind, (typeof bulkActionKinds)[number]>;
 
@@ -49,19 +48,19 @@ export function parseEventForm(input: unknown): ParseResult<EventCommand> {
     record,
     "targetId",
     issues,
-    "Choose the target item.",
+    "Choose the item this event should update.",
   );
   const event = readLiteral(
     record,
     "event",
     [...instanceActionKinds, ...bulkActionKinds] as const,
     issues,
-    "Choose a supported event.",
+    "Choose a supported event for this item.",
   );
   const notes = readOptionalString(record, "notes", issues);
 
   if (!targetType || !targetId || !event) {
-    return failParse("scan.recordEvent", "Could not parse event form.", issues);
+    return failParse("scan.recordEvent", issues);
   }
 
   if (targetType === "instance") {
@@ -81,9 +80,9 @@ function parseInstanceEvent(
   if (!instanceActionKinds.includes(event)) {
     issues.push({
       path: "event",
-      message: `Instance events do not support '${event}'.`,
+      message: `Instance items do not support '${event}'. Choose ${formatChoices(instanceActionKinds)}.`,
     });
-    return failParse("scan.recordEvent", "Could not parse event form.", issues);
+    return failParse("scan.recordEvent", issues);
   }
 
   if (event === "moved") {
@@ -91,11 +90,11 @@ function parseInstanceEvent(
       record,
       "location",
       issues,
-      "Destination location is required.",
+      "Choose the destination location.",
     );
 
     if (issues.length > 0 || !location) {
-      return failParse("scan.recordEvent", "Could not parse event form.", issues);
+      return failParse("scan.recordEvent", issues);
     }
 
     return Ok({
@@ -115,7 +114,7 @@ function parseInstanceEvent(
     const assignee = readOptionalString(record, "assignee", issues);
 
     if (issues.length > 0) {
-      return failParse("scan.recordEvent", "Could not parse event form.", issues);
+      return failParse("scan.recordEvent", issues);
     }
 
     return Ok({
@@ -134,7 +133,7 @@ function parseInstanceEvent(
   const location = readOptionalString(record, "location", issues);
 
   if (issues.length > 0) {
-    return failParse("scan.recordEvent", "Could not parse event form.", issues);
+    return failParse("scan.recordEvent", issues);
   }
 
   return Ok({
@@ -159,9 +158,9 @@ function parseBulkEvent(
   if (!bulkActionKinds.includes(event)) {
     issues.push({
       path: "event",
-      message: `Bulk stock does not support '${event}'.`,
+      message: `Bulk stock does not support '${event}'. Choose ${formatChoices(bulkActionKinds)}.`,
     });
-    return failParse("scan.recordEvent", "Could not parse event form.", issues);
+    return failParse("scan.recordEvent", issues);
   }
 
   if (event === "moved") {
@@ -169,7 +168,7 @@ function parseBulkEvent(
       record,
       "location",
       issues,
-      "Destination location is required.",
+      "Choose the destination location.",
     );
     const splitQuantity = readOptionalNumber(
       record,
@@ -182,18 +181,18 @@ function parseBulkEvent(
       record,
       "quantityIsInteger",
       issues,
-      "Choose whether this stock only allows whole-number quantities.",
+      "Specify whether this stock only allows whole-number quantities.",
     );
 
     if (splitQuantity !== null && quantityIsInteger && !Number.isInteger(splitQuantity)) {
       issues.push({
         path: "splitQuantity",
-        message: "This unit only allows whole numbers.",
+        message: "Enter a whole-number split quantity for integer-only stock.",
       });
     }
 
     if (issues.length > 0 || !location) {
-      return failParse("scan.recordEvent", "Could not parse event form.", issues);
+      return failParse("scan.recordEvent", issues);
     }
 
     if (splitQuantity !== null) {
@@ -230,7 +229,7 @@ function parseBulkEvent(
     );
 
     if (issues.length > 0) {
-      return failParse("scan.recordEvent", "Could not parse event form.", issues);
+      return failParse("scan.recordEvent", issues);
     }
 
     return Ok({
@@ -256,7 +255,7 @@ function parseBulkEvent(
     );
 
     if (issues.length > 0) {
-      return failParse("scan.recordEvent", "Could not parse event form.", issues);
+      return failParse("scan.recordEvent", issues);
     }
 
     return Ok({
@@ -288,7 +287,7 @@ function parseBulkEvent(
   if (quantityDelta !== null && quantityIsInteger && !Number.isInteger(quantityDelta)) {
     issues.push({
       path: "quantityDelta",
-      message: "This unit only allows whole-number quantities.",
+      message: "Enter a whole-number adjustment for integer-only stock.",
     });
   }
 
@@ -300,7 +299,7 @@ function parseBulkEvent(
   );
 
   if (issues.length > 0 || !adjustedNotes) {
-    return failParse("scan.recordEvent", "Could not parse event form.", issues);
+    return failParse("scan.recordEvent", issues);
   }
 
   return Ok({
@@ -314,4 +313,20 @@ function parseBulkEvent(
       quantityDelta: quantityDelta ?? 0,
     },
   });
+}
+
+function formatChoices(choices: readonly string[]): string {
+  if (choices.length === 0) {
+    return "no actions";
+  }
+
+  if (choices.length === 1) {
+    return choices[0]!;
+  }
+
+  if (choices.length === 2) {
+    return `${choices[0]} or ${choices[1]}`;
+  }
+
+  return `${choices.slice(0, -1).join(", ")}, or ${choices[choices.length - 1]}`;
 }

@@ -79,10 +79,13 @@ describe("parseEventForm", () => {
       retryability: "never",
       details: { issueCount: 1 },
     });
+    expect(result.error.message).toBe(
+      "Could not parse event form: Instance items do not support 'restocked'. Choose moved, checked_out, returned, consumed, damaged, lost, or disposed.",
+    );
     expect(result.error.issues).toEqual([
       {
         path: "event",
-        message: "Instance events do not support 'restocked'.",
+        message: "Instance items do not support 'restocked'. Choose moved, checked_out, returned, consumed, damaged, lost, or disposed.",
       },
     ]);
   });

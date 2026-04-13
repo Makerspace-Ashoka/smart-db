@@ -12,7 +12,7 @@ import {
   narrowBulkEvent,
   narrowInstanceEvent,
   normalizeNullable,
-} from "./SmartApp.helpers";
+} from "./rewrite/presentation-helpers";
 
 describe("App helpers", () => {
   it("builds instance and bulk assignment commands from local form state", () => {

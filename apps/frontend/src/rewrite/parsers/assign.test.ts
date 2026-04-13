@@ -31,9 +31,53 @@ describe("parseAssignForm", () => {
     });
   });
 
-  it("rejects new bulk assignments when the form encodes an impossible countable state", () => {
+  it("allows a new countable part type to start as a bulk pool", () => {
     const result = parseAssignForm({
       qrCode: "QR-2001",
+      entityKind: "bulk",
+      location: "Shelf B",
+      notes: "",
+      partTypeMode: "new",
+      canonicalName: "Copper wire",
+      category: "Materials / Wire",
+      countable: true,
+      unitSymbol: "pcs",
+      initialQuantity: "12.5",
+      minimumQuantity: "1",
+    });
+
+    expect(result.ok).toBe(true);
+    if (!result.ok) {
+      return;
+    }
+
+    expect(result.value).toEqual({
+      qrCode: "QR-2001",
+      entityKind: "bulk",
+      location: "Shelf B",
+      notes: null,
+      partType: {
+        kind: "new",
+        canonicalName: "Copper wire",
+        category: "Materials / Wire",
+        aliases: [],
+        notes: null,
+        imageUrl: null,
+        countable: true,
+        unit: {
+          symbol: "pcs",
+          name: "Pieces",
+          isInteger: true,
+        },
+      },
+      initialQuantity: 12.5,
+      minimumQuantity: 1,
+    });
+  });
+
+  it("rejects piece-counted bulk pools when the unit is fractional", () => {
+    const result = parseAssignForm({
+      qrCode: "QR-2002",
       entityKind: "bulk",
       location: "Shelf B",
       notes: "",
@@ -51,17 +95,13 @@ describe("parseAssignForm", () => {
       return;
     }
 
-    expect(result.error).toMatchObject({
-      kind: "parse",
-      operation: "scan.assign",
-      source: "form",
-      retryability: "never",
-      details: { issueCount: 1 },
-    });
+    expect(result.error.message).toBe(
+      "Could not parse assignment form: Piece-counted bulk stock must use a whole-number unit such as pcs.",
+    );
     expect(result.error.issues).toEqual([
       {
-        path: "countable",
-        message: "Bulk part types must not be countable.",
+        path: "unitSymbol",
+        message: "Piece-counted bulk stock must use a whole-number unit such as pcs.",
       },
     ]);
   });
@@ -85,11 +125,45 @@ describe("parseAssignForm", () => {
     }
 
     expect(result.error.operation).toBe("scan.assign");
+    expect(result.error.message).toBe(
+      "Could not parse assignment form: Give the new part type a canonical name.",
+    );
     expect(result.error.issues).toEqual(
       expect.arrayContaining([
-        { path: "canonicalName", message: "Name the new part type." },
-        { path: "countable", message: "Discrete part types must be countable." },
+        { path: "canonicalName", message: "Give the new part type a canonical name." },
+        { path: "countable", message: "Discrete items must use countable part types." },
       ]),
     );
+  });
+
+  it("reports malformed conditional text fields once, with a field-specific message", () => {
+    const result = parseAssignForm({
+      qrCode: "QR-4001",
+      entityKind: "instance",
+      location: "Shelf D",
+      partTypeMode: "existing",
+      existingPartTypeId: 42,
+      initialStatus: "available",
+    });
+
+    expect(result.ok).toBe(false);
+    if (result.ok) {
+      return;
+    }
+
+    expect(result.error).toMatchObject({
+      kind: "parse",
+      operation: "scan.assign",
+      details: { issueCount: 1, primaryPath: "existingPartTypeId" },
+    });
+    expect(result.error.message).toBe(
+      "Could not parse assignment form: Enter the existing part type identifier.",
+    );
+    expect(result.error.issues).toEqual([
+      {
+        path: "existingPartTypeId",
+        message: "Enter the existing part type identifier.",
+      },
+    ]);
   });
 });

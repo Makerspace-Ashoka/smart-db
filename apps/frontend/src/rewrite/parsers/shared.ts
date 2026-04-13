@@ -10,7 +10,7 @@ import {
   type MeasurementUnit,
   type InstanceStatus,
 } from "@smart-db/contracts";
-import type { OperationName, RewriteFailure } from "../errors";
+import { createParseFailure, type OperationName, type ParseFailureSource, type RewriteFailure } from "../errors";
 
 export type ParseResult<T> = Result<T, RewriteFailure>;
 
@@ -31,20 +31,10 @@ export function issue(path: string, message: string): ParseIssue {
 
 export function failParse(
   operation: OperationName,
-  message: string,
   issues: readonly ParseIssue[],
+  source: ParseFailureSource = "form",
 ): ParseResult<never> {
-  return Err({
-    kind: "parse",
-    operation,
-    source: "form",
-    issues,
-    message,
-    retryability: "never",
-    details: {
-      issueCount: issues.length,
-    },
-  });
+  return Err(createParseFailure(operation, source, issues));
 }
 
 export function readRequiredString(
@@ -72,6 +62,7 @@ export function readOptionalString(
   record: Record<string, unknown>,
   field: string,
   issues: ParseIssue[],
+  message = "Enter plain text.",
 ): string | null {
   const value = record[field];
   if (value === undefined || value === null) {
@@ -79,7 +70,7 @@ export function readOptionalString(
   }
 
   if (typeof value !== "string") {
-    issues.push(issue(field, "Enter a text value."));
+    issues.push(issue(field, message));
     return null;
   }
 
