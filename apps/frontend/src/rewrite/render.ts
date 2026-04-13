@@ -252,13 +252,6 @@ function renderScanTab(state: RewriteUiState): string {
         </button>
       </div>
 
-      ${state.scanMode === "increment" ? `
-        <label class="wide" style="display:grid;gap:0.25rem;margin:0.75rem 0 1rem;">
-          Increment amount
-          <input name="incrementAmount" type="number" min="1" step="1" value="${attr(state.incrementAmount)}" />
-        </label>
-      ` : ""}
-
       <div aria-live="polite">
         ${state.scanResult?.mode === "unknown" ? `
           <div class="result-card">

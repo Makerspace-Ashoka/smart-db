@@ -94,7 +94,6 @@ export interface RewriteUiState {
   readonly eventForm: EventFormState;
   readonly scanCode: string;
   readonly scanMode: "increment" | "inspect";
-  readonly incrementAmount: number;
   readonly scanHistory: readonly ScanHistoryEntry[];
   readonly lastAssignment: LastAssignment | null;
   readonly camera: CameraScannerSnapshot;

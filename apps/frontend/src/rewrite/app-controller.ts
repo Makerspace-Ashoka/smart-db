@@ -85,7 +85,6 @@ export class RewriteAppController {
     eventForm: defaultEventForm,
     scanCode: "",
     scanMode: this.restoreScanMode(),
-    incrementAmount: this.restoreIncrementAmount(),
     scanHistory: [],
     lastAssignment: null,
     camera: defaultCameraState,
@@ -431,11 +430,6 @@ export class RewriteAppController {
       case "scanCode":
         this.patch({ scanCode: String(rawValue) });
         return;
-      case "incrementAmount": {
-        const amount = Number(rawValue);
-        this.setIncrementAmount(Number.isFinite(amount) && amount > 0 ? amount : 1);
-        return;
-      }
       case "labelSearch.query":
         this.patch({
           labelSearch: {
@@ -951,13 +945,10 @@ export class RewriteAppController {
     }
 
     try {
-      const scanOptions: { signal: AbortSignal; autoIncrement: boolean; incrementAmount?: number } = {
+      const scanOptions: { signal: AbortSignal; autoIncrement: boolean } = {
         signal: controller.signal,
         autoIncrement: this.state.scanMode === "increment",
       };
-      if (this.state.scanMode === "increment") {
-        scanOptions.incrementAmount = this.state.incrementAmount;
-      }
       const response = await api.scan(code, scanOptions);
       if (requestId !== this.scanRequestId) {
         return;
@@ -1041,7 +1032,7 @@ export class RewriteAppController {
       eventForm: buildDefaultEventFormForEntity(response.entity),
     });
     if (response.entity.targetType === "bulk" && (response as { autoIncremented?: boolean }).autoIncremented) {
-      this.addToast(`+${this.state.incrementAmount} ${response.entity.partType.canonicalName} (now ${response.entity.quantity ?? "?"})`, "success");
+      this.addToast(`+1 ${response.entity.partType.canonicalName} (now ${response.entity.quantity ?? "?"})`, "success");
     }
   }
 
@@ -1626,28 +1617,9 @@ export class RewriteAppController {
     this.patch({ scanMode: mode });
   }
 
-  private setIncrementAmount(amount: number): void {
-    try {
-      localStorage.setItem("smartdb:incrementAmount", String(amount));
-    } catch {}
-    this.patch({ incrementAmount: amount });
-  }
-
   private restoreScanMode(): "increment" | "inspect" {
-    try {
-      return localStorage.getItem("smartdb:scanMode") === "increment" ? "increment" : "inspect";
-    } catch {
-      return "inspect";
-    }
-  }
-
-  private restoreIncrementAmount(): number {
-    try {
-      const numberValue = Number(localStorage.getItem("smartdb:incrementAmount"));
-      return Number.isFinite(numberValue) && numberValue > 0 ? numberValue : 1;
-    } catch {
-      return 1;
-    }
+    // Always start in view-only mode. User opts into auto-count per session.
+    return "inspect";
   }
 
   private addToast(message: string, type: ToastRecord["type"]): void {

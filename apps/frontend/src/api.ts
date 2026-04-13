@@ -239,15 +239,10 @@ export const api = {
   },
   scan(
     code: string,
-    options: { signal?: AbortSignal; autoIncrement?: boolean; incrementAmount?: number } = {},
+    options: { signal?: AbortSignal; autoIncrement?: boolean } = {},
   ): Promise<ScanResponse> {
     const autoIncrement = options.autoIncrement !== false;
-    const amount = options.incrementAmount ?? 1;
-    const params = new URLSearchParams();
-    if (!autoIncrement) params.set("count", "false");
-    if (autoIncrement && amount !== 1) params.set("amount", String(amount));
-    const qs = params.toString();
-    const path = qs ? `/api/scan?${qs}` : "/api/scan";
+    const path = autoIncrement ? "/api/scan" : "/api/scan?count=false";
     const init: ApiRequestInit = {
       method: "POST",
       body: JSON.stringify({ code }),
