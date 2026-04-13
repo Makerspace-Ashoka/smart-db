@@ -256,7 +256,7 @@ describe("CameraScannerService", () => {
     jsqr.mockImplementationOnce(() => {
       throw new Error("bad frame");
     });
-    detect.mockResolvedValueOnce([{ rawValue: "QR-9001" }]);
+    detect.mockResolvedValueOnce([{ rawValue: "qr_9001" }]);
     const video = createVideo();
 
     await service.attachVideoElement(video);
@@ -266,10 +266,10 @@ describe("CameraScannerService", () => {
     tick();
     await flushMicrotasks();
 
-    expect(scan).toHaveBeenCalledWith("QR-9001");
+    expect(scan).toHaveBeenCalledWith("qr-9001");
     const snapshot = service.getSnapshot();
     expect(snapshot.phase).toBe("idle");
-    expect(snapshot.lastResult).toBe("QR-9001");
+    expect(snapshot.lastResult).toBe("qr-9001");
   });
 
   it("fails the scanner when the frame canvas is unavailable", async () => {

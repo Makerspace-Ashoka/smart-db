@@ -1,6 +1,7 @@
 import {
   hasSmartDbRole,
   getMeasurementUnitBySymbol,
+  sanitizeScannedCode,
   smartDbRoles,
   type AuthSession,
   type PartType,
@@ -985,8 +986,12 @@ export class RewriteAppController {
   }
 
   private applyScanResponse(response: ScanResponse, code: string): void {
+    const historyCode =
+      response.mode === "unknown"
+        ? response.code
+        : response.qrCode.code;
     const nextHistory = [
-      { code, mode: response.mode, timestamp: new Date().toISOString() },
+      { code: historyCode, mode: response.mode, timestamp: new Date().toISOString() },
       ...this.state.scanHistory,
     ].slice(0, 20);
     if (response.mode === "unknown") {
@@ -1126,7 +1131,7 @@ export class RewriteAppController {
   }
 
   private async handleScan(): Promise<void> {
-    const code = this.state.scanCode.trim();
+    const code = sanitizeScannedCode(this.state.scanCode);
     if (!code) return;
     this.patch({ scanCode: "" });
     await this.performScan(code);

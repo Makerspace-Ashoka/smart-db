@@ -1142,6 +1142,59 @@ describe("InventoryService", () => {
     expect(pooled.partType.id).toBe(tracked.partType.id);
   });
 
+  it("matches handheld scanner variants of the same QR code", async () => {
+    const { service } = makeService();
+
+    service.registerQrBatch({
+      actor: "lab-admin",
+      prefix: "QR",
+      startNumber: 6300,
+      count: 1,
+    });
+
+    const assigned = service.assignQr({
+      qrCode: "QR-6300",
+      actor: "labeler",
+      entityKind: "instance",
+      location: "Shelf A",
+      notes: null,
+      partType: {
+        kind: "new",
+        canonicalName: "Handheld Scanner Test",
+        category: "Misc",
+        aliases: [],
+        notes: null,
+        imageUrl: null,
+        countable: true,
+      },
+      initialStatus: "available",
+    });
+
+    await expect(service.scanCode(" qr_6300 ")).resolves.toMatchObject({
+      mode: "interact",
+      qrCode: {
+        code: "QR-6300",
+      },
+      entity: {
+        id: assigned.id,
+      },
+    });
+  });
+
+  it("rejects ambiguous normalized barcode matches instead of choosing arbitrarily", async () => {
+    const { db, service } = makeService();
+    const now = new Date().toISOString();
+
+    db.prepare(`INSERT INTO qr_batches (id, prefix, start_number, end_number, actor, created_at) VALUES (?, ?, ?, ?, ?, ?)`)
+      .run("external", "EXT", 0, 0, "system", now);
+    db.prepare(`INSERT INTO qrcodes (code, batch_id, status, assigned_kind, assigned_id, created_at, updated_at) VALUES (?, ?, ?, NULL, NULL, ?, ?)`)
+      .run("AB-12", "external", "printed", now, now);
+    db.prepare(`INSERT INTO qrcodes (code, batch_id, status, assigned_kind, assigned_id, created_at, updated_at) VALUES (?, ?, ?, NULL, NULL, ?, ?)`)
+      .run("AB12", "external", "printed", now, now);
+
+    await expect(service.scanCode("ab 12")).rejects.toThrowError(ConflictError);
+  });
+
   it("rejects piece-counted bulk pools when the part type unit is fractional", () => {
     const { db, service } = makeService();
     const now = new Date().toISOString();

@@ -1,4 +1,5 @@
 import jsQR from "jsqr";
+import { sanitizeScannedCode, scanLookupCompactKey } from "@smart-db/contracts";
 
 export type CameraScannerPermissionState = "unknown" | "granted" | "denied";
 
@@ -783,30 +784,32 @@ export class CameraScannerService {
   }
 
   private acceptCode(code: string): void {
-    if (!code) {
+    const normalized = sanitizeScannedCode(code);
+    if (!normalized) {
       return;
     }
 
     const now = this.now();
-    const lastSeen = this.recentCodes.get(code);
+    const lookupKey = scanLookupCompactKey(normalized);
+    const lastSeen = this.recentCodes.get(lookupKey);
     if (typeof lastSeen === "number" && now - lastSeen < this.duplicateWindowMs) {
       return;
     }
 
-    this.recentCodes.set(code, now);
+    this.recentCodes.set(lookupKey, now);
     this.stopInternal({ preserveLastResult: true });
     this.setSnapshot({
       phase: "idle",
       supported: this.snapshot.supported,
       permissionState: this.snapshot.permissionState,
-      lastResult: code,
+      lastResult: normalized,
       activeStream: false,
       videoBound: Boolean(this.videoElement),
       failure: null,
     });
 
     try {
-      this.onScan(code);
+      this.onScan(normalized);
     } catch (error) {
       this.logger.error("CameraScannerService onScan callback threw.", error);
     }

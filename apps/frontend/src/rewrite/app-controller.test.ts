@@ -262,6 +262,46 @@ describe("RewriteAppController", () => {
     controller.dispose();
   });
 
+  it("normalizes handheld scanner input before lookup", async () => {
+    const { startRewriteApp } = await import("./app-controller");
+    apiMock.getSession.mockResolvedValueOnce({
+      subject: "user-1",
+      username: "lab-admin",
+      name: "Lab Admin",
+      email: "lab@example.com",
+      roles: ["smartdb.admin"],
+      issuedAt: "2026-01-01T00:00:00.000Z",
+      expiresAt: null,
+    });
+    apiMock.scan.mockResolvedValueOnce({
+      mode: "unknown",
+      code: "qr-1001",
+      partDb: {
+        configured: false,
+        connected: false,
+        message: "not found",
+      },
+    });
+
+    const controller = startRewriteApp(document.getElementById("root")!);
+    await flush();
+
+    const input = document.querySelector<HTMLInputElement>('input[name="scanCode"]');
+    expect(input).not.toBeNull();
+    input!.value = "  qr_1001\r\n";
+    input!.dispatchEvent(new Event("input", { bubbles: true }));
+    const form = document.querySelector<HTMLFormElement>('form[data-form="scan"]');
+    expect(form).not.toBeNull();
+    form!.dispatchEvent(new Event("submit", { bubbles: true, cancelable: true }));
+    await flush();
+
+    expect(apiMock.scan).toHaveBeenCalledWith(
+      "qr-1001",
+      expect.objectContaining({ autoIncrement: false }),
+    );
+    controller.dispose();
+  });
+
   it("stops the camera service during logout cleanup", async () => {
     const { startRewriteApp } = await import("./app-controller");
     apiMock.getSession.mockResolvedValueOnce({

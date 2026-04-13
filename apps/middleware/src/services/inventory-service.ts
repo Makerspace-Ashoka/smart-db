@@ -37,6 +37,8 @@ import {
   getAvailableBulkActions,
   getNextInstanceStatus,
   getNextBulkQuantity,
+  sanitizeScannedCode,
+  scanLookupCompactKey,
 } from "@smart-db/contracts";
 import { PartDbClient } from "../partdb/partdb-client.js";
 import type { PartDbOutbox } from "../outbox/partdb-outbox.js";
@@ -392,10 +394,8 @@ export class InventoryService {
   }
 
   async scanCode(code: string, actor: string | null = null, options: { autoIncrement?: boolean; incrementAmount?: number } = {}): Promise<ScanResponse> {
-    const normalized = code.trim();
-    const qrRow = this.db
-      .prepare(`SELECT * FROM qrcodes WHERE LOWER(code) = LOWER(?)`)
-      .get(normalized) as SqlRow | undefined;
+    const normalized = sanitizeScannedCode(code);
+    const qrRow = this.findQrRowByScannedCode(normalized);
     const partDb = await this.partDbClient.getLookupSummary();
 
     if (!qrRow) {
@@ -650,13 +650,11 @@ export class InventoryService {
   }
 
   assignQr(input: AssignQrCommand): InventoryEntitySummary {
-    const qrCodeValue = input.qrCode.trim();
+    const qrCodeValue = sanitizeScannedCode(input.qrCode);
     const actor = input.actor;
     const rawLocation = input.location.trim().replace(/\s+/g, " ");
     const location = this.canonicalizeLocation(rawLocation);
-    let qrRow = this.db
-      .prepare(`SELECT * FROM qrcodes WHERE LOWER(code) = LOWER(?)`)
-      .get(qrCodeValue) as SqlRow | undefined;
+    let qrRow = this.findQrRowByScannedCode(qrCodeValue);
 
     if (!qrRow) {
       // External (manufacturer) barcode — auto-register against the external batch
@@ -1036,10 +1034,8 @@ export class InventoryService {
   }
 
   voidQrCode(code: string, actor: string): QRCode {
-    const normalized = code.trim();
-    const qrRow = this.db
-      .prepare(`SELECT * FROM qrcodes WHERE LOWER(code) = LOWER(?)`)
-      .get(normalized) as SqlRow | undefined;
+    const normalized = sanitizeScannedCode(code);
+    const qrRow = this.findQrRowByScannedCode(normalized);
 
     if (!qrRow) {
       throw new NotFoundError("QR code", normalized);
@@ -1752,6 +1748,37 @@ export class InventoryService {
       },
       "bulk stock summary",
     );
+  }
+
+  private findQrRowByScannedCode(code: string): SqlRow | undefined {
+    const exact = this.db
+      .prepare(`SELECT * FROM qrcodes WHERE LOWER(TRIM(code)) = LOWER(?)`)
+      .get(code) as SqlRow | undefined;
+    if (exact) {
+      return exact;
+    }
+
+    const compactKey = scanLookupCompactKey(code);
+    if (!compactKey) {
+      return undefined;
+    }
+
+    const matches = this.db
+      .prepare(`
+        SELECT *
+        FROM qrcodes
+        WHERE LOWER(REPLACE(REPLACE(REPLACE(TRIM(code), '-', ''), '_', ''), ' ', '')) = ?
+      `)
+      .all(compactKey) as SqlRow[];
+
+    if (matches.length > 1) {
+      throw new ConflictError("Scanned code matches multiple stored codes after normalization.", {
+        scannedCode: code,
+        candidates: matches.map((row) => String(row.code)),
+      });
+    }
+
+    return matches[0];
   }
 
   private updateQrAssignment(
