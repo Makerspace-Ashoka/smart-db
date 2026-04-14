@@ -162,13 +162,13 @@ interface CameraScannerCanvasLike {
   ): CameraScannerCanvasContextLike | null;
 }
 
-const DEFAULT_SCAN_INTERVAL_MS = 150;
+const DEFAULT_SCAN_INTERVAL_MS = 120;
 const DEFAULT_DUPLICATE_WINDOW_MS = 3000;
 const DEFAULT_VIDEO_CONSTRAINTS: MediaStreamConstraints = {
   video: {
     facingMode: "environment",
-    width: { ideal: 1280 },
-    height: { ideal: 720 },
+    width: { ideal: 720 },
+    height: { ideal: 1280 },
   },
 };
 
@@ -833,7 +833,7 @@ export class CameraScannerService {
         .then((DetectorClass) => {
           try {
             this.detector = new DetectorClass({
-              formats: ["qr_code", "ean_13", "ean_8", "code_128", "code_39", "upc_a", "upc_e", "itf"],
+              formats: ["qr_code", "data_matrix", "ean_13", "ean_8", "code_128", "code_39", "upc_a", "upc_e", "itf"],
             });
             return this.detector;
           } catch (error) {
