@@ -9,9 +9,16 @@ type ScanTick = (() => void) | null;
 
 function createStream() {
   const stop = vi.fn();
-  const track = { stop };
+  const track = {
+    stop,
+    getCapabilities: () => ({ focusMode: ["continuous", "manual"] }),
+    applyConstraints: vi.fn().mockResolvedValue(undefined),
+  };
   return {
-    stream: { getTracks: () => [track] } as unknown as MediaStream,
+    stream: {
+      getTracks: () => [track],
+      getVideoTracks: () => [track],
+    } as unknown as MediaStream,
     stop,
   };
 }

@@ -534,6 +534,23 @@ export class CameraScannerService {
     let stream: MediaStream;
     try {
       stream = await this.mediaDevices.getUserMedia(this.videoConstraints);
+
+      // Request continuous autofocus on the video track if the device supports it.
+      // Many phones default to fixed focus unless explicitly told otherwise.
+      const videoTrack = stream.getVideoTracks()[0];
+      if (videoTrack) {
+        try {
+          const capabilities = videoTrack.getCapabilities?.() as Record<string, unknown> | undefined;
+          const focusModes = capabilities?.focusMode as string[] | undefined;
+          if (focusModes?.includes("continuous")) {
+            await videoTrack.applyConstraints({
+              advanced: [{ focusMode: "continuous" } as MediaTrackConstraintSet],
+            });
+          }
+        } catch {
+          // Not all browsers/devices support focusMode — ignore silently.
+        }
+      }
     } catch (error) {
       const failure = classifyStartFailure(error);
       if (failure.kind === "permission") {
