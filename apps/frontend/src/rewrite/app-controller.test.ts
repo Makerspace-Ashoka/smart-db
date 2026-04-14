@@ -57,6 +57,7 @@ const cameraMocks = vi.hoisted(() => ({
   stop: vi.fn(),
   destroy: vi.fn(),
   attach: vi.fn().mockResolvedValue({ ok: true }),
+  getSnapshot: vi.fn(() => defaultCameraState),
   subscribe: vi.fn((listener: (snapshot: typeof defaultCameraState) => void) => {
     listener(defaultCameraState);
     return () => {};
@@ -69,6 +70,7 @@ vi.mock("./services/camera-scanner-service", () => ({
     start = cameraMocks.start;
     stop = cameraMocks.stop;
     destroy = cameraMocks.destroy;
+    getSnapshot = cameraMocks.getSnapshot;
     attachVideoElement = cameraMocks.attach;
   },
 }));
@@ -141,6 +143,7 @@ describe("RewriteAppController", () => {
     vi.clearAllMocks();
     cameraMocks.start.mockResolvedValue({ ok: true });
     cameraMocks.attach.mockResolvedValue({ ok: true });
+    cameraMocks.getSnapshot.mockReturnValue(defaultCameraState);
     apiMock.logout.mockResolvedValue({ ok: true, redirectUrl: null });
     apiMock.getDashboard.mockResolvedValue(dashboard);
     apiMock.getPartDbStatus.mockResolvedValue(partDbStatus);
