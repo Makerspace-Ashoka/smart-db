@@ -35,6 +35,7 @@ export const instanceStatuses = [
 export const bulkLevels = ["full", "good", "low", "empty"] as const;
 export const qrStatuses = ["printed", "assigned", "voided", "duplicate"] as const;
 export const inventoryTargetKinds = ["instance", "bulk"] as const;
+export const correctionTargetKinds = ["instance", "bulk", "part_type"] as const;
 export const partDbSyncStatuses = ["never", "pending", "synced", "failed"] as const;
 export const stockEventKinds = [
   "labeled",
@@ -60,15 +61,22 @@ export const instanceActionKinds = [
   "disposed",
 ] as const;
 export const bulkActionKinds = ["moved", "restocked", "consumed", "stocktaken", "adjusted"] as const;
+export const correctionKinds = [
+  "entity_part_type_reassigned",
+  "part_type_definition_edited",
+  "ingest_reversed",
+] as const;
 
 export const instanceStatusSchema = z.enum(instanceStatuses);
 export const bulkLevelSchema = z.enum(bulkLevels);
 export const qrStatusSchema = z.enum(qrStatuses);
 export const inventoryTargetKindSchema = z.enum(inventoryTargetKinds);
+export const correctionTargetKindSchema = z.enum(correctionTargetKinds);
 export const partDbSyncStatusSchema = z.enum(partDbSyncStatuses);
 export const stockEventKindSchema = z.enum(stockEventKinds);
 export const instanceActionSchema = z.enum(instanceActionKinds);
 export const bulkActionSchema = z.enum(bulkActionKinds);
+export const correctionKindSchema = z.enum(correctionKinds);
 
 const isoTimestampSchema = z.string().datetime();
 const identifierSchema = nonEmptyString;
@@ -559,6 +567,114 @@ export const bulkSplitRequestSchema = z
 
 export type BulkSplitRequest = z.output<typeof bulkSplitRequestSchema>;
 
+export const correctionEventSchema = z
+  .object({
+    id: identifierSchema,
+    targetType: correctionTargetKindSchema,
+    targetId: identifierSchema,
+    correctionKind: correctionKindSchema,
+    actor: nonEmptyString,
+    reason: nonEmptyString,
+    before: z.record(z.unknown()),
+    after: z.record(z.unknown()),
+    createdAt: isoTimestampSchema,
+  })
+  .strict();
+
+const reassignEntityPartTypeBaseSchema = z
+  .object({
+    targetType: inventoryTargetKindSchema,
+    targetId: identifierSchema,
+    fromPartTypeId: identifierSchema,
+    toPartTypeId: identifierSchema,
+    reason: nonEmptyString,
+  })
+  .strict();
+
+export const reassignEntityPartTypeRequestSchema = reassignEntityPartTypeBaseSchema
+  .refine((value) => value.fromPartTypeId !== value.toPartTypeId, {
+    message: "Current and replacement part types must be different.",
+    path: ["toPartTypeId"],
+  });
+
+export const reassignEntityPartTypeCommandSchema = z.intersection(
+  reassignEntityPartTypeBaseSchema,
+  z.object({
+    actor: nonEmptyString,
+  }).strict(),
+)
+  .refine((value) => value.fromPartTypeId !== value.toPartTypeId, {
+    message: "Current and replacement part types must be different.",
+    path: ["toPartTypeId"],
+  });
+
+export const editPartTypeDefinitionRequestSchema = z
+  .object({
+    partTypeId: identifierSchema,
+    expectedUpdatedAt: isoTimestampSchema,
+    canonicalName: nonEmptyString,
+    category: nonEmptyString.superRefine((value, context) => {
+      const parsed = parseCategoryPathInput(value);
+      if (!parsed.ok) {
+        context.addIssue({
+          code: z.ZodIssueCode.custom,
+          message: describeCategoryPathParseError(parsed.error),
+        });
+      }
+    }),
+    reason: nonEmptyString,
+  })
+  .strict();
+
+export const editPartTypeDefinitionCommandSchema = editPartTypeDefinitionRequestSchema
+  .extend({
+    actor: nonEmptyString,
+  })
+  .strict();
+
+export const reverseIngestAssignmentRequestSchema = z
+  .object({
+    qrCode: nonEmptyString,
+    assignedKind: inventoryTargetKindSchema,
+    assignedId: identifierSchema,
+    reason: nonEmptyString,
+  })
+  .strict();
+
+export const reverseIngestAssignmentCommandSchema = reverseIngestAssignmentRequestSchema
+  .extend({
+    actor: nonEmptyString,
+  })
+  .strict();
+
+export const correctionHistoryQuerySchema = z
+  .object({
+    targetType: correctionTargetKindSchema,
+    targetId: identifierSchema,
+  })
+  .strict();
+
+export const reassignEntityPartTypeResponseSchema = z
+  .object({
+    entity: inventoryEntitySummarySchema,
+    correctionEvent: correctionEventSchema,
+  })
+  .strict();
+
+export const editPartTypeDefinitionResponseSchema = z
+  .object({
+    partType: partTypeSchema,
+    correctionEvent: correctionEventSchema,
+  })
+  .strict();
+
+export const reverseIngestAssignmentResponseSchema = z
+  .object({
+    qrCode: qrCodeSchema,
+    correctionEvent: correctionEventSchema,
+  })
+  .strict();
+
 export const mergePartTypesRequestSchema = z
   .object({
     sourcePartTypeId: identifierSchema,
@@ -738,6 +854,8 @@ export type StockEventKind = z.output<typeof stockEventKindSchema>;
 export type InstanceActionKind = z.output<typeof instanceActionSchema>;
 export type BulkActionKind = z.output<typeof bulkActionSchema>;
 export type InventoryTargetKind = z.output<typeof inventoryTargetKindSchema>;
+export type CorrectionTargetKind = z.output<typeof correctionTargetKindSchema>;
+export type CorrectionKind = z.output<typeof correctionKindSchema>;
 export type MeasurementUnit = z.output<typeof measurementUnitSchema>;
 export type CategoryPath = z.output<typeof categoryPathSchema>;
 export type PartType = z.output<typeof partTypeSchema>;
@@ -763,6 +881,17 @@ export type AssignQrRequest = z.output<typeof assignQrRequestSchema>;
 export type AssignQrCommand = z.output<typeof assignQrCommandSchema>;
 export type RecordEventRequest = z.output<typeof recordEventRequestSchema>;
 export type RecordEventCommand = z.output<typeof recordEventCommandSchema>;
+export type CorrectionEvent = z.output<typeof correctionEventSchema>;
+export type ReassignEntityPartTypeRequest = z.output<typeof reassignEntityPartTypeRequestSchema>;
+export type ReassignEntityPartTypeCommand = z.output<typeof reassignEntityPartTypeCommandSchema>;
+export type EditPartTypeDefinitionRequest = z.output<typeof editPartTypeDefinitionRequestSchema>;
+export type EditPartTypeDefinitionCommand = z.output<typeof editPartTypeDefinitionCommandSchema>;
+export type ReverseIngestAssignmentRequest = z.output<typeof reverseIngestAssignmentRequestSchema>;
+export type ReverseIngestAssignmentCommand = z.output<typeof reverseIngestAssignmentCommandSchema>;
+export type CorrectionHistoryQuery = z.output<typeof correctionHistoryQuerySchema>;
+export type ReassignEntityPartTypeResponse = z.output<typeof reassignEntityPartTypeResponseSchema>;
+export type EditPartTypeDefinitionResponse = z.output<typeof editPartTypeDefinitionResponseSchema>;
+export type ReverseIngestAssignmentResponse = z.output<typeof reverseIngestAssignmentResponseSchema>;
 export type MergePartTypesRequest = z.output<typeof mergePartTypesRequestSchema>;
 export type PartTypeSearchQuery = z.output<typeof partTypeSearchQuerySchema>;
 export type PartDbDiscoveredResources = z.output<typeof partDbDiscoveredResourcesSchema>;

@@ -4,11 +4,15 @@ import { tmpdir } from "node:os";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import {
   ConflictError,
+  type CorrectionEvent,
   type DashboardSummary,
+  type EditPartTypeDefinitionResponse,
   type InventoryEntitySummary,
   type PartDbConnectionStatus,
   type PartType,
   type QRCode,
+  type ReassignEntityPartTypeResponse,
+  type ReverseIngestAssignmentResponse,
   type ScanResponse,
   type StockEvent,
 } from "@smart-db/contracts";
@@ -80,6 +84,49 @@ const stockEvent: StockEvent = {
   actor: "lab-admin",
   notes: null,
   createdAt: "2026-01-01T00:00:00.000Z",
+};
+
+const correctionEvent: CorrectionEvent = {
+  id: "corr-1",
+  targetType: "instance",
+  targetId: "instance-1",
+  correctionKind: "entity_part_type_reassigned",
+  actor: "lab-admin",
+  reason: "Wrong type",
+  before: { partTypeId: "part-1" },
+  after: { partTypeId: "part-2" },
+  createdAt: "2026-01-01T00:00:00.000Z",
+};
+
+const reassignResponse: ReassignEntityPartTypeResponse = {
+  entity: entitySummary,
+  correctionEvent,
+};
+
+const editPartTypeResponse: EditPartTypeDefinitionResponse = {
+  partType,
+  correctionEvent: {
+    ...correctionEvent,
+    targetType: "part_type",
+    targetId: "part-1",
+    correctionKind: "part_type_definition_edited",
+  },
+};
+
+const reverseIngestResponse: ReverseIngestAssignmentResponse = {
+  qrCode: {
+    code: "QR-1001",
+    batchId: "batch-1",
+    status: "printed",
+    assignedKind: null,
+    assignedId: null,
+    createdAt: "2026-01-01T00:00:00.000Z",
+    updatedAt: "2026-01-01T00:00:00.000Z",
+  },
+  correctionEvent: {
+    ...correctionEvent,
+    correctionKind: "ingest_reversed",
+  },
 };
 
 const partDbStatus: PartDbConnectionStatus = {
@@ -431,6 +478,10 @@ describe("buildServer", () => {
       assignQr: vi.fn(() => entitySummary),
       recordEvent: vi.fn(() => stockEvent),
       mergePartTypes: vi.fn(() => partType),
+      getCorrectionHistory: vi.fn(() => [correctionEvent]),
+      reassignEntityPartType: vi.fn(() => reassignResponse),
+      editPartTypeDefinition: vi.fn(() => editPartTypeResponse),
+      reverseIngestAssignment: vi.fn(() => reverseIngestResponse),
       getPartDbStatus: vi.fn(async () => partDbStatus),
       voidQrCode: vi.fn(() => voidedQr),
       approvePartType: vi.fn(() => ({ ...partType, needsReview: false })),
@@ -562,6 +613,54 @@ describe("buildServer", () => {
     await expect(
       app.inject({
         method: "GET",
+        url: "/api/corrections/history?targetType=instance&targetId=instance-1",
+        headers: sessionHeaders,
+      }),
+    ).resolves.toMatchObject({ statusCode: 200 });
+    await expect(
+      app.inject({
+        method: "POST",
+        url: "/api/corrections/reassign-part-type",
+        payload: {
+          targetType: "instance",
+          targetId: "instance-1",
+          fromPartTypeId: "part-1",
+          toPartTypeId: "part-2",
+          reason: "Wrong type",
+        },
+        headers: sessionHeaders,
+      }),
+    ).resolves.toMatchObject({ statusCode: 200 });
+    await expect(
+      app.inject({
+        method: "POST",
+        url: "/api/corrections/edit-part-type",
+        payload: {
+          partTypeId: "part-1",
+          expectedUpdatedAt: "2026-01-01T00:00:00.000Z",
+          canonicalName: "Arduino Uno R3",
+          category: "Microcontrollers",
+          reason: "Shared fix",
+        },
+        headers: sessionHeaders,
+      }),
+    ).resolves.toMatchObject({ statusCode: 200 });
+    await expect(
+      app.inject({
+        method: "POST",
+        url: "/api/corrections/reverse-ingest",
+        payload: {
+          qrCode: "QR-1001",
+          assignedKind: "instance",
+          assignedId: "instance-1",
+          reason: "Wrong ingest",
+        },
+        headers: sessionHeaders,
+      }),
+    ).resolves.toMatchObject({ statusCode: 200 });
+    await expect(
+      app.inject({
+        method: "GET",
         url: "/api/qr-batches/batch-1/labels.pdf",
         headers: sessionHeaders,
       }),
@@ -575,6 +674,10 @@ describe("buildServer", () => {
     expect(service.searchPartTypes).toHaveBeenCalledWith("arduino");
     expect(service.voidQrCode).toHaveBeenCalledWith("QR-1001", "labeler");
     expect(service.approvePartType).toHaveBeenCalledWith("part-1");
+    expect(service.getCorrectionHistory).toHaveBeenCalledWith("instance", "instance-1");
+    expect(service.reassignEntityPartType).toHaveBeenCalled();
+    expect(service.editPartTypeDefinition).toHaveBeenCalled();
+    expect(service.reverseIngestAssignment).toHaveBeenCalled();
     await app.close();
   });
 

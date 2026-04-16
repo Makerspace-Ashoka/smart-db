@@ -2,11 +2,15 @@ import type { FastifyInstance, preHandlerAsyncHookHandler } from "fastify";
 import {
   assignQrRequestSchema,
   bulkSplitRequestSchema,
+  correctionHistoryQuerySchema,
+  editPartTypeDefinitionRequestSchema,
   mergePartTypesRequestSchema,
   parseWithSchema,
   partTypeSearchQuerySchema,
+  reassignEntityPartTypeRequestSchema,
   recordEventRequestSchema,
   registerQrBatchRequestSchema,
+  reverseIngestAssignmentRequestSchema,
   scanRequestSchema,
   voidQrRequestSchema,
 } from "@smart-db/contracts";
@@ -71,6 +75,11 @@ export async function registerInventoryRoutes(
   app.get("/api/part-types/provisional", admin, async () =>
     inventoryService.getProvisionalPartTypes(),
   );
+
+  app.get("/api/corrections/history", admin, async (request) => {
+    const query = parseWithSchema(correctionHistoryQuerySchema, request.query, "correction history query");
+    return inventoryService.getCorrectionHistory(query.targetType, query.targetId);
+  });
 
   app.post("/api/qr-batches", adminMutation, async (request) => {
     const command = parseWithSchema(
@@ -159,6 +168,42 @@ export async function registerInventoryRoutes(
   app.post("/api/part-types/:id/approve", adminMutation, async (request) => {
     const params = request.params as { id: string };
     return inventoryService.approvePartType(params.id);
+  });
+
+  app.post("/api/corrections/reassign-part-type", adminMutation, async (request) => {
+    const command = parseWithSchema(
+      reassignEntityPartTypeRequestSchema,
+      request.body,
+      "reassign entity part type request",
+    );
+    return inventoryService.reassignEntityPartType({
+      ...command,
+      actor: request.authContext!.session.username,
+    });
+  });
+
+  app.post("/api/corrections/edit-part-type", adminMutation, async (request) => {
+    const command = parseWithSchema(
+      editPartTypeDefinitionRequestSchema,
+      request.body,
+      "edit part type definition request",
+    );
+    return inventoryService.editPartTypeDefinition({
+      ...command,
+      actor: request.authContext!.session.username,
+    });
+  });
+
+  app.post("/api/corrections/reverse-ingest", adminMutation, async (request) => {
+    const command = parseWithSchema(
+      reverseIngestAssignmentRequestSchema,
+      request.body,
+      "reverse ingest request",
+    );
+    return inventoryService.reverseIngestAssignment({
+      ...command,
+      actor: request.authContext!.session.username,
+    });
   });
 
   app.get("/api/partdb/status", authenticated, async () =>

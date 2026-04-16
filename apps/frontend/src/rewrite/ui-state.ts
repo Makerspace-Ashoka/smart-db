@@ -1,5 +1,6 @@
 import type {
   AuthSession,
+  CorrectionEvent,
   DashboardSummary,
   PartDbConnectionStatus,
   PartDbSyncFailure,
@@ -24,6 +25,7 @@ export type PendingAction =
   | "scan"
   | "assign"
   | "event"
+  | "correct"
   | "merge"
   | "sync"
   | null;
@@ -73,6 +75,23 @@ export interface InventoryUiState {
   readonly expandedErrors: ReadonlyMap<string, string>;
 }
 
+export type CorrectionAction = "reassign" | "editShared" | "reverseIngest" | null;
+
+export interface CorrectionUiState {
+  readonly scanCode: string;
+  readonly target: Extract<ScanResponse, { mode: "interact" }> | null;
+  readonly targetError: string | null;
+  readonly history: readonly CorrectionEvent[];
+  readonly historyError: string | null;
+  readonly search: SearchState;
+  readonly replacementPartTypeId: string;
+  readonly action: CorrectionAction;
+  readonly reason: string;
+  readonly sharedCanonicalName: string;
+  readonly sharedCategory: string;
+  readonly sharedExpectedUpdatedAt: string;
+}
+
 export interface RewriteUiState {
   readonly authState: AuthViewState;
   readonly dashboard: DashboardSummary | null;
@@ -85,6 +104,7 @@ export interface RewriteUiState {
   readonly knownCategories: readonly string[];
   readonly inventorySummary: readonly InventorySummaryRow[];
   readonly inventoryUi: InventoryUiState;
+  readonly correctionUi: CorrectionUiState;
   readonly provisionalPartTypes: readonly PartType[];
   readonly labelSearch: SearchState;
   readonly mergeSearch: SearchState;
@@ -157,6 +177,26 @@ export const defaultInventoryUiState: InventoryUiState = {
   expandedId: null,
   expandedItems: new Map(),
   expandedErrors: new Map(),
+};
+
+export const defaultCorrectionUiState: CorrectionUiState = {
+  scanCode: "",
+  target: null,
+  targetError: null,
+  history: [],
+  historyError: null,
+  search: {
+    query: "",
+    results: [],
+    status: "idle",
+    error: null,
+  },
+  replacementPartTypeId: "",
+  action: null,
+  reason: "",
+  sharedCanonicalName: "",
+  sharedCategory: "",
+  sharedExpectedUpdatedAt: "",
 };
 
 export const defaultCameraState: CameraScannerSnapshot = {

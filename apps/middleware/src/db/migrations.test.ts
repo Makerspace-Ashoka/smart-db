@@ -34,6 +34,7 @@ describe("applyMigrations", () => {
     expect(versions[4]).toMatchObject({ version: 5, description: "partdb outbox" });
     expect(versions[5]).toMatchObject({ version: 6, description: "partdb outbox failure timestamps" });
     expect(versions[6]).toMatchObject({ version: 7, description: "physical instance sync status" });
+    expect(versions[7]).toMatchObject({ version: 8, description: "correction events" });
   });
 
   it("skips already-applied migrations on subsequent runs", () => {
@@ -67,6 +68,7 @@ describe("applyMigrations", () => {
     expect(tableNames).toContain("auth_sessions");
     expect(tableNames).toContain("partdb_category_cache");
     expect(tableNames).toContain("partdb_outbox");
+    expect(tableNames).toContain("correction_events");
     expect(tableNames).toContain("schema_version");
   });
 

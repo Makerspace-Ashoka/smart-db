@@ -3,7 +3,11 @@ import {
   applicationErrorResponseSchema,
   assignQrRequestSchema,
   authSessionSchema,
+  correctionEventSchema,
+  correctionHistoryQuerySchema,
   dashboardSummarySchema,
+  editPartTypeDefinitionRequestSchema,
+  editPartTypeDefinitionResponseSchema,
   inventoryEntitySummarySchema,
   latestQrBatchResponseSchema,
   logoutResponseSchema,
@@ -16,14 +20,22 @@ import {
   partDbSyncStatusResponseSchema,
   partTypeSchema,
   qrCodeSchema,
+  reassignEntityPartTypeRequestSchema,
+  reassignEntityPartTypeResponseSchema,
   recordEventRequestSchema,
   registerQrBatchRequestSchema,
   registerQrBatchResponseSchema,
+  reverseIngestAssignmentRequestSchema,
+  reverseIngestAssignmentResponseSchema,
   scanResponseSchema,
   stockEventSchema,
   type AssignQrRequest,
   type AuthSession,
+  type CorrectionEvent,
+  type CorrectionHistoryQuery,
   type DashboardSummary,
+  type EditPartTypeDefinitionRequest,
+  type EditPartTypeDefinitionResponse,
   type LatestQrBatchResponse,
   type LogoutResponse,
   type MergePartTypesRequest,
@@ -33,9 +45,13 @@ import {
   type PartDbSyncFailure,
   type PartDbSyncStatusResponse,
   type PartType,
+  type ReassignEntityPartTypeRequest,
+  type ReassignEntityPartTypeResponse,
   type RecordEventRequest,
   type RegisterQrBatchRequest,
   type RegisterQrBatchResponse,
+  type ReverseIngestAssignmentRequest,
+  type ReverseIngestAssignmentResponse,
   type ScanResponse,
   type StockEvent,
 } from "@smart-db/contracts";
@@ -220,6 +236,14 @@ export const api = {
   getPartTypeItems(partTypeId: string): Promise<PartTypeItemsResponse> {
     return request(partTypeItemsResponseSchema, `/api/part-types/${encodeURIComponent(partTypeId)}/items`);
   },
+  getCorrectionHistory(query: CorrectionHistoryQuery): Promise<CorrectionEvent[]> {
+    const parsed = parseWithSchema(correctionHistoryQuerySchema, query, "correction history query");
+    const params = new URLSearchParams({
+      targetType: parsed.targetType,
+      targetId: parsed.targetId,
+    });
+    return request(correctionEventSchema.array(), `/api/corrections/history?${params.toString()}`);
+  },
   getInventorySummary(): Promise<InventorySummaryRow[]> {
     return request(inventorySummaryRowSchema.array(), "/api/inventory/summary");
   },
@@ -270,6 +294,27 @@ export const api = {
     return request(partTypeSchema, "/api/part-types/merge", {
       method: "POST",
       body: JSON.stringify(parseWithSchema(mergePartTypesRequestSchema, payload, "merge request")),
+      headers: idempotencyHeaders(),
+    });
+  },
+  reassignEntityPartType(payload: ReassignEntityPartTypeRequest): Promise<ReassignEntityPartTypeResponse> {
+    return request(reassignEntityPartTypeResponseSchema, "/api/corrections/reassign-part-type", {
+      method: "POST",
+      body: JSON.stringify(parseWithSchema(reassignEntityPartTypeRequestSchema, payload, "entity correction request")),
+      headers: idempotencyHeaders(),
+    });
+  },
+  editPartTypeDefinition(payload: EditPartTypeDefinitionRequest): Promise<EditPartTypeDefinitionResponse> {
+    return request(editPartTypeDefinitionResponseSchema, "/api/corrections/edit-part-type", {
+      method: "POST",
+      body: JSON.stringify(parseWithSchema(editPartTypeDefinitionRequestSchema, payload, "part type definition correction request")),
+      headers: idempotencyHeaders(),
+    });
+  },
+  reverseIngestAssignment(payload: ReverseIngestAssignmentRequest): Promise<ReverseIngestAssignmentResponse> {
+    return request(reverseIngestAssignmentResponseSchema, "/api/corrections/reverse-ingest", {
+      method: "POST",
+      body: JSON.stringify(parseWithSchema(reverseIngestAssignmentRequestSchema, payload, "reverse ingest request")),
       headers: idempotencyHeaders(),
     });
   },

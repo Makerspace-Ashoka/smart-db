@@ -7,6 +7,11 @@ export type OperationName =
   | "scan.assign"
   | "scan.recordEvent"
   | "scan.splitBulk"
+  | "correction.scan"
+  | "correction.loadHistory"
+  | "correction.reassignEntityPartType"
+  | "correction.editPartTypeDefinition"
+  | "correction.reverseIngest"
   | "inventory.loadSummary"
   | "inventory.loadPartTypeItems"
   | "activity.loadDashboard"
@@ -125,6 +130,11 @@ const parseOperationContexts: Record<OperationName, string> = {
   "scan.assign": "assignment form",
   "scan.recordEvent": "event form",
   "scan.splitBulk": "split form",
+  "correction.scan": "correction scan",
+  "correction.loadHistory": "correction history",
+  "correction.reassignEntityPartType": "entity correction",
+  "correction.editPartTypeDefinition": "shared part type edit",
+  "correction.reverseIngest": "ingest reversal",
   "inventory.loadSummary": "inventory summary",
   "inventory.loadPartTypeItems": "part type items",
   "activity.loadDashboard": "dashboard loading",

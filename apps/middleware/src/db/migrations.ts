@@ -204,6 +204,26 @@ ALTER TABLE partdb_outbox ADD COLUMN last_failure_at TEXT;
 ALTER TABLE physical_instances ADD COLUMN partdb_sync_status TEXT NOT NULL DEFAULT 'never';
     `,
   },
+  {
+    version: 8,
+    description: "correction events",
+    sql: `
+CREATE TABLE IF NOT EXISTS correction_events (
+  id TEXT PRIMARY KEY,
+  target_type TEXT NOT NULL,
+  target_id TEXT NOT NULL,
+  correction_kind TEXT NOT NULL,
+  actor TEXT NOT NULL,
+  reason TEXT NOT NULL,
+  before_json TEXT NOT NULL,
+  after_json TEXT NOT NULL,
+  created_at TEXT NOT NULL
+);
+
+CREATE INDEX IF NOT EXISTS correction_events_target_idx
+  ON correction_events (target_type, target_id, created_at DESC);
+    `,
+  },
 ];
 
 export function applyMigrations(

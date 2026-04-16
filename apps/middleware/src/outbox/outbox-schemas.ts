@@ -42,6 +42,23 @@ const createPartPayloadSchema = z
   })
   .strict();
 
+const updatePartPayloadSchema = z
+  .object({
+    partIri: z.string().trim().nullable(),
+    patch: z
+      .object({
+        name: z.string().trim().min(1).optional(),
+        categoryIri: z.string().trim().nullable().optional(),
+        categoryPath: z.array(z.string().trim().min(1)).min(1).optional(),
+        unitIri: z.string().trim().nullable().optional(),
+        unit: createMeasurementUnitPayloadSchema.optional(),
+        description: z.string().optional(),
+        tags: z.array(z.string()).optional(),
+      })
+      .strict(),
+  })
+  .strict();
+
 const createStorageLocationPayloadSchema = z
   .object({
     name: z.string().trim().min(1),
@@ -88,6 +105,7 @@ export const outboxOperationSchema = z.discriminatedUnion("kind", [
   z.object({ kind: z.literal("create_category"), payload: createCategoryPayloadSchema, target: targetSchema.nullable(), dependsOnId: z.string().trim().min(1).nullable() }).strict(),
   z.object({ kind: z.literal("create_measurement_unit"), payload: createMeasurementUnitPayloadSchema, target: targetSchema, dependsOnId: z.null() }).strict(),
   z.object({ kind: z.literal("create_part"), payload: createPartPayloadSchema, target: targetSchema, dependsOnId: z.string().trim().min(1).nullable() }).strict(),
+  z.object({ kind: z.literal("update_part"), payload: updatePartPayloadSchema, target: targetSchema.nullable(), dependsOnId: z.string().trim().min(1).nullable() }).strict(),
   z.object({ kind: z.literal("create_storage_location"), payload: createStorageLocationPayloadSchema, target: z.null(), dependsOnId: z.null() }).strict(),
   z.object({ kind: z.literal("delete_part"), payload: deletePartPayloadSchema, target: z.null(), dependsOnId: z.string().trim().min(1).nullable() }).strict(),
   z.object({ kind: z.literal("create_lot"), payload: createLotPayloadSchema, target: targetSchema, dependsOnId: z.string().trim().min(1).nullable() }).strict(),

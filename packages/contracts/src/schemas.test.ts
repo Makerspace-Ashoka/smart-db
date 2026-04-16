@@ -5,8 +5,12 @@ import {
   categoryLeafFromPath,
   categoryPathSchema,
   configEnvironmentSchema,
+  correctionEventSchema,
+  correctionHistoryQuerySchema,
   describeCategoryPathParseError,
   defaultMeasurementUnit,
+  editPartTypeDefinitionRequestSchema,
+  editPartTypeDefinitionResponseSchema,
   getMeasurementUnitBySymbol,
   latestQrBatchResponseSchema,
   loginRequestSchema,
@@ -15,8 +19,14 @@ import {
   measurementUnitSchema,
   mergePartTypesRequestSchema,
   parseCategoryPathInput,
+  partTypeSchema,
+  qrCodeSchema,
+  reassignEntityPartTypeRequestSchema,
+  reassignEntityPartTypeResponseSchema,
   recordEventRequestSchema,
   registerQrBatchRequestSchema,
+  reverseIngestAssignmentRequestSchema,
+  reverseIngestAssignmentResponseSchema,
   scanResponseSchema,
 } from "./index";
 
@@ -324,6 +334,172 @@ describe("schemas", () => {
         destinationPartTypeId: "same",
       }),
     ).toThrow();
+
+    expect(
+      reassignEntityPartTypeRequestSchema.parse({
+        targetType: "instance",
+        targetId: "instance-1",
+        fromPartTypeId: "part-a",
+        toPartTypeId: "part-b",
+        reason: "Wrong type",
+      }),
+    ).toEqual({
+      targetType: "instance",
+      targetId: "instance-1",
+      fromPartTypeId: "part-a",
+      toPartTypeId: "part-b",
+      reason: "Wrong type",
+    });
+
+    expect(() =>
+      reassignEntityPartTypeRequestSchema.parse({
+        targetType: "instance",
+        targetId: "instance-1",
+        fromPartTypeId: "part-a",
+        toPartTypeId: "part-a",
+        reason: "Wrong type",
+      }),
+    ).toThrow();
+
+    expect(
+      editPartTypeDefinitionRequestSchema.parse({
+        partTypeId: "part-a",
+        expectedUpdatedAt: "2026-01-01T00:00:00.000Z",
+        canonicalName: "Black PLA+",
+        category: "Materials / 3D Printing",
+        reason: "Fix shared type",
+      }),
+    ).toEqual({
+      partTypeId: "part-a",
+      expectedUpdatedAt: "2026-01-01T00:00:00.000Z",
+      canonicalName: "Black PLA+",
+      category: "Materials / 3D Printing",
+      reason: "Fix shared type",
+    });
+
+    expect(
+      reverseIngestAssignmentRequestSchema.parse({
+        qrCode: "QR-1001",
+        assignedKind: "bulk",
+        assignedId: "bulk-1",
+        reason: "Wrong ingest",
+      }),
+    ).toEqual({
+      qrCode: "QR-1001",
+      assignedKind: "bulk",
+      assignedId: "bulk-1",
+      reason: "Wrong ingest",
+    });
+
+    expect(
+      correctionHistoryQuerySchema.parse({
+        targetType: "part_type",
+        targetId: "part-a",
+      }),
+    ).toEqual({
+      targetType: "part_type",
+      targetId: "part-a",
+    });
+
+    const correctionEvent = correctionEventSchema.parse({
+      id: "corr-1",
+      targetType: "instance",
+      targetId: "instance-1",
+      correctionKind: "entity_part_type_reassigned",
+      actor: "admin",
+      reason: "Wrong type",
+      before: { partTypeId: "part-a" },
+      after: { partTypeId: "part-b" },
+      createdAt: "2026-01-01T00:00:00.000Z",
+    });
+
+    expect(
+      reassignEntityPartTypeResponseSchema.parse({
+        entity: {
+          id: "instance-1",
+          targetType: "instance",
+          qrCode: "QR-1001",
+          partType: {
+            id: "part-b",
+            canonicalName: "Correct Type",
+            category: "Misc",
+            categoryPath: ["Misc"],
+            aliases: [],
+            imageUrl: null,
+            notes: null,
+            countable: true,
+            unit: {
+              symbol: "pcs",
+              name: "Pieces",
+              isInteger: true,
+            },
+            needsReview: false,
+            partDbPartId: null,
+            partDbCategoryId: null,
+            partDbUnitId: null,
+            partDbSyncStatus: "never",
+            createdAt: "2026-01-01T00:00:00.000Z",
+            updatedAt: "2026-01-01T00:00:00.000Z",
+          },
+          location: "Shelf A",
+          state: "available",
+          assignee: null,
+          partDbSyncStatus: "never",
+          quantity: null,
+          minimumQuantity: null,
+        },
+        correctionEvent,
+      }),
+    ).toBeTruthy();
+
+    expect(
+      editPartTypeDefinitionResponseSchema.parse({
+        partType: partTypeSchema.parse({
+          id: "part-a",
+          canonicalName: "Black PLA+",
+          category: "3D Printing",
+          categoryPath: ["Materials", "3D Printing"],
+          aliases: [],
+          imageUrl: null,
+          notes: null,
+          countable: false,
+          unit: {
+            symbol: "kg",
+            name: "Kilograms",
+            isInteger: false,
+          },
+          needsReview: false,
+          partDbPartId: null,
+          partDbCategoryId: null,
+          partDbUnitId: null,
+          partDbSyncStatus: "never",
+          createdAt: "2026-01-01T00:00:00.000Z",
+          updatedAt: "2026-01-01T00:00:00.000Z",
+        }),
+        correctionEvent: {
+          ...correctionEvent,
+          targetType: "part_type",
+          targetId: "part-a",
+          correctionKind: "part_type_definition_edited",
+        },
+      }),
+    ).toBeTruthy();
+
+    expect(
+      reverseIngestAssignmentResponseSchema.parse({
+        qrCode: qrCodeSchema.parse({
+          code: "QR-1001",
+          batchId: "batch-1",
+          status: "printed",
+          createdAt: "2026-01-01T00:00:00.000Z",
+          updatedAt: "2026-01-01T00:00:00.000Z",
+        }),
+        correctionEvent: {
+          ...correctionEvent,
+          correctionKind: "ingest_reversed",
+        },
+      }),
+    ).toBeTruthy();
 
     expect(
       scanResponseSchema.parse({

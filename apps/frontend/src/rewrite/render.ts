@@ -834,6 +834,26 @@ function renderAdminTab(state: RewriteUiState): string {
           <button type="button" data-action="merge-parts" ${disabled(state.pendingAction !== null)}>${state.pendingAction === "merge" ? "Merging..." : "Merge provisional type"}</button>
         </div>
       </section>
+
+      <section class="panel">
+        ${renderPanelTitle("Correct mislabeled ingest", "Scan an already-ingested item or bin, then correct its linked part type, edit the shared definition, or reverse the ingest with a typed correction record.")}
+        <form class="scan-form" data-form="correction-scan">
+          <label class="sr-only" for="correction-scan-input">Scan ingested QR / Data Matrix</label>
+          <input
+            id="correction-scan-input"
+            name="correction.scanCode"
+            aria-label="Scan ingested QR / Data Matrix"
+            placeholder="Scan ingested QR / Data Matrix"
+            value="${attr(state.correctionUi.scanCode)}"
+            autocomplete="off"
+          />
+          <button type="submit" ${disabled(state.pendingAction !== null)}>
+            ${state.pendingAction === "correct" ? "Opening..." : "Open"}
+          </button>
+        </form>
+        ${state.correctionUi.targetError ? `<p class="banner error">${escapeHtml(state.correctionUi.targetError)}</p>` : ""}
+        ${state.correctionUi.target ? renderCorrectionTarget(state) : ""}
+      </section>
     </section>
   `;
 }
@@ -875,5 +895,119 @@ function scanModeLabel(mode: string): string {
       return "unregistered";
     default:
       return mode;
+  }
+}
+
+function renderCorrectionTarget(state: RewriteUiState): string {
+  const target = state.correctionUi.target!;
+  const targetEntity = target.entity;
+  const compatibleReplacementTypes = (state.correctionUi.search.results.length > 0 ? state.correctionUi.search.results : state.catalogSuggestions)
+    .filter((partType) => partType.id !== targetEntity.partType.id)
+    .filter((partType) => {
+      if (targetEntity.targetType === "instance") {
+        return partType.countable;
+      }
+      return !partType.countable || partType.unit.isInteger;
+    });
+
+  return `
+    <div class="result-card">
+      <h3>${escapeHtml(targetEntity.partType.canonicalName)}</h3>
+      <p class="muted-copy">
+        ${escapeHtml(target.qrCode.code)} · ${escapeHtml(targetEntity.targetType)} · ${escapeHtml(targetEntity.location)}
+      </p>
+      <p class="muted-copy">
+        Category: ${escapeHtml(formatCategoryPath(targetEntity.partType.categoryPath))}
+      </p>
+      <div class="wide mode-toggle" role="radiogroup" aria-label="Correction action">
+        <button type="button" role="radio" aria-checked="${String(state.correctionUi.action === "reassign")}" class="${state.correctionUi.action === "reassign" ? "selected" : ""}" data-action="set-correction-action" data-correction-action="reassign">Fix this item/bin only</button>
+        <button type="button" role="radio" aria-checked="${String(state.correctionUi.action === "editShared")}" class="${state.correctionUi.action === "editShared" ? "selected" : ""}" data-action="set-correction-action" data-correction-action="editShared">Edit shared part type</button>
+        <button type="button" role="radio" aria-checked="${String(state.correctionUi.action === "reverseIngest")}" class="${state.correctionUi.action === "reverseIngest" ? "selected" : ""}" data-action="set-correction-action" data-correction-action="reverseIngest">Reverse ingest</button>
+      </div>
+
+      ${state.correctionUi.action === "reassign" ? `
+        <form class="form-grid" data-form="correction-reassign">
+          <label class="wide">
+            Find replacement part type
+            <input name="correctionSearch.query" value="${attr(state.correctionUi.search.query)}" placeholder="Search existing type" />
+          </label>
+          ${state.correctionUi.search.error ? `<p class="banner error wide">${escapeHtml(state.correctionUi.search.error)}</p>` : ""}
+          <div class="wide picker" role="radiogroup" aria-label="Replacement part type">
+            ${compatibleReplacementTypes.map((partType) => `
+              <button type="button" role="radio" aria-checked="${String(state.correctionUi.replacementPartTypeId === partType.id)}" class="${state.correctionUi.replacementPartTypeId === partType.id ? "selected" : ""}" data-action="select-correction-part" data-part-id="${attr(partType.id)}">
+                <strong>${escapeHtml(partType.canonicalName)}</strong>
+                <span>${escapeHtml(formatCategoryPath(partType.categoryPath))}</span>
+              </button>
+            `).join("")}
+          </div>
+          <label class="wide">
+            Reason
+            <textarea name="correction.reason">${escapeHtml(state.correctionUi.reason)}</textarea>
+          </label>
+          <button type="submit" ${disabled(state.pendingAction !== null)}>${state.pendingAction === "correct" ? "Saving..." : "Reassign item/bin"}</button>
+        </form>
+      ` : ""}
+
+      ${state.correctionUi.action === "editShared" ? `
+        <form class="form-grid" data-form="correction-edit-shared">
+          <label class="wide">
+            Shared canonical name
+            <input name="correction.sharedCanonicalName" value="${attr(state.correctionUi.sharedCanonicalName)}" />
+          </label>
+          <label class="wide">
+            Shared category path
+            <input name="correction.sharedCategory" value="${attr(state.correctionUi.sharedCategory)}" />
+          </label>
+          <label class="wide">
+            Reason
+            <textarea name="correction.reason">${escapeHtml(state.correctionUi.reason)}</textarea>
+          </label>
+          <button type="submit" ${disabled(state.pendingAction !== null)}>${state.pendingAction === "correct" ? "Saving..." : "Edit shared part type"}</button>
+        </form>
+      ` : ""}
+
+      ${state.correctionUi.action === "reverseIngest" ? `
+        <form class="form-grid" data-form="correction-reverse-ingest">
+          <p class="banner error">Reverse ingest only when this was the original intake mistake. Historical lifecycle events remain in the audit trail.</p>
+          <label class="wide">
+            Reason
+            <textarea name="correction.reason">${escapeHtml(state.correctionUi.reason)}</textarea>
+          </label>
+          <button type="submit" ${disabled(state.pendingAction !== null)}>${state.pendingAction === "correct" ? "Reversing..." : "Reverse ingest"}</button>
+        </form>
+      ` : ""}
+
+      <div class="event-list" style="margin-top:1rem">
+        ${target.recentEvents.map((stockEvent) => `
+          <article>
+            <strong>${escapeHtml(actionLabel(stockEvent.event))}</strong>
+            <span>${escapeHtml(stockEvent.actor)} · ${escapeHtml(formatTimestamp(stockEvent.createdAt))}</span>
+            <small>${escapeHtml(`${stockEvent.fromState ?? "none"} → ${stockEvent.toState ?? "none"}`)}</small>
+          </article>
+        `).join("")}
+        ${state.correctionUi.history.map((event) => `
+          <article>
+            <strong>${escapeHtml(correctionLabel(event.correctionKind))}</strong>
+            <span>${escapeHtml(event.actor)} · ${escapeHtml(formatTimestamp(event.createdAt))}</span>
+            <small>${escapeHtml(event.reason)}</small>
+          </article>
+        `).join("")}
+      </div>
+
+      <button type="button" data-action="correction-clear" ${disabled(state.pendingAction !== null)} style="margin-top:1rem">Clear correction target</button>
+    </div>
+  `;
+}
+
+function correctionLabel(kind: string): string {
+  switch (kind) {
+    case "entity_part_type_reassigned":
+      return "Item/bin reassigned";
+    case "part_type_definition_edited":
+      return "Shared part type edited";
+    case "ingest_reversed":
+      return "Ingest reversed";
+    default:
+      return kind;
   }
 }

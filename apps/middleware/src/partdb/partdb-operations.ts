@@ -97,6 +97,52 @@ export class PartDbOperations {
         });
         return created.ok ? Ok({ iri: created.value["@id"], body: created.value }) : created;
       }
+      case "update_part": {
+        const partIri = operation.payload.partIri;
+        if (!partIri) {
+          return Err({ kind: "dependency_missing", dependency: "partIri", retryable: false });
+        }
+
+        let categoryIri = operation.payload.patch.categoryIri;
+        if (!categoryIri && operation.payload.patch.categoryPath) {
+          const resolvedCategory = await this.categories.resolveOrCreate(operation.payload.patch.categoryPath);
+          if (!resolvedCategory.ok) {
+            return resolvedCategory;
+          }
+          categoryIri = resolvedCategory.value.iri;
+        }
+
+        let unitIri = operation.payload.patch.unitIri;
+        if (!unitIri && operation.payload.patch.unit) {
+          const existingUnit = await this.measurementUnits.findByName(operation.payload.patch.unit.name);
+          if (!existingUnit.ok) {
+            return existingUnit;
+          }
+
+          if (existingUnit.value) {
+            unitIri = existingUnit.value["@id"];
+          } else {
+            const createdUnit = await this.measurementUnits.create({
+              name: operation.payload.patch.unit.name,
+              unit: operation.payload.patch.unit.symbol,
+              is_integer: operation.payload.patch.unit.isInteger,
+            });
+            if (!createdUnit.ok) {
+              return createdUnit;
+            }
+            unitIri = createdUnit.value["@id"];
+          }
+        }
+
+        const updated = await this.parts.patch(partIri, {
+          name: operation.payload.patch.name,
+          category: categoryIri,
+          partUnit: unitIri,
+          description: operation.payload.patch.description,
+          tags: operation.payload.patch.tags?.join(","),
+        });
+        return updated.ok ? Ok({ iri: updated.value["@id"], body: updated.value }) : updated;
+      }
       case "delete_part": {
         if (!operation.payload.partIri) {
           return Err({ kind: "dependency_missing", dependency: "partIri", retryable: false });

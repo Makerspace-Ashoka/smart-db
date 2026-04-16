@@ -273,10 +273,10 @@ describe("CameraScannerService", () => {
     tick();
     await flushMicrotasks();
 
-    expect(scan).toHaveBeenCalledWith("qr-9001");
+    expect(scan).toHaveBeenCalledWith("qr_9001");
     const snapshot = service.getSnapshot();
     expect(snapshot.phase).toBe("idle");
-    expect(snapshot.lastResult).toBe("qr-9001");
+    expect(snapshot.lastResult).toBe("qr_9001");
   });
 
   it("fails the scanner when the frame canvas is unavailable", async () => {

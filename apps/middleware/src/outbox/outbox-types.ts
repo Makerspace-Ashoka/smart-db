@@ -38,6 +38,27 @@ export type OutboxOperation =
       dependsOnId: string | null;
     }
   | {
+      kind: "update_part";
+      payload: {
+        partIri: string | null;
+        patch: {
+          name?: string | undefined;
+          categoryIri?: string | null | undefined;
+          categoryPath?: string[] | undefined;
+          unitIri?: string | null | undefined;
+          unit?: {
+            name: string;
+            symbol: string;
+            isInteger: boolean;
+          } | undefined;
+          description?: string | undefined;
+          tags?: string[] | undefined;
+        };
+      };
+      target: OutboxTarget | null;
+      dependsOnId: string | null;
+    }
+  | {
       kind: "create_storage_location";
       payload: { name: string };
       target: null;

@@ -1142,7 +1142,7 @@ describe("InventoryService", () => {
     expect(pooled.partType.id).toBe(tracked.partType.id);
   });
 
-  it("matches handheld scanner variants of the same QR code", async () => {
+  it("keeps Smart DB labels exact while allowing fuzzy external barcode lookup", async () => {
     const { service } = makeService();
 
     service.registerQrBatch({
@@ -1152,7 +1152,7 @@ describe("InventoryService", () => {
       count: 1,
     });
 
-    const assigned = service.assignQr({
+    service.assignQr({
       qrCode: "QR-6300",
       actor: "labeler",
       entityKind: "instance",
@@ -1171,12 +1171,42 @@ describe("InventoryService", () => {
     });
 
     await expect(service.scanCode(" qr_6300 ")).resolves.toMatchObject({
+      mode: "unknown",
+      code: "qr_6300",
+    });
+
+    service.assignQr({
+      qrCode: "ESUN-BLACK-PLA",
+      actor: "labeler",
+      entityKind: "bulk",
+      location: "Filament Shelf",
+      notes: null,
+      partType: {
+        kind: "new",
+        canonicalName: "eSUN PLA Black",
+        category: "Filament",
+        aliases: [],
+        notes: null,
+        imageUrl: null,
+        countable: false,
+        unit: {
+          symbol: "kg",
+          name: "Kilograms",
+          isInteger: false,
+        },
+      },
+      initialQuantity: 1,
+      minimumQuantity: 0.2,
+    });
+
+    await expect(service.scanCode(" esun_black_pla ")).resolves.toMatchObject({
       mode: "interact",
       qrCode: {
-        code: "QR-6300",
+        code: "ESUN-BLACK-PLA",
+        batchId: "external",
       },
       entity: {
-        id: assigned.id,
+        targetType: "bulk",
       },
     });
   });
@@ -1211,6 +1241,151 @@ describe("InventoryService", () => {
         minimumQuantity: null,
       }),
     ).toThrowError(InvariantError);
+  });
+
+  it("reassigns one ingested entity to a different existing part type and records a correction event", () => {
+    const { service } = makeService();
+
+    service.registerQrBatch({
+      actor: "lab-admin",
+      prefix: "QR",
+      startNumber: 6500,
+      count: 2,
+    });
+
+    const wrong = service.assignQr({
+      qrCode: "QR-6500",
+      actor: "labeler",
+      entityKind: "instance",
+      location: "Shelf A",
+      notes: null,
+      partType: {
+        kind: "new",
+        canonicalName: "Arduino Mega Typo",
+        category: "Microcontrollers",
+        aliases: [],
+        notes: null,
+        imageUrl: null,
+        countable: true,
+      },
+      initialStatus: "available",
+    });
+
+    const correct = service.assignQr({
+      qrCode: "QR-6501",
+      actor: "labeler",
+      entityKind: "instance",
+      location: "Shelf A",
+      notes: null,
+      partType: {
+        kind: "new",
+        canonicalName: "Arduino Mega 2560",
+        category: "Microcontrollers",
+        aliases: [],
+        notes: null,
+        imageUrl: null,
+        countable: true,
+      },
+      initialStatus: "available",
+    });
+
+    const corrected = service.reassignEntityPartType({
+      targetType: "instance",
+      targetId: wrong.id,
+      fromPartTypeId: wrong.partType.id,
+      toPartTypeId: correct.partType.id,
+      actor: "admin",
+      reason: "Wrong part selected during intake",
+    });
+
+    expect(corrected.entity.partType.id).toBe(correct.partType.id);
+    expect(corrected.correctionEvent.correctionKind).toBe("entity_part_type_reassigned");
+    expect(service.getCorrectionHistory("instance", wrong.id)).toHaveLength(1);
+  });
+
+  it("edits a shared part type definition with optimistic concurrency and records a correction event", () => {
+    const { service } = makeService();
+
+    service.registerQrBatch({
+      actor: "lab-admin",
+      prefix: "QR",
+      startNumber: 6600,
+      count: 1,
+    });
+
+    const entity = service.assignQr({
+      qrCode: "QR-6600",
+      actor: "labeler",
+      entityKind: "bulk",
+      location: "Shelf A",
+      notes: null,
+      partType: {
+        kind: "new",
+        canonicalName: "Black PLA typ0",
+        category: "Materials / 3D Printing",
+        aliases: [],
+        notes: null,
+        imageUrl: null,
+        countable: false,
+      },
+      initialQuantity: 1,
+      minimumQuantity: null,
+    });
+
+    const edited = service.editPartTypeDefinition({
+      partTypeId: entity.partType.id,
+      expectedUpdatedAt: entity.partType.updatedAt,
+      canonicalName: "Black PLA+",
+      category: "Materials / 3D Printing",
+      actor: "admin",
+      reason: "Fix shared label",
+    });
+
+    expect(edited.partType.canonicalName).toBe("Black PLA+");
+    expect(edited.correctionEvent.correctionKind).toBe("part_type_definition_edited");
+    expect(service.getCorrectionHistory("part_type", entity.partType.id)).toHaveLength(1);
+  });
+
+  it("reverses a fresh ingest, returns the QR to printed, and records a correction event", () => {
+    const { service } = makeService();
+
+    service.registerQrBatch({
+      actor: "lab-admin",
+      prefix: "QR",
+      startNumber: 6700,
+      count: 1,
+    });
+
+    const entity = service.assignQr({
+      qrCode: "QR-6700",
+      actor: "labeler",
+      entityKind: "bulk",
+      location: "Shelf A",
+      notes: null,
+      partType: {
+        kind: "new",
+        canonicalName: "Mistaken Ingest",
+        category: "Materials",
+        aliases: [],
+        notes: null,
+        imageUrl: null,
+        countable: false,
+      },
+      initialQuantity: 2,
+      minimumQuantity: null,
+    });
+
+    const reversed = service.reverseIngestAssignment({
+      qrCode: "QR-6700",
+      assignedKind: "bulk",
+      assignedId: entity.id,
+      actor: "admin",
+      reason: "Wrong barcode was ingested",
+    });
+
+    expect(reversed.qrCode.status).toBe("printed");
+    expect(reversed.correctionEvent.correctionKind).toBe("ingest_reversed");
+    expect(service.getCorrectionHistory("bulk", entity.id)).toHaveLength(1);
   });
 
   it("rejects ambiguous normalized barcode matches instead of choosing arbitrarily", async () => {

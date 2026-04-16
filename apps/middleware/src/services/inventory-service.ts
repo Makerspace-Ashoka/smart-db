@@ -5,7 +5,17 @@ import {
   bulkStockSchema,
   categoryLeafFromPath,
   ConflictError,
+  correctionEventSchema,
   defaultMeasurementUnit,
+  type CorrectionEvent,
+  type CorrectionKind,
+  type CorrectionTargetKind,
+  type EditPartTypeDefinitionCommand,
+  type EditPartTypeDefinitionResponse,
+  type ReassignEntityPartTypeCommand,
+  type ReassignEntityPartTypeResponse,
+  type ReverseIngestAssignmentCommand,
+  type ReverseIngestAssignmentResponse,
   InvariantError,
   instanceStatuses,
   inventoryEntitySummarySchema,
@@ -50,6 +60,26 @@ type LotOutboxTarget = {
   rowId: string;
   column: "partdb_lot_id";
 };
+type PartOutboxTarget = {
+  table: "part_types";
+  rowId: string;
+  column: "partdb_part_id";
+};
+
+interface LoadedCorrectionEntity {
+  targetType: "instance" | "bulk";
+  id: string;
+  table: "physical_instances" | "bulk_stocks";
+  qrCode: string;
+  partType: PartType;
+  location: string;
+  state: string;
+  assignee: string | null;
+  quantity: number | null;
+  minimumQuantity: number | null;
+  partDbLotId: string | null;
+  partDbSyncStatus: PartType["partDbSyncStatus"];
+}
 
 interface PartDbBackfillResult {
   queuedPartTypes: number;
@@ -666,7 +696,7 @@ export class InventoryService {
         )
         .run(qrCodeValue, "external", "printed", externalNow, externalNow);
       qrRow = this.db
-        .prepare(`SELECT * FROM qrcodes WHERE LOWER(code) = LOWER(?)`)
+        .prepare(`SELECT * FROM qrcodes WHERE code = ?`)
         .get(qrCodeValue) as SqlRow | undefined;
       if (!qrRow) {
         throw new InvariantError("External barcode insertion failed.", { code: qrCodeValue });
@@ -782,7 +812,7 @@ export class InventoryService {
       }
 
       const assignedQr = this.db
-        .prepare(`SELECT * FROM qrcodes WHERE LOWER(code) = LOWER(?)`)
+        .prepare(`SELECT * FROM qrcodes WHERE code = ?`)
         .get(qrCodeValue) as SqlRow;
       summary = this.getEntityByQr(mapQrCode(assignedQr));
     });
@@ -1118,7 +1148,7 @@ export class InventoryService {
     });
 
     const updated = this.db
-      .prepare(`SELECT * FROM qrcodes WHERE LOWER(code) = LOWER(?)`)
+      .prepare(`SELECT * FROM qrcodes WHERE code = ?`)
       .get(normalized) as SqlRow;
     return mapQrCode(updated);
   }
@@ -1139,6 +1169,331 @@ export class InventoryService {
       throw new InvariantError("Approved part type could not be read back.", { partTypeId: id });
     }
     return updated;
+  }
+
+  getCorrectionHistory(targetType: CorrectionTargetKind, targetId: string): CorrectionEvent[] {
+    return this.db
+      .prepare(`
+        SELECT *
+        FROM correction_events
+        WHERE target_type = ? AND target_id = ?
+        ORDER BY created_at DESC, id DESC
+        LIMIT 50
+      `)
+      .all(targetType, targetId)
+      .map((row) => mapCorrectionEvent(row as SqlRow));
+  }
+
+  reassignEntityPartType(input: ReassignEntityPartTypeCommand): ReassignEntityPartTypeResponse {
+    const target = this.loadCorrectionEntity(input.targetType, input.targetId);
+    if (!target) {
+      throw new NotFoundError(input.targetType === "instance" ? "Physical instance" : "Bulk stock", input.targetId);
+    }
+
+    if (target.partType.id !== input.fromPartTypeId) {
+      throw new ConflictError("The scanned entity no longer points at the expected part type.", {
+        targetId: input.targetId,
+        currentPartTypeId: target.partType.id,
+        expectedPartTypeId: input.fromPartTypeId,
+      });
+    }
+
+    const replacement = this.findPartType(input.toPartTypeId);
+    if (!replacement) {
+      throw new NotFoundError("Part type", input.toPartTypeId);
+    }
+
+    enforcePartTypeCompatibility(input.targetType, replacement);
+    this.assertNoPendingLotSync(target.table, target.id, "Wait for Part-DB lot sync to finish before correcting this item.");
+
+    const timestamp = nowIso();
+    const correlationId = randomUUID();
+    let correctionEvent: CorrectionEvent | null = null;
+
+    this.withTransaction(() => {
+      this.db
+        .prepare(`UPDATE ${target.table} SET part_type_id = ?, updated_at = ? WHERE id = ?`)
+        .run(replacement.id, timestamp, target.id);
+
+      correctionEvent = this.insertCorrectionEvent({
+        targetType: input.targetType,
+        targetId: input.targetId,
+        correctionKind: "entity_part_type_reassigned",
+        actor: input.actor,
+        reason: input.reason,
+        before: buildEntityCorrectionSnapshot(target),
+        after: {
+          ...buildEntityCorrectionSnapshot(target),
+          partTypeId: replacement.id,
+          partTypeName: replacement.canonicalName,
+          categoryPath: replacement.categoryPath,
+          countable: replacement.countable,
+          unitSymbol: replacement.unit.symbol,
+        },
+        createdAt: timestamp,
+      });
+
+      if (target.partDbLotId) {
+        this.db
+          .prepare(`UPDATE ${target.table} SET partdb_lot_id = NULL, partdb_sync_status = 'pending' WHERE id = ?`)
+          .run(target.id);
+
+        this.partDbOutbox?.enqueue(
+          {
+            kind: "delete_lot",
+            payload: {
+              lotIri: `/api/part_lots/${target.partDbLotId}`,
+            },
+            target: null,
+            dependsOnId: null,
+          },
+          correlationId,
+        );
+
+        const partDependencyId = this.ensurePartTypeSync(replacement, correlationId);
+        this.enqueueCreateLot(
+          {
+            table: target.table,
+            rowId: target.id,
+            column: "partdb_lot_id",
+          },
+          correlationId,
+          replacement,
+          target.location,
+          target.qrCode,
+          "",
+          target.targetType === "instance" ? 1 : (target.quantity ?? 0),
+          partDependencyId,
+        );
+      }
+    });
+
+    if (!correctionEvent) {
+      throw new InvariantError("Correction succeeded without recording a correction event.", {
+        targetId: input.targetId,
+      });
+    }
+
+    const entity = this.getEntityByTarget(input.targetType, input.targetId);
+    if (!entity) {
+      throw new InvariantError("Reassigned entity could not be read back.", {
+        targetId: input.targetId,
+      });
+    }
+
+    return {
+      entity,
+      correctionEvent,
+    };
+  }
+
+  editPartTypeDefinition(input: EditPartTypeDefinitionCommand): EditPartTypeDefinitionResponse {
+    const partType = this.findPartType(input.partTypeId);
+    if (!partType) {
+      throw new NotFoundError("Part type", input.partTypeId);
+    }
+
+    if (partType.updatedAt !== input.expectedUpdatedAt) {
+      throw new ConflictError("The shared part type changed before your correction was submitted.", {
+        partTypeId: input.partTypeId,
+        expectedUpdatedAt: input.expectedUpdatedAt,
+        actualUpdatedAt: partType.updatedAt,
+      });
+    }
+
+    const categoryPath = parseCategoryPathInput(input.category);
+    if (!categoryPath.ok) {
+      throw new InvariantError("Parsed part type category path is invalid.", {
+        category: input.category,
+        reason: categoryPath.error,
+      });
+    }
+
+    const canonicalName = input.canonicalName.trim().replace(/\s+/g, " ");
+    const category = categoryLeafFromPath(categoryPath.value);
+    const timestamp = nowIso();
+    const correlationId = randomUUID();
+    const before = {
+      canonicalName: partType.canonicalName,
+      categoryPath: partType.categoryPath,
+      updatedAt: partType.updatedAt,
+    };
+    let correctionEvent: CorrectionEvent | null = null;
+
+    this.assertNoPendingPartSync(input.partTypeId, "Wait for Part-DB part sync to finish before editing this shared part type.");
+
+    this.withTransaction(() => {
+      this.db
+        .prepare(`
+          UPDATE part_types
+          SET canonical_name = ?, category = ?, category_path_json = ?, updated_at = ?
+          WHERE id = ?
+        `)
+        .run(canonicalName, category, JSON.stringify(categoryPath.value), timestamp, input.partTypeId);
+
+      correctionEvent = this.insertCorrectionEvent({
+        targetType: "part_type",
+        targetId: input.partTypeId,
+        correctionKind: "part_type_definition_edited",
+        actor: input.actor,
+        reason: input.reason,
+        before,
+        after: {
+          canonicalName,
+          categoryPath: categoryPath.value,
+          updatedAt: timestamp,
+        },
+        createdAt: timestamp,
+      });
+
+      const updatedPartType = this.findPartType(input.partTypeId);
+      if (!updatedPartType) {
+        throw new InvariantError("Updated shared part type could not be read during correction.", {
+          partTypeId: input.partTypeId,
+        });
+      }
+
+      if (updatedPartType.partDbPartId) {
+        this.partDbOutbox?.enqueue(
+          {
+            kind: "update_part",
+            payload: {
+              partIri: `/api/parts/${updatedPartType.partDbPartId}`,
+              patch: {
+                name: updatedPartType.canonicalName,
+                categoryPath: updatedPartType.categoryPath,
+                unit: updatedPartType.unit,
+                description: updatedPartType.notes ?? "",
+                tags: updatedPartType.aliases,
+              },
+            },
+            target: {
+              table: "part_types",
+              rowId: updatedPartType.id,
+              column: "partdb_part_id",
+            },
+            dependsOnId: null,
+          },
+          correlationId,
+        );
+      } else {
+        this.ensurePartTypeSync(updatedPartType, correlationId);
+      }
+    });
+
+    if (!correctionEvent) {
+      throw new InvariantError("Shared part type correction succeeded without a correction event.", {
+        partTypeId: input.partTypeId,
+      });
+    }
+
+    const updated = this.findPartType(input.partTypeId);
+    if (!updated) {
+      throw new InvariantError("Updated part type could not be read back after correction.", {
+        partTypeId: input.partTypeId,
+      });
+    }
+
+    return {
+      partType: updated,
+      correctionEvent,
+    };
+  }
+
+  reverseIngestAssignment(input: ReverseIngestAssignmentCommand): ReverseIngestAssignmentResponse {
+    const normalizedCode = sanitizeScannedCode(input.qrCode);
+    const qrRow = this.findQrRowByScannedCode(normalizedCode);
+    if (!qrRow) {
+      throw new NotFoundError("QR code", normalizedCode);
+    }
+
+    const qrCode = mapQrCode(qrRow);
+    if (
+      qrCode.status !== "assigned" ||
+      qrCode.assignedKind !== input.assignedKind ||
+      qrCode.assignedId !== input.assignedId
+    ) {
+      throw new ConflictError("The scanned QR no longer points at the expected ingested entity.", {
+        qrCode: normalizedCode,
+        expectedAssignedKind: input.assignedKind,
+        expectedAssignedId: input.assignedId,
+        actualAssignedKind: qrCode.assignedKind,
+        actualAssignedId: qrCode.assignedId,
+      });
+    }
+
+    const target = this.loadCorrectionEntity(input.assignedKind, input.assignedId);
+    if (!target) {
+      throw new NotFoundError(input.assignedKind === "instance" ? "Physical instance" : "Bulk stock", input.assignedId);
+    }
+
+    this.assertOnlyLabeledHistory(target.targetType, target.id);
+    this.assertNoPendingLotSync(target.table, target.id, "Wait for Part-DB lot sync to finish before reversing this ingest.");
+
+    const timestamp = nowIso();
+    const correlationId = randomUUID();
+    let correctionEvent: CorrectionEvent | null = null;
+
+    this.withTransaction(() => {
+      correctionEvent = this.insertCorrectionEvent({
+        targetType: target.targetType,
+        targetId: target.id,
+        correctionKind: "ingest_reversed",
+        actor: input.actor,
+        reason: input.reason,
+        before: buildEntityCorrectionSnapshot(target),
+        after: {
+          qrCode: target.qrCode,
+          qrStatus: "printed",
+          assignedKind: null,
+          assignedId: null,
+        },
+        createdAt: timestamp,
+      });
+
+      if (target.partDbLotId) {
+        this.partDbOutbox?.enqueue(
+          {
+            kind: "delete_lot",
+            payload: {
+              lotIri: `/api/part_lots/${target.partDbLotId}`,
+            },
+            target: null,
+            dependsOnId: null,
+          },
+          correlationId,
+        );
+      }
+
+      this.db.prepare(`DELETE FROM ${target.table} WHERE id = ?`).run(target.id);
+      this.db
+        .prepare(`
+          UPDATE qrcodes
+          SET status = 'printed', assigned_kind = NULL, assigned_id = NULL, updated_at = ?
+          WHERE code = ?
+        `)
+        .run(timestamp, target.qrCode);
+    });
+
+    if (!correctionEvent) {
+      throw new InvariantError("Ingest reversal succeeded without recording a correction event.", {
+        qrCode: normalizedCode,
+      });
+    }
+
+    const updated = this.db
+      .prepare(`SELECT * FROM qrcodes WHERE code = ?`)
+      .get(target.qrCode) as SqlRow | undefined;
+    if (!updated) {
+      throw new InvariantError("Reversed QR could not be read back.", {
+        qrCode: target.qrCode,
+      });
+    }
+
+    return {
+      qrCode: mapQrCode(updated),
+      correctionEvent,
+    };
   }
 
   async getPartDbStatus(): Promise<PartDbConnectionStatus> {
@@ -1750,9 +2105,229 @@ export class InventoryService {
     );
   }
 
+  private getEntityByTarget(targetType: InventoryTargetKind, targetId: string): InventoryEntitySummary | null {
+    return targetType === "instance"
+      ? this.getInstanceSummaryById(targetId)
+      : this.getBulkSummaryById(targetId);
+  }
+
+  private getInstanceSummaryById(targetId: string): InventoryEntitySummary | null {
+    const row = this.db
+      .prepare(
+        `
+        SELECT
+          pi.*,
+          pt.id AS pt_id,
+          pt.canonical_name AS pt_canonical_name,
+          pt.category AS pt_category,
+          pt.category_path_json AS pt_category_path_json,
+          pt.aliases_json AS pt_aliases_json,
+          pt.image_url AS pt_image_url,
+          pt.notes AS pt_notes,
+          pt.countable AS pt_countable,
+          pt.unit_symbol AS pt_unit_symbol,
+          pt.unit_name AS pt_unit_name,
+          pt.unit_is_integer AS pt_unit_is_integer,
+          pt.needs_review AS pt_needs_review,
+          pt.partdb_part_id AS pt_partdb_part_id,
+          pt.partdb_category_id AS pt_partdb_category_id,
+          pt.partdb_unit_id AS pt_partdb_unit_id,
+          pt.partdb_sync_status AS pt_partdb_sync_status,
+          pt.created_at AS pt_created_at,
+          pt.updated_at AS pt_updated_at
+        FROM physical_instances pi
+        JOIN part_types pt ON pt.id = pi.part_type_id
+        WHERE pi.id = ?
+        `,
+      )
+      .get(targetId) as SqlRow | undefined;
+
+    if (!row) {
+      return null;
+    }
+
+    return parsePersisted(
+      inventoryEntitySummarySchema,
+      {
+        id: String(row.id),
+        targetType: "instance",
+        qrCode: String(row.qr_code),
+        location: String(row.location),
+        state: String(row.status),
+        assignee: stringOrNull(row.assignee),
+        partDbSyncStatus: (stringOrNull(row.partdb_sync_status) ?? "never") as InventoryEntitySummary["partDbSyncStatus"],
+        partType: mapPartTypeFromJoin(row, "pt_"),
+      },
+      "inventory instance summary",
+    );
+  }
+
+  private getBulkSummaryById(targetId: string): InventoryEntitySummary | null {
+    const row = this.db
+      .prepare(
+        `
+        SELECT
+          bs.*,
+          pt.id AS pt_id,
+          pt.canonical_name AS pt_canonical_name,
+          pt.category AS pt_category,
+          pt.category_path_json AS pt_category_path_json,
+          pt.aliases_json AS pt_aliases_json,
+          pt.image_url AS pt_image_url,
+          pt.notes AS pt_notes,
+          pt.countable AS pt_countable,
+          pt.unit_symbol AS pt_unit_symbol,
+          pt.unit_name AS pt_unit_name,
+          pt.unit_is_integer AS pt_unit_is_integer,
+          pt.needs_review AS pt_needs_review,
+          pt.partdb_part_id AS pt_partdb_part_id,
+          pt.partdb_category_id AS pt_partdb_category_id,
+          pt.partdb_unit_id AS pt_partdb_unit_id,
+          pt.partdb_sync_status AS pt_partdb_sync_status,
+          pt.created_at AS pt_created_at,
+          pt.updated_at AS pt_updated_at
+        FROM bulk_stocks bs
+        JOIN part_types pt ON pt.id = bs.part_type_id
+        WHERE bs.id = ?
+        `,
+      )
+      .get(targetId) as SqlRow | undefined;
+
+    if (!row) {
+      return null;
+    }
+
+    return parsePersisted(
+      inventoryEntitySummarySchema,
+      {
+        id: String(row.id),
+        targetType: "bulk",
+        qrCode: String(row.qr_code),
+        location: String(row.location),
+        state: formatBulkState(
+          Number(row.quantity ?? 0),
+          stringOrNull(row.pt_unit_symbol) ?? "pcs",
+          row.minimum_quantity === null || row.minimum_quantity === undefined ? null : Number(row.minimum_quantity),
+        ),
+        assignee: null,
+        partDbSyncStatus: (stringOrNull(row.partdb_sync_status) ?? "never") as InventoryEntitySummary["partDbSyncStatus"],
+        quantity: Number(row.quantity ?? 0),
+        minimumQuantity: row.minimum_quantity === null || row.minimum_quantity === undefined ? null : Number(row.minimum_quantity),
+        partType: mapPartTypeFromJoin(row, "pt_"),
+      },
+      "bulk stock summary",
+    );
+  }
+
+  private loadCorrectionEntity(targetType: InventoryTargetKind, targetId: string): LoadedCorrectionEntity | null {
+    if (targetType === "instance") {
+      const row = this.db
+        .prepare(
+          `
+          SELECT
+            pi.*,
+            pt.id AS pt_id,
+            pt.canonical_name AS pt_canonical_name,
+            pt.category AS pt_category,
+            pt.category_path_json AS pt_category_path_json,
+            pt.aliases_json AS pt_aliases_json,
+            pt.image_url AS pt_image_url,
+            pt.notes AS pt_notes,
+            pt.countable AS pt_countable,
+            pt.unit_symbol AS pt_unit_symbol,
+            pt.unit_name AS pt_unit_name,
+            pt.unit_is_integer AS pt_unit_is_integer,
+            pt.needs_review AS pt_needs_review,
+            pt.partdb_part_id AS pt_partdb_part_id,
+            pt.partdb_category_id AS pt_partdb_category_id,
+            pt.partdb_unit_id AS pt_partdb_unit_id,
+            pt.partdb_sync_status AS pt_partdb_sync_status,
+            pt.created_at AS pt_created_at,
+            pt.updated_at AS pt_updated_at
+          FROM physical_instances pi
+          JOIN part_types pt ON pt.id = pi.part_type_id
+          WHERE pi.id = ?
+          `,
+        )
+        .get(targetId) as SqlRow | undefined;
+      if (!row) {
+        return null;
+      }
+
+      const partType = mapPartTypeFromJoin(row, "pt_");
+      return {
+        targetType: "instance",
+        id: String(row.id),
+        table: "physical_instances",
+        qrCode: String(row.qr_code),
+        partType,
+        location: String(row.location),
+        state: String(row.status),
+        assignee: stringOrNull(row.assignee),
+        quantity: null,
+        minimumQuantity: null,
+        partDbLotId: stringOrNull(row.partdb_lot_id),
+        partDbSyncStatus: (stringOrNull(row.partdb_sync_status) ?? "never") as PartType["partDbSyncStatus"],
+      };
+    }
+
+    const row = this.db
+      .prepare(
+        `
+        SELECT
+          bs.*,
+          pt.id AS pt_id,
+          pt.canonical_name AS pt_canonical_name,
+          pt.category AS pt_category,
+          pt.category_path_json AS pt_category_path_json,
+          pt.aliases_json AS pt_aliases_json,
+          pt.image_url AS pt_image_url,
+          pt.notes AS pt_notes,
+          pt.countable AS pt_countable,
+          pt.unit_symbol AS pt_unit_symbol,
+          pt.unit_name AS pt_unit_name,
+          pt.unit_is_integer AS pt_unit_is_integer,
+          pt.needs_review AS pt_needs_review,
+          pt.partdb_part_id AS pt_partdb_part_id,
+          pt.partdb_category_id AS pt_partdb_category_id,
+          pt.partdb_unit_id AS pt_partdb_unit_id,
+          pt.partdb_sync_status AS pt_partdb_sync_status,
+          pt.created_at AS pt_created_at,
+          pt.updated_at AS pt_updated_at
+        FROM bulk_stocks bs
+        JOIN part_types pt ON pt.id = bs.part_type_id
+        WHERE bs.id = ?
+        `,
+      )
+      .get(targetId) as SqlRow | undefined;
+    if (!row) {
+      return null;
+    }
+
+    const partType = mapPartTypeFromJoin(row, "pt_");
+    return {
+      targetType: "bulk",
+      id: String(row.id),
+      table: "bulk_stocks",
+      qrCode: String(row.qr_code),
+      partType,
+      location: String(row.location),
+      state: formatBulkState(
+        Number(row.quantity ?? 0),
+        partType.unit.symbol,
+        row.minimum_quantity === null || row.minimum_quantity === undefined ? null : Number(row.minimum_quantity),
+      ),
+      assignee: null,
+      quantity: Number(row.quantity ?? 0),
+      minimumQuantity: row.minimum_quantity === null || row.minimum_quantity === undefined ? null : Number(row.minimum_quantity),
+      partDbLotId: stringOrNull(row.partdb_lot_id),
+      partDbSyncStatus: (stringOrNull(row.partdb_sync_status) ?? "never") as PartType["partDbSyncStatus"],
+    };
+  }
+
   private findQrRowByScannedCode(code: string): SqlRow | undefined {
     const exact = this.db
-      .prepare(`SELECT * FROM qrcodes WHERE LOWER(TRIM(code)) = LOWER(?)`)
+      .prepare(`SELECT * FROM qrcodes WHERE TRIM(code) = ?`)
       .get(code) as SqlRow | undefined;
     if (exact) {
       return exact;
@@ -1767,7 +2342,8 @@ export class InventoryService {
       .prepare(`
         SELECT *
         FROM qrcodes
-        WHERE LOWER(REPLACE(REPLACE(REPLACE(TRIM(code), '-', ''), '_', ''), ' ', '')) = ?
+        WHERE batch_id = 'external'
+          AND LOWER(REPLACE(REPLACE(REPLACE(TRIM(code), '-', ''), '_', ''), ' ', '')) = ?
       `)
       .all(compactKey) as SqlRow[];
 
@@ -1796,6 +2372,104 @@ export class InventoryService {
         `,
       )
       .run(assignedKind, assignedId, updatedAt, code);
+  }
+
+  private insertCorrectionEvent(input: {
+    targetType: CorrectionTargetKind;
+    targetId: string;
+    correctionKind: CorrectionKind;
+    actor: string;
+    reason: string;
+    before: Record<string, unknown>;
+    after: Record<string, unknown>;
+    createdAt: string;
+  }): CorrectionEvent {
+    const id = randomUUID();
+    this.db
+      .prepare(`
+        INSERT INTO correction_events
+          (id, target_type, target_id, correction_kind, actor, reason, before_json, after_json, created_at)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+      `)
+      .run(
+        id,
+        input.targetType,
+        input.targetId,
+        input.correctionKind,
+        input.actor,
+        input.reason,
+        JSON.stringify(input.before),
+        JSON.stringify(input.after),
+        input.createdAt,
+      );
+
+    return parsePersisted(
+      correctionEventSchema,
+      {
+        id,
+        targetType: input.targetType,
+        targetId: input.targetId,
+        correctionKind: input.correctionKind,
+        actor: input.actor,
+        reason: input.reason,
+        before: input.before,
+        after: input.after,
+        createdAt: input.createdAt,
+      },
+      "correction event record",
+    );
+  }
+
+  private assertNoPendingLotSync(
+    table: "physical_instances" | "bulk_stocks",
+    rowId: string,
+    message: string,
+  ): void {
+    if (!this.partDbOutbox) {
+      return;
+    }
+
+    const pending = this.partDbOutbox.findLatestPendingTarget(table, rowId, "partdb_lot_id");
+    if (pending) {
+      throw new ConflictError(message, {
+        targetTable: table,
+        targetId: rowId,
+        outboxOperationId: pending.id,
+      });
+    }
+  }
+
+  private assertNoPendingPartSync(partTypeId: string, message: string): void {
+    if (!this.partDbOutbox) {
+      return;
+    }
+
+    const pending = this.partDbOutbox.findLatestPendingTarget("part_types", partTypeId, "partdb_part_id");
+    if (pending) {
+      throw new ConflictError(message, {
+        partTypeId,
+        outboxOperationId: pending.id,
+      });
+    }
+  }
+
+  private assertOnlyLabeledHistory(targetType: InventoryTargetKind, targetId: string): void {
+    const rows = this.db
+      .prepare(`
+        SELECT event
+        FROM stock_events
+        WHERE target_type = ? AND target_id = ?
+        ORDER BY created_at, id
+      `)
+      .all(targetType, targetId) as Array<{ event: string }>;
+
+    if (rows.length !== 1 || rows[0]?.event !== "labeled") {
+      throw new ConflictError("Only fresh ingest assignments can be reversed.", {
+        targetType,
+        targetId,
+        eventCount: rows.length,
+      });
+    }
   }
 
   private insertEvent(input: {
@@ -2012,6 +2686,24 @@ function mapStockEvent(row: SqlRow): StockEvent {
   );
 }
 
+function mapCorrectionEvent(row: SqlRow): CorrectionEvent {
+  return parsePersisted(
+    correctionEventSchema,
+    {
+      id: String(row.id),
+      targetType: String(row.target_type),
+      targetId: String(row.target_id),
+      correctionKind: String(row.correction_kind),
+      actor: String(row.actor),
+      reason: String(row.reason),
+      before: parseJsonRecord(row.before_json, "correction before payload"),
+      after: parseJsonRecord(row.after_json, "correction after payload"),
+      createdAt: String(row.created_at),
+    },
+    "correction event record",
+  );
+}
+
 function nowIso(): string {
   return new Date().toISOString();
 }
@@ -2072,6 +2764,42 @@ function parseCategoryPath(value: unknown, fallbackCategory: unknown): string[] 
   return typeof fallbackCategory === "string" && fallbackCategory.trim().length > 0
     ? [fallbackCategory]
     : ["Uncategorized"];
+}
+
+function parseJsonRecord(value: unknown, context: string): Record<string, unknown> {
+  if (typeof value !== "string") {
+    throw new InvariantError(`Persisted ${context} is not valid JSON text.`, {
+      context,
+    });
+  }
+
+  try {
+    const parsed = JSON.parse(value) as unknown;
+    if (!parsed || typeof parsed !== "object" || Array.isArray(parsed)) {
+      throw new Error("parsed value is not an object");
+    }
+    return parsed as Record<string, unknown>;
+  } catch (error) {
+    throw new InvariantError(`Persisted ${context} could not be parsed.`, {
+      context,
+    }, { cause: error });
+  }
+}
+
+function buildEntityCorrectionSnapshot(target: LoadedCorrectionEntity): Record<string, unknown> {
+  return {
+    targetType: target.targetType,
+    targetId: target.id,
+    qrCode: target.qrCode,
+    partTypeId: target.partType.id,
+    partTypeName: target.partType.canonicalName,
+    categoryPath: target.partType.categoryPath,
+    location: target.location,
+    state: target.state,
+    assignee: target.assignee,
+    quantity: target.quantity,
+    minimumQuantity: target.minimumQuantity,
+  };
 }
 
 function parsePersisted<T>(schema: { parse: (input: unknown) => T }, input: unknown, context: string): T {
