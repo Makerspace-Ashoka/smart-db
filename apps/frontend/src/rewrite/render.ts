@@ -187,11 +187,16 @@ function renderTabBar(activeTab: TabId, tabs: readonly TabId[]): string {
 
 function renderScanTab(state: RewriteUiState): string {
   const assignIssues = getAssignFormIssues(state.assignForm);
+  const bulkAssignIssues = getAssignFormIssues({
+    ...state.bulkQueue.labelForm,
+    qrCode: "__bulk__",
+  });
   const eventIssues = getEventFormIssues(state.eventForm);
+  const isOneByOne = state.scanMode.kind === "oneByOne";
   const cameraBlockedReason =
     state.pendingAction !== null
       ? "Finish the current action before scanning another item."
-      : state.scanResult
+      : isOneByOne && state.scanResult
         ? "Finish or clear the current scan form before scanning another item."
         : null;
   const labelOptions =
@@ -200,6 +205,10 @@ function renderScanTab(state: RewriteUiState): string {
       : state.scanResult?.mode === "label"
         ? state.scanResult.suggestions
         : state.catalogSuggestions;
+  const bulkLabelOptions =
+    state.bulkQueue.labelSearch.query.trim() || state.bulkQueue.labelSearch.results.length > 0
+      ? state.bulkQueue.labelSearch.results
+      : state.catalogSuggestions;
   const selectedMeasurementUnit =
     measurementUnitCatalog.find((unit) => unit.symbol === state.assignForm.unitSymbol) ??
     measurementUnitCatalog[0];
@@ -227,33 +236,86 @@ function renderScanTab(state: RewriteUiState): string {
           autocomplete="off"
         />
         <button type="submit" ${disabled(state.pendingAction !== null)}>
-          ${state.pendingAction === "scan" ? "Opening..." : "Open"}
+          ${state.pendingAction === "scan" ? "Opening..." : state.scanMode.kind === "bulk" ? "Add" : "Open"}
         </button>
       </form>
 
       <div class="scan-mode-bar">
         <button
           type="button"
-          class="scan-mode-btn ${state.scanMode === "inspect" ? "active" : ""}"
-          data-action="set-scan-mode"
-          data-scan-mode="inspect"
+          class="scan-mode-btn ${state.scanMode.kind === "oneByOne" ? "active" : ""}"
+          data-action="set-scan-mode-kind"
+          data-scan-mode-kind="oneByOne"
         >
           <span class="scan-mode-icon">◇</span>
-          View only
+          One-by-one
         </button>
         <button
           type="button"
-          class="scan-mode-btn ${state.scanMode === "increment" ? "active" : ""}"
-          data-action="set-scan-mode"
-          data-scan-mode="increment"
+          class="scan-mode-btn ${state.scanMode.kind === "bulk" ? "active" : ""}"
+          data-action="set-scan-mode-kind"
+          data-scan-mode-kind="bulk"
         >
-          <span class="scan-mode-icon">+1</span>
-          Auto-count
+          <span class="scan-mode-icon">≡</span>
+          Bulk
         </button>
       </div>
 
+      ${state.scanMode.kind === "oneByOne" ? `
+        <div class="scan-mode-bar">
+          <button
+            type="button"
+            class="scan-mode-btn ${state.scanMode.behavior === "viewOnly" ? "active" : ""}"
+            data-action="set-scan-behavior"
+            data-scan-behavior="viewOnly"
+          >
+            <span class="scan-mode-icon">◇</span>
+            View only
+          </button>
+          <button
+            type="button"
+            class="scan-mode-btn ${state.scanMode.behavior === "increment" ? "active" : ""}"
+            data-action="set-scan-behavior"
+            data-scan-behavior="increment"
+          >
+            <span class="scan-mode-icon">+1</span>
+            Auto-count
+          </button>
+        </div>
+      ` : `
+        <div class="scan-mode-bar">
+          <button
+            type="button"
+            class="scan-mode-btn ${state.bulkQueue.action === "label" ? "active" : ""}"
+            data-action="set-bulk-action"
+            data-bulk-action="label"
+          >
+            <span class="scan-mode-icon">#</span>
+            Bulk label
+          </button>
+          <button
+            type="button"
+            class="scan-mode-btn ${state.bulkQueue.action === "move" ? "active" : ""}"
+            data-action="set-bulk-action"
+            data-bulk-action="move"
+          >
+            <span class="scan-mode-icon">→</span>
+            Bulk move
+          </button>
+          <button
+            type="button"
+            class="scan-mode-btn ${state.bulkQueue.action === "delete" ? "active" : ""}"
+            data-action="set-bulk-action"
+            data-bulk-action="delete"
+          >
+            <span class="scan-mode-icon">×</span>
+            Bulk delete
+          </button>
+        </div>
+      `}
+
       <div aria-live="polite">
-        ${state.scanResult?.mode === "unknown" ? `
+        ${state.scanMode.kind === "oneByOne" && state.scanResult?.mode === "unknown" ? `
           <div class="result-card">
             <h3>${escapeHtml(state.scanResult.code)} is unknown to Smart DB</h3>
             <p>
@@ -267,10 +329,11 @@ function renderScanTab(state: RewriteUiState): string {
           </div>
         ` : ""}
 
-        ${state.scanResult?.mode === "label" ? renderLabelCard(state, labelOptions, assignIssues) : ""}
-        ${state.scanResult?.mode === "interact" ? renderInteractCard(state, eventIssues, bulkQuantityStep, bulkUnitSymbol) : ""}
+        ${state.scanMode.kind === "oneByOne" && state.scanResult?.mode === "label" ? renderLabelCard(state, labelOptions, assignIssues) : ""}
+        ${state.scanMode.kind === "oneByOne" && state.scanResult?.mode === "interact" ? renderInteractCard(state, eventIssues, bulkQuantityStep, bulkUnitSymbol) : ""}
+        ${state.scanMode.kind === "bulk" ? renderBulkQueueCard(state, bulkLabelOptions, bulkAssignIssues) : ""}
 
-        ${state.scanResult && !state.cameraLookupCode ? `
+        ${state.scanMode.kind === "oneByOne" && state.scanResult && !state.cameraLookupCode ? `
           <button
             type="button"
             class="scan-next-bottom"
@@ -323,6 +386,207 @@ function renderScanner(state: RewriteUiState, isLookingUp: boolean, blockedReaso
         <button type="button" data-action="camera-scan-next" ${disabled(Boolean(blockedReason))}>Scan next</button>
       ` : ""}
     </div>
+  `;
+}
+
+function renderBulkQueueCard(
+  state: RewriteUiState,
+  labelOptions: readonly PartType[],
+  assignIssues: ReturnType<typeof getAssignFormIssues>,
+): string {
+  const summary = state.bulkQueue.summary;
+
+  return `
+    <div class="result-card">
+      <h3>${escapeHtml(bulkActionHeading(state.bulkQueue.action))}</h3>
+      <p class="muted-copy">
+        ${escapeHtml(`${summary.uniqueLabelCount} unique labels · ${summary.totalScanCount} scans${summary.duplicateScanCount > 0 ? ` · ${summary.duplicateScanCount} duplicates collapsed` : ""}`)}
+      </p>
+      ${state.bulkQueue.failure ? `<p class="banner error">${escapeHtml(state.bulkQueue.failure.message)}</p>` : ""}
+      ${state.bulkQueue.rows.length === 0 ? `
+        <p class="muted-copy">${escapeHtml(emptyBulkQueueCopy(state.bulkQueue.action))}</p>
+      ` : `
+        <div class="event-list">
+          <ul class="activity-list">
+            ${state.bulkQueue.rows.map((row) => `
+              <li class="activity-row">
+                <div>
+                  <strong>${escapeHtml(row.code)}</strong>
+                  <div class="activity-detail">
+                    ${row.kind === "unlabeled"
+                      ? escapeHtml(`Printed label · batch ${row.batchId}`)
+                      : escapeHtml(`${row.partTypeName} · ${row.location} · ${row.targetType}`)}
+                  </div>
+                </div>
+                <div style="display:flex;gap:0.5rem;align-items:center">
+                  <span class="pill info">${escapeHtml(`×${row.count}`)}</span>
+                  <button type="button" data-action="bulk-queue-decrement" data-code="${attr(row.code)}">-1</button>
+                  <button type="button" data-action="bulk-queue-remove" data-code="${attr(row.code)}">Remove</button>
+                </div>
+              </li>
+            `).join("")}
+          </ul>
+        </div>
+      `}
+      <button type="button" data-action="bulk-queue-clear" ${disabled(state.pendingAction !== null || state.bulkQueue.rows.length === 0)} style="margin-top:1rem">
+        Clear queue
+      </button>
+      ${state.bulkQueue.action === "label" ? renderBulkLabelForm(state, labelOptions, assignIssues) : ""}
+      ${state.bulkQueue.action === "move" ? renderBulkMoveForm(state) : ""}
+      ${state.bulkQueue.action === "delete" ? renderBulkDeleteForm(state) : ""}
+    </div>
+  `;
+}
+
+function renderBulkLabelForm(
+  state: RewriteUiState,
+  labelOptions: readonly PartType[],
+  assignIssues: ReturnType<typeof getAssignFormIssues>,
+): string {
+  const form = state.bulkQueue.labelForm;
+  const selectedPartType =
+    labelOptions.find((partType) => partType.id === form.existingPartTypeId) ??
+    state.catalogSuggestions.find((partType) => partType.id === form.existingPartTypeId);
+
+  return `
+    <form class="form-grid" data-form="bulk-label" style="margin-top:1rem">
+      <div class="wide mode-toggle" role="radiogroup" aria-label="Bulk label type mode">
+        <button type="button" role="radio" class="${form.partTypeMode === "existing" ? "selected" : ""}" aria-checked="${String(form.partTypeMode === "existing")}" data-action="set-bulk-label-mode" data-assign-mode="existing">Use existing type</button>
+        <button type="button" role="radio" class="${form.partTypeMode === "new" ? "selected" : ""}" aria-checked="${String(form.partTypeMode === "new")}" data-action="set-bulk-label-mode" data-assign-mode="new">Create new type</button>
+      </div>
+      ${form.partTypeMode === "existing" ? `
+        <label class="wide">
+          Search existing part types
+          <input name="bulkLabelSearch.query" value="${attr(state.bulkQueue.labelSearch.query)}" placeholder="Arduino, JST, PLA, cotton..." />
+        </label>
+        ${state.bulkQueue.labelSearch.error ? `<p class="banner error wide">${escapeHtml(state.bulkQueue.labelSearch.error)}</p>` : ""}
+        ${assignIssues.existingPartTypeId ? `<p class="field-error wide">${escapeHtml(assignIssues.existingPartTypeId)}</p>` : ""}
+        <div class="wide picker" role="radiogroup" aria-label="Existing part types">
+          ${labelOptions.length > 0 ? labelOptions.map((partType) => `
+            <button
+              type="button"
+              role="radio"
+              aria-checked="${String(form.existingPartTypeId === partType.id)}"
+              class="${form.existingPartTypeId === partType.id ? "selected" : ""}"
+              data-action="select-bulk-label-part"
+              data-part-id="${attr(partType.id)}"
+            >
+              <strong>${escapeHtml(partType.canonicalName)}</strong>
+              <span>${escapeHtml(formatCategoryPath(partType.categoryPath))}</span>
+            </button>
+          `).join("") : `<p class="muted-copy">No matching part types yet.</p>`}
+        </div>
+        ${selectedPartType ? `
+          <button type="button" class="disclosure wide" data-action="create-bulk-label-variant" data-part-id="${attr(selectedPartType.id)}">
+            Create a variant of "${escapeHtml(selectedPartType.canonicalName)}"
+          </button>
+        ` : ""}
+      ` : `
+        <label class="wide">
+          New canonical name
+          <input name="bulkLabel.canonicalName" value="${attr(form.canonicalName)}" placeholder="Arduino Uno R3" />
+          ${assignIssues.canonicalName ? `<span class="field-error">${escapeHtml(assignIssues.canonicalName)}</span>` : ""}
+        </label>
+        <label class="wide">
+          Category path
+          <input name="bulkLabel.category" value="${attr(form.category)}" placeholder="Electronics / Resistors / SMD 0603" />
+          ${assignIssues.category ? `<span class="field-error">${escapeHtml(assignIssues.category)}</span>` : ""}
+        </label>
+      `}
+      ${form.partTypeMode === "existing" && selectedPartType?.countable ? `
+        <div class="wide mode-toggle" role="radiogroup" aria-label="Inventory entry">
+          <button type="button" role="radio" aria-checked="${String(form.entityKind === "instance")}" class="${form.entityKind === "instance" ? "selected" : ""}" data-action="set-bulk-label-entity-kind" data-entity-kind="instance">Tracked unit</button>
+          <button type="button" role="radio" aria-checked="${String(form.entityKind === "bulk")}" class="${form.entityKind === "bulk" ? "selected" : ""}" data-action="set-bulk-label-entity-kind" data-entity-kind="bulk">Bulk pool</button>
+        </div>
+      ` : ""}
+      ${form.partTypeMode === "new" && form.entityKind === "bulk" ? `
+        <div class="wide mode-toggle" role="radiogroup" aria-label="Part type kind">
+          <button type="button" role="radio" aria-checked="${String(form.countable)}" class="${form.countable ? "selected" : ""}" data-action="set-bulk-label-countability" data-countable="true">Piece-counted</button>
+          <button type="button" role="radio" aria-checked="${String(!form.countable)}" class="${!form.countable ? "selected" : ""}" data-action="set-bulk-label-countability" data-countable="false">Measured</button>
+        </div>
+      ` : ""}
+      <label class="wide">
+        Location
+        <input name="bulkLabel.location" value="${attr(form.location)}" placeholder="Shelf A" />
+        ${assignIssues.location ? `<span class="field-error">${escapeHtml(assignIssues.location)}</span>` : ""}
+      </label>
+      ${state.knownLocations.length > 0 ? `
+        <div class="wide picker" role="listbox" aria-label="Known locations">
+          ${state.knownLocations.map((location) => `
+            <button type="button" role="option" aria-selected="${String(form.location === location)}" class="${form.location === location ? "selected" : ""}" data-action="pick-bulk-label-known-location" data-location="${attr(location)}">
+              <strong>${escapeHtml(location)}</strong>
+            </button>
+          `).join("")}
+        </div>
+      ` : ""}
+      <label class="wide">
+        Notes
+        <textarea name="bulkLabel.notes">${escapeHtml(form.notes)}</textarea>
+      </label>
+      ${form.entityKind === "instance" ? `
+        <label>
+          Initial status
+          <select name="bulkLabel.initialStatus">
+            ${instanceStatuses.map((status) => `<option value="${status}"${selected(status === form.initialStatus)}>${escapeHtml(status)}</option>`).join("")}
+          </select>
+        </label>
+      ` : `
+        <label>
+          Unit of measure
+          <select name="bulkLabel.unitSymbol">
+            ${measurementUnitCatalog.filter((unit) => (form.countable ? unit.isInteger : true)).map((unit) => `
+              <option value="${attr(unit.symbol)}"${selected(unit.symbol === form.unitSymbol)}>${escapeHtml(unit.name)} (${escapeHtml(unit.symbol)})</option>
+            `).join("")}
+          </select>
+        </label>
+        <label>
+          Starting quantity
+          <input type="number" min="${(measurementUnitCatalog.find((unit) => unit.symbol === form.unitSymbol) ?? measurementUnitCatalog[0]).isInteger ? "1" : "0.000001"}" inputmode="decimal" name="bulkLabel.initialQuantity" value="${attr(form.initialQuantity)}" step="${quantityInputStep((measurementUnitCatalog.find((unit) => unit.symbol === form.unitSymbol) ?? measurementUnitCatalog[0]).isInteger)}" placeholder="${(measurementUnitCatalog.find((unit) => unit.symbol === form.unitSymbol) ?? measurementUnitCatalog[0]).isInteger ? "1" : "0.1"}" />
+          ${assignIssues.initialQuantity ? `<span class="field-error">${escapeHtml(assignIssues.initialQuantity)}</span>` : ""}
+        </label>
+        <label>
+          Low-stock threshold
+          <input type="number" min="0" inputmode="decimal" name="bulkLabel.minimumQuantity" value="${attr(form.minimumQuantity)}" step="${quantityInputStep((measurementUnitCatalog.find((unit) => unit.symbol === form.unitSymbol) ?? measurementUnitCatalog[0]).isInteger)}" placeholder="Optional" />
+          ${assignIssues.minimumQuantity ? `<span class="field-error">${escapeHtml(assignIssues.minimumQuantity)}</span>` : ""}
+        </label>
+      `}
+      <button type="submit" ${disabled(state.pendingAction !== null || state.bulkQueue.rows.length === 0 || Object.keys(assignIssues).length > 0)}>
+        ${state.pendingAction === "bulk" ? "Labeling..." : `Label ${state.bulkQueue.summary.uniqueLabelCount} labels`}
+      </button>
+    </form>
+  `;
+}
+
+function renderBulkMoveForm(state: RewriteUiState): string {
+  return `
+    <form class="form-grid" data-form="bulk-move" style="margin-top:1rem">
+      <label class="wide">
+        Destination location
+        <input name="bulkMove.location" value="${attr(state.bulkQueue.moveForm.location)}" placeholder="Shelf B" />
+      </label>
+      <label class="wide">
+        Notes
+        <textarea name="bulkMove.notes">${escapeHtml(state.bulkQueue.moveForm.notes)}</textarea>
+      </label>
+      <button type="submit" ${disabled(state.pendingAction !== null || state.bulkQueue.rows.length === 0 || state.bulkQueue.moveForm.location.trim().length === 0)}>
+        ${state.pendingAction === "bulk" ? "Moving..." : `Move ${state.bulkQueue.summary.uniqueLabelCount} labels`}
+      </button>
+    </form>
+  `;
+}
+
+function renderBulkDeleteForm(state: RewriteUiState): string {
+  return `
+    <form class="form-grid" data-form="bulk-delete" style="margin-top:1rem">
+      <p class="banner error wide">Bulk delete reverses fresh ingests only and preserves the correction audit trail.</p>
+      <label class="wide">
+        Reason
+        <textarea name="bulkDelete.reason">${escapeHtml(state.bulkQueue.deleteForm.reason)}</textarea>
+      </label>
+      <button type="submit" ${disabled(state.pendingAction !== null || state.bulkQueue.rows.length === 0 || state.bulkQueue.deleteForm.reason.trim().length === 0)}>
+        ${state.pendingAction === "bulk" ? "Deleting..." : `Delete ${state.bulkQueue.summary.uniqueLabelCount} ingests`}
+      </button>
+    </form>
   `;
 }
 
@@ -895,6 +1159,28 @@ function scanModeLabel(mode: string): string {
       return "unregistered";
     default:
       return mode;
+  }
+}
+
+function bulkActionHeading(action: "label" | "move" | "delete"): string {
+  switch (action) {
+    case "label":
+      return "Bulk label queue";
+    case "move":
+      return "Bulk move queue";
+    case "delete":
+      return "Bulk delete queue";
+  }
+}
+
+function emptyBulkQueueCopy(action: "label" | "move" | "delete"): string {
+  switch (action) {
+    case "label":
+      return "Scan printed Smart DB labels to build a homogeneous bulk labeling queue.";
+    case "move":
+      return "Scan assigned Smart DB labels to move several tracked items or bulk bins at once.";
+    case "delete":
+      return "Scan fresh ingests whose history is still just the original labeled event to reverse them in bulk.";
   }
 }
 

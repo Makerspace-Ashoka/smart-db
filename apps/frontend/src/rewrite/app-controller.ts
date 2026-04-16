@@ -1,4 +1,9 @@
 import {
+  type BulkAssignQrsRequest,
+  type BulkMoveEntitiesRequest,
+  type BulkReverseIngestRequest,
+  type BulkEntityTarget,
+  type BulkReverseIngestTarget,
   hasSmartDbRole,
   type CorrectionEvent,
   getMeasurementUnitBySymbol,
@@ -19,13 +24,18 @@ import {
   actionLabel,
   errorMessage,
   formatCategoryPath,
+  getAssignFormIssues,
 } from "./presentation-helpers";
 import { authMachine } from "./machines/auth-machine";
 import type { RewriteFailure } from "./errors";
+import { bulkQueueMachine } from "./machines/bulk-queue-machine";
 import { scanSessionMachine } from "./machines/scan-session-machine";
 import {
   parseAssignForm,
   parseBatchForm,
+  parseBulkAssignForm,
+  parseBulkDeleteForm,
+  parseBulkMoveForm,
   parseEditPartTypeDefinitionForm,
   type EventCommand,
   parseEventForm,
@@ -38,14 +48,25 @@ import { CameraScannerService } from "./services/camera-scanner-service";
 import {
   defaultAssignForm,
   defaultBatchForm,
+  defaultBulkLabelForm,
+  defaultBulkQueueState,
   defaultCameraState,
   defaultCorrectionUiState,
+  defaultScanMode,
   defaultEventForm,
   defaultInventoryUiState,
   defaultSearchState,
   type AuthViewState,
+  type BulkAssignedQueueRow,
+  type BulkDeleteEligibility,
+  type BulkQueueAction,
+  type BulkQueueRow,
+  type BulkUnlabeledQueueRow,
+  type BulkQueueUiState,
+  type OneByOneScanBehavior,
   type PendingAction,
   type RewriteUiState,
+  type ScanModeState,
   type TabId,
   type ToastRecord,
 } from "./ui-state";
@@ -92,6 +113,7 @@ export class RewriteAppController {
     eventForm: defaultEventForm,
     scanCode: "",
     scanMode: this.restoreScanMode(),
+    bulkQueue: defaultBulkQueueState,
     scanHistory: [],
     lastAssignment: null,
     camera: defaultCameraState,
@@ -109,16 +131,23 @@ export class RewriteAppController {
 
   private readonly authActor = createActor(authMachine, { input: {} });
   private readonly scanActor = createActor(scanSessionMachine, { input: {} });
+  private readonly bulkQueueActor = createActor(bulkQueueMachine, {
+    input: {
+      action: defaultBulkQueueState.action,
+    },
+  });
   private readonly authAbortController = new AbortController();
-  private readonly searchControllers: Record<"label" | "merge" | "correction", AbortController | null> = {
+  private readonly searchControllers: Record<"label" | "merge" | "correction" | "bulkLabel", AbortController | null> = {
     label: null,
     merge: null,
     correction: null,
+    bulkLabel: null,
   };
-  private readonly searchRequestIds: Record<"label" | "merge" | "correction", number> = {
+  private readonly searchRequestIds: Record<"label" | "merge" | "correction" | "bulkLabel", number> = {
     label: 0,
     merge: 0,
     correction: 0,
+    bulkLabel: 0,
   };
   private renderSuppressed = false;
   private readonly cameraService = new CameraScannerService({
@@ -128,6 +157,8 @@ export class RewriteAppController {
   });
   private scanAbortController: AbortController | null = null;
   private scanRequestId = 0;
+  private preferredOneByOneBehavior: OneByOneScanBehavior =
+    defaultScanMode.kind === "oneByOne" ? defaultScanMode.behavior : "viewOnly";
   private toastTimers = new Map<string, number>();
   private pollTimer: number | null = null;
   private sessionTimer: number | null = null;
@@ -145,8 +176,29 @@ export class RewriteAppController {
         camera: snapshot,
       });
     });
+    this.bulkQueueActor.subscribe((snapshot) => {
+      const status = snapshot.matches("submitting")
+        ? "submitting"
+        : snapshot.matches("failed")
+          ? "failed"
+          : snapshot.matches("ready")
+            ? "ready"
+            : "empty";
+      this.patch({
+        bulkQueue: {
+          ...this.state.bulkQueue,
+          action: snapshot.context.action,
+          kind: snapshot.context.kind,
+          rows: snapshot.context.rows,
+          summary: summarizeBulkQueue(snapshot.context.rows),
+          failure: snapshot.context.failure,
+          status,
+        },
+      });
+    });
     this.authActor.start();
     this.scanActor.start();
+    this.bulkQueueActor.start();
 
     this.root.addEventListener("click", this.handleClick);
     this.root.addEventListener("submit", this.handleSubmit);
@@ -165,9 +217,12 @@ export class RewriteAppController {
     this.cameraService.destroy();
     this.searchControllers.label?.abort();
     this.searchControllers.merge?.abort();
+    this.searchControllers.correction?.abort();
+    this.searchControllers.bulkLabel?.abort();
     this.scanAbortController?.abort();
     this.authActor.stop();
     this.scanActor.stop();
+    this.bulkQueueActor.stop();
     if (this.pollTimer !== null) {
       window.clearInterval(this.pollTimer);
     }
@@ -240,9 +295,19 @@ export class RewriteAppController {
       case "assign-same":
         void this.handleAssignSame();
         break;
-      case "set-scan-mode":
-        if (actionEl.dataset.scanMode === "increment" || actionEl.dataset.scanMode === "inspect") {
-          this.setScanMode(actionEl.dataset.scanMode);
+      case "set-scan-mode-kind":
+        if (actionEl.dataset.scanModeKind === "oneByOne" || actionEl.dataset.scanModeKind === "bulk") {
+          this.setTopLevelScanMode(actionEl.dataset.scanModeKind);
+        }
+        break;
+      case "set-scan-behavior":
+        if (actionEl.dataset.scanBehavior === "increment" || actionEl.dataset.scanBehavior === "viewOnly") {
+          this.setOneByOneBehavior(actionEl.dataset.scanBehavior);
+        }
+        break;
+      case "set-bulk-action":
+        if (actionEl.dataset.bulkAction === "label" || actionEl.dataset.bulkAction === "move" || actionEl.dataset.bulkAction === "delete") {
+          this.setBulkQueueAction(actionEl.dataset.bulkAction);
         }
         break;
       case "set-assign-mode":
@@ -363,6 +428,70 @@ export class RewriteAppController {
       case "correction-clear":
         this.patch({ correctionUi: defaultCorrectionUiState });
         break;
+      case "bulk-queue-decrement":
+        if (actionEl.dataset.code) {
+          this.bulkQueueActor.send({ type: "QUEUE.ROW_DECREMENT_REQUESTED", code: actionEl.dataset.code });
+        }
+        break;
+      case "bulk-queue-remove":
+        if (actionEl.dataset.code) {
+          this.bulkQueueActor.send({ type: "QUEUE.ROW_REMOVE_REQUESTED", code: actionEl.dataset.code });
+        }
+        break;
+      case "bulk-queue-clear":
+        this.clearBulkQueue();
+        break;
+      case "set-bulk-label-mode":
+        if (actionEl.dataset.assignMode === "existing" || actionEl.dataset.assignMode === "new") {
+          this.setBulkLabelMode(actionEl.dataset.assignMode);
+        }
+        break;
+      case "set-bulk-label-entity-kind":
+        if (actionEl.dataset.entityKind === "instance" || actionEl.dataset.entityKind === "bulk") {
+          this.setBulkLabelEntityKind(actionEl.dataset.entityKind);
+        }
+        break;
+      case "set-bulk-label-countability":
+        if (actionEl.dataset.countable === "true" || actionEl.dataset.countable === "false") {
+          this.setBulkLabelCountability(actionEl.dataset.countable === "true");
+        }
+        break;
+      case "select-bulk-label-part":
+        if (actionEl.dataset.partId) {
+          this.selectBulkLabelPartType(actionEl.dataset.partId);
+        }
+        break;
+      case "create-bulk-label-variant":
+        if (actionEl.dataset.partId) {
+          this.createBulkLabelVariant(actionEl.dataset.partId);
+        }
+        break;
+      case "pick-bulk-label-known-location":
+        if (actionEl.dataset.location) {
+          this.patch({
+            bulkQueue: {
+              ...this.state.bulkQueue,
+              labelForm: {
+                ...this.state.bulkQueue.labelForm,
+                location: actionEl.dataset.location,
+              },
+            },
+          });
+        }
+        break;
+      case "pick-bulk-label-known-category":
+        if (actionEl.dataset.category) {
+          this.patch({
+            bulkQueue: {
+              ...this.state.bulkQueue,
+              labelForm: {
+                ...this.state.bulkQueue.labelForm,
+                category: actionEl.dataset.category,
+              },
+            },
+          });
+        }
+        break;
       default:
         break;
     }
@@ -390,6 +519,15 @@ export class RewriteAppController {
         break;
       case "assign":
         void this.handleAssign();
+        break;
+      case "bulk-label":
+        void this.handleBulkAssign();
+        break;
+      case "bulk-move":
+        void this.handleBulkMove();
+        break;
+      case "bulk-delete":
+        void this.handleBulkDelete();
         break;
       case "event":
         void this.handleRecordEvent();
@@ -482,6 +620,18 @@ export class RewriteAppController {
           },
         });
         return;
+      case "bulkLabelSearch.query":
+        this.patch({
+          bulkQueue: {
+            ...this.state.bulkQueue,
+            labelSearch: {
+              ...this.state.bulkQueue.labelSearch,
+              query: String(rawValue),
+            },
+          },
+        });
+        void this.performSearch("bulkLabel", String(rawValue));
+        return;
       case "labelSearch.query":
         this.patch({
           labelSearch: {
@@ -539,6 +689,12 @@ export class RewriteAppController {
       default:
         if (name.startsWith("assign.")) {
           this.updateAssignForm(name, rawValue);
+        } else if (name.startsWith("bulkLabel.")) {
+          this.updateBulkLabelForm(name, rawValue);
+        } else if (name.startsWith("bulkMove.")) {
+          this.updateBulkMoveForm(name, rawValue);
+        } else if (name.startsWith("bulkDelete.")) {
+          this.updateBulkDeleteForm(name, rawValue);
         } else if (name.startsWith("event.")) {
           this.updateEventForm(name, rawValue);
         } else if (name.startsWith("correction.")) {
@@ -600,6 +756,77 @@ export class RewriteAppController {
         return;
     }
     this.patch({ assignForm: next });
+  }
+
+  private updateBulkLabelForm(name: string, rawValue: string | boolean): void {
+    const value = String(rawValue);
+    const next = { ...this.state.bulkQueue.labelForm };
+    switch (name) {
+      case "bulkLabel.canonicalName":
+        next.canonicalName = value;
+        break;
+      case "bulkLabel.category":
+        next.category = value;
+        break;
+      case "bulkLabel.unitSymbol":
+        next.unitSymbol = value;
+        break;
+      case "bulkLabel.initialQuantity":
+        next.initialQuantity = value;
+        break;
+      case "bulkLabel.location":
+        next.location = value;
+        break;
+      case "bulkLabel.minimumQuantity":
+        next.minimumQuantity = value;
+        break;
+      case "bulkLabel.notes":
+        next.notes = value;
+        break;
+      case "bulkLabel.initialStatus":
+        next.initialStatus = value as typeof next.initialStatus;
+        break;
+      default:
+        return;
+    }
+    this.patch({
+      bulkQueue: {
+        ...this.state.bulkQueue,
+        labelForm: next,
+      },
+    });
+  }
+
+  private updateBulkMoveForm(name: string, rawValue: string | boolean): void {
+    const value = String(rawValue);
+    if (name !== "bulkMove.location" && name !== "bulkMove.notes") {
+      return;
+    }
+
+    this.patch({
+      bulkQueue: {
+        ...this.state.bulkQueue,
+        moveForm: {
+          ...this.state.bulkQueue.moveForm,
+          [name === "bulkMove.location" ? "location" : "notes"]: value,
+        },
+      },
+    });
+  }
+
+  private updateBulkDeleteForm(name: string, rawValue: string | boolean): void {
+    if (name !== "bulkDelete.reason") {
+      return;
+    }
+
+    this.patch({
+      bulkQueue: {
+        ...this.state.bulkQueue,
+        deleteForm: {
+          reason: String(rawValue),
+        },
+      },
+    });
   }
 
   private updateEventForm(name: string, rawValue: string | boolean): void {
@@ -730,7 +957,10 @@ export class RewriteAppController {
     void this.cameraService.attachVideoElement(null);
     this.searchControllers.label?.abort();
     this.searchControllers.merge?.abort();
+    this.searchControllers.correction?.abort();
+    this.searchControllers.bulkLabel?.abort();
     this.scanAbortController?.abort();
+    this.bulkQueueActor.send({ type: "QUEUE.CLEAR_REQUESTED" });
     this.patch({
       dashboard: null,
       partDbStatus: null,
@@ -751,6 +981,14 @@ export class RewriteAppController {
       assignForm: defaultAssignForm,
       eventForm: defaultEventForm,
       scanCode: "",
+      scanMode: defaultScanMode,
+      bulkQueue: {
+        ...defaultBulkQueueState,
+        labelSearch: {
+          ...defaultSearchState,
+          results: [],
+        },
+      },
       scanHistory: [],
       lastAssignment: null,
       cameraLookupCode: null,
@@ -881,6 +1119,17 @@ export class RewriteAppController {
       patch.labelSearch = this.state.labelSearch.query
         ? this.state.labelSearch
         : { ...this.state.labelSearch, results: partTypesResult.value, status: "idle", error: null };
+      patch.bulkQueue = {
+        ...this.state.bulkQueue,
+        labelSearch: this.state.bulkQueue.labelSearch.query
+          ? this.state.bulkQueue.labelSearch
+          : {
+              ...this.state.bulkQueue.labelSearch,
+              results: partTypesResult.value,
+              status: "idle",
+              error: null,
+            },
+      };
     }
 
     patch.refreshError =
@@ -964,7 +1213,7 @@ export class RewriteAppController {
     }
   }
 
-  private async performSearch(surface: "label" | "merge" | "correction", query: string): Promise<void> {
+  private async performSearch(surface: "label" | "merge" | "correction" | "bulkLabel", query: string): Promise<void> {
     this.searchControllers[surface]?.abort();
     this.searchRequestIds[surface] += 1;
     const requestId = this.searchRequestIds[surface];
@@ -976,7 +1225,9 @@ export class RewriteAppController {
         ? this.state.labelSearch
         : surface === "merge"
           ? this.state.mergeSearch
-          : this.state.correctionUi.search;
+          : surface === "correction"
+            ? this.state.correctionUi.search
+            : this.state.bulkQueue.labelSearch;
     this.patch({
       ...(surface === "correction"
         ? {
@@ -990,6 +1241,18 @@ export class RewriteAppController {
               },
             },
           }
+        : surface === "bulkLabel"
+          ? {
+              bulkQueue: {
+                ...this.state.bulkQueue,
+                labelSearch: {
+                  ...current,
+                  query,
+                  status: "loading",
+                  error: null,
+                },
+              },
+            }
         : {
             [surface === "label" ? "labelSearch" : "mergeSearch"]: {
               ...current,
@@ -1018,6 +1281,18 @@ export class RewriteAppController {
                 },
               },
             }
+          : surface === "bulkLabel"
+            ? {
+                bulkQueue: {
+                  ...this.state.bulkQueue,
+                  labelSearch: {
+                    query,
+                    results,
+                    status: "idle",
+                    error: null,
+                  },
+                },
+              }
           : {
               [surface === "label" ? "labelSearch" : "mergeSearch"]: {
                 query,
@@ -1047,6 +1322,18 @@ export class RewriteAppController {
                 },
               },
             }
+          : surface === "bulkLabel"
+            ? {
+                bulkQueue: {
+                  ...this.state.bulkQueue,
+                  labelSearch: {
+                    ...current,
+                    query,
+                    status: "error",
+                    error: errorMessage(caught),
+                  },
+                },
+              }
           : {
               [surface === "label" ? "labelSearch" : "mergeSearch"]: {
                 ...current,
@@ -1080,7 +1367,9 @@ export class RewriteAppController {
     try {
       const scanOptions: { signal: AbortSignal; autoIncrement: boolean } = {
         signal: controller.signal,
-        autoIncrement: this.state.scanMode === "increment",
+        autoIncrement:
+          this.state.scanMode.kind === "oneByOne" &&
+          this.state.scanMode.behavior === "increment",
       };
       const response = await api.scan(code, scanOptions);
       if (requestId !== this.scanRequestId) {
@@ -1118,14 +1407,7 @@ export class RewriteAppController {
   }
 
   private applyScanResponse(response: ScanResponse, code: string): void {
-    const historyCode =
-      response.mode === "unknown"
-        ? response.code
-        : response.qrCode.code;
-    const nextHistory = [
-      { code: historyCode, mode: response.mode, timestamp: new Date().toISOString() },
-      ...this.state.scanHistory,
-    ].slice(0, 20);
+    const nextHistory = this.buildNextScanHistory(response);
     if (response.mode === "unknown") {
       this.scanActor.send({ type: "LOOKUP.UNKNOWN", code: response.code });
       this.patch({ scanResult: response, scanHistory: nextHistory });
@@ -1171,6 +1453,225 @@ export class RewriteAppController {
     if (response.entity.targetType === "bulk" && (response as { autoIncremented?: boolean }).autoIncremented) {
       this.addToast(`+1 ${response.entity.partType.canonicalName} (now ${response.entity.quantity ?? "?"})`, "success");
     }
+  }
+
+  private async handleBulkQueueScan(
+    code: string,
+    options: { source?: "manual" | "camera" } = {},
+  ): Promise<void> {
+    const { source = "manual" } = options;
+    this.scanAbortController?.abort();
+    this.scanRequestId += 1;
+    const requestId = this.scanRequestId;
+    const controller = new AbortController();
+    this.scanAbortController = controller;
+
+    if (source === "camera") {
+      this.patch({ cameraLookupCode: code });
+    }
+    this.patch({ pendingAction: "scan" });
+
+    try {
+      const response = await api.scan(code, {
+        signal: controller.signal,
+        autoIncrement: false,
+      });
+      if (requestId !== this.scanRequestId) {
+        return;
+      }
+
+      this.applyBulkQueueScanResponse(response);
+    } catch (caught) {
+      if (controller.signal.aborted) {
+        return;
+      }
+      if (this.handleApiFailure(caught)) {
+        return;
+      }
+
+      const failure: RewriteFailure = {
+        kind: "unexpected",
+        operation: "bulk.collect",
+        message: errorMessage(caught),
+        retryability: "never",
+        details: { machine: "bulkQueue" },
+        cause: caught,
+      };
+      this.bulkQueueActor.send({ type: "QUEUE.ROW_REJECTED", failure });
+      this.addToast(failure.message, "error");
+    } finally {
+      if (source === "camera" && requestId === this.scanRequestId) {
+        this.patch({ cameraLookupCode: null });
+      }
+      if (requestId === this.scanRequestId) {
+        this.patch({ pendingAction: null });
+      }
+    }
+  }
+
+  private applyBulkQueueScanResponse(response: ScanResponse): void {
+    const nextHistory = this.buildNextScanHistory(response);
+    const accepted = this.buildBulkQueueRow(response);
+    if (!accepted.ok) {
+      this.bulkQueueActor.send({ type: "QUEUE.ROW_REJECTED", failure: accepted.error });
+      this.patch({ scanHistory: nextHistory });
+      this.addToast(accepted.error.message, "error");
+      return;
+    }
+
+    const duplicate = this.state.bulkQueue.rows.find((row) => row.code === accepted.value.code);
+    this.bulkQueueActor.send({ type: "QUEUE.ROW_ACCEPTED", row: accepted.value });
+    this.patch({ scanHistory: nextHistory });
+
+    this.addToast(
+      duplicate
+        ? `Collapsed duplicate scan for ${accepted.value.code} · ${duplicate.count + 1} scans`
+        : this.describeBulkQueueAcceptance(accepted.value),
+      duplicate ? "info" : "success",
+    );
+  }
+
+  private buildNextScanHistory(response: ScanResponse) {
+    const historyCode =
+      response.mode === "unknown"
+        ? response.code
+        : response.qrCode.code;
+    return [
+      { code: historyCode, mode: response.mode, timestamp: new Date().toISOString() },
+      ...this.state.scanHistory,
+    ].slice(0, 20);
+  }
+
+  private buildBulkQueueRow(response: ScanResponse): { ok: true; value: BulkQueueRow } | { ok: false; error: RewriteFailure } {
+    if (this.state.scanMode.kind !== "bulk") {
+      return {
+        ok: false,
+        error: this.createBulkQueueFailure("bulk_queue_mode_mismatch", "Bulk queueing is only available while bulk mode is active."),
+      };
+    }
+
+    const action = this.state.scanMode.action;
+    const timestamp = new Date().toISOString();
+
+    if (response.mode === "unknown") {
+      return {
+        ok: false,
+        error: this.createBulkQueueFailure(
+          "bulk_queue_mode_mismatch",
+          action === "label"
+            ? "Bulk label only accepts printed Smart DB labels."
+            : "Bulk move/delete only accepts already assigned Smart DB labels.",
+        ),
+      };
+    }
+
+    if (response.qrCode.batchId === "external") {
+      return {
+        ok: false,
+        error: this.createBulkQueueFailure(
+          "bulk_queue_external_unsupported",
+          "Bulk queue v1 only accepts Smart DB labels, not external/manufacturer barcodes.",
+        ),
+      };
+    }
+
+    if (action === "label") {
+      if (response.mode !== "label") {
+        return {
+          ok: false,
+          error: this.createBulkQueueFailure("bulk_queue_mode_mismatch", "Bulk label only accepts printed, unassigned Smart DB labels."),
+        };
+      }
+      if (this.state.bulkQueue.kind && this.state.bulkQueue.kind !== "unlabeled") {
+        return {
+          ok: false,
+          error: this.createBulkQueueFailure("bulk_queue_mixed_kind", "This queue already contains assigned items. Clear it before bulk labeling."),
+        };
+      }
+
+      return {
+        ok: true,
+        value: {
+          kind: "unlabeled",
+          code: response.qrCode.code,
+          batchId: response.qrCode.batchId,
+          count: 1,
+          firstSeenAt: timestamp,
+          lastSeenAt: timestamp,
+        } satisfies BulkUnlabeledQueueRow,
+      };
+    }
+
+    if (response.mode !== "interact") {
+      return {
+        ok: false,
+        error: this.createBulkQueueFailure("bulk_queue_mode_mismatch", "Bulk move/delete only accepts assigned Smart DB labels."),
+      };
+    }
+
+    if (this.state.bulkQueue.kind && this.state.bulkQueue.kind !== "assigned") {
+      return {
+        ok: false,
+        error: this.createBulkQueueFailure("bulk_queue_mixed_kind", "This queue already contains unlabeled items. Clear it before bulk moving or deleting."),
+      };
+    }
+
+    const deleteEligibility = this.getBulkDeleteEligibility(response);
+    if (action === "delete" && deleteEligibility.status === "ineligible") {
+      return {
+        ok: false,
+        error: this.createBulkQueueFailure("bulk_queue_ineligible", deleteEligibility.reason),
+      };
+    }
+
+    return {
+      ok: true,
+      value: {
+        kind: "assigned",
+        code: response.qrCode.code,
+        count: 1,
+        firstSeenAt: timestamp,
+        lastSeenAt: timestamp,
+        targetType: response.entity.targetType,
+        targetId: response.entity.id,
+        partTypeId: response.entity.partType.id,
+        partTypeName: response.entity.partType.canonicalName,
+        location: response.entity.location,
+        deleteEligibility,
+      } satisfies BulkAssignedQueueRow,
+    };
+  }
+
+  private getBulkDeleteEligibility(
+    response: Extract<ScanResponse, { mode: "interact" }>,
+  ): BulkDeleteEligibility {
+    return response.recentEvents.length === 1 && response.recentEvents[0]?.event === "labeled"
+      ? { status: "eligible" }
+      : {
+          status: "ineligible",
+          reason: "Bulk delete only supports fresh ingests whose history is still just the original labeled event.",
+        };
+  }
+
+  private createBulkQueueFailure(code: Extract<RewriteFailure, { kind: "domain" }>["code"], message: string): RewriteFailure {
+    return {
+      kind: "domain",
+      operation: "bulk.collect",
+      code,
+      message,
+      retryability: "never",
+      details: {
+        machine: "bulkQueue",
+        state: this.state.bulkQueue.status,
+      },
+    };
+  }
+
+  private describeBulkQueueAcceptance(row: BulkQueueRow): string {
+    if (row.kind === "unlabeled") {
+      return `${row.code} queued for bulk label`;
+    }
+    return `${row.code} queued for bulk ${this.state.bulkQueue.action}`;
   }
 
   private async handleRegisterBatch(): Promise<void> {
@@ -1266,19 +1767,15 @@ export class RewriteAppController {
     const code = sanitizeScannedCode(this.state.scanCode);
     if (!code) return;
     this.patch({ scanCode: "" });
+    if (this.state.scanMode.kind === "bulk") {
+      await this.handleBulkQueueScan(code);
+      return;
+    }
     await this.performScan(code);
   }
 
   private handleScanNext(): void {
-    this.cameraService.stop();
-    this.patch({
-      cameraLookupCode: null,
-      scanCode: "",
-      scanResult: null,
-      assignForm: defaultAssignForm,
-      eventForm: defaultEventForm,
-      labelSearch: defaultSearchState,
-    });
+    this.clearCurrentScanWorkspace();
   }
 
   private handleCameraScanNext(): void {
@@ -1292,13 +1789,21 @@ export class RewriteAppController {
       return;
     }
 
-    if (hasInProgressScanWork(
-      this.state.scanResult,
-      this.state.assignForm,
-      this.state.labelSearch.query,
-      this.state.eventForm,
-    )) {
+    if (
+      this.state.scanMode.kind === "oneByOne" &&
+      hasInProgressScanWork(
+        this.state.scanResult,
+        this.state.assignForm,
+        this.state.labelSearch.query,
+        this.state.eventForm,
+      )
+    ) {
       this.addToast("Clear the current scan first", "error");
+      return;
+    }
+
+    if (this.state.scanMode.kind === "bulk") {
+      await this.handleBulkQueueScan(code, { source: "camera" });
       return;
     }
 
@@ -1707,6 +2212,125 @@ export class RewriteAppController {
     }
   }
 
+  private async handleBulkAssign(): Promise<void> {
+    if (this.state.scanMode.kind !== "bulk" || this.state.scanMode.action !== "label") {
+      this.addToast("Switch to bulk label before submitting a bulk label batch.", "error");
+      return;
+    }
+
+    this.patch({ pendingAction: "bulk" });
+    this.bulkQueueActor.send({ type: "QUEUE.SUBMIT_REQUESTED" });
+    try {
+      const parsed = parseBulkAssignForm({
+        ...this.state.bulkQueue.labelForm,
+        qrs: this.state.bulkQueue.rows.map((row) => row.code),
+      });
+      if (!parsed.ok) {
+        this.bulkQueueActor.send({ type: "QUEUE.SUBMIT_FAILED", failure: parsed.error });
+        this.addToast(this.failureMessage(parsed.error), "error");
+        return;
+      }
+
+      const response = await api.bulkAssignQrs(parsed.value);
+      this.bulkQueueActor.send({ type: "QUEUE.SUBMIT_SUCCEEDED" });
+      this.clearBulkQueue("label");
+      this.addToast(`Bulk labeled ${response.processedCount} Smart DB labels.`, "success");
+      await this.loadAuthenticatedData();
+    } catch (caught) {
+      const failure = this.createBulkSubmitFailure("bulk.assign", caught);
+      this.bulkQueueActor.send({ type: "QUEUE.SUBMIT_FAILED", failure });
+      if (!this.handleApiFailure(caught)) {
+        this.addToast(failure.message, "error");
+      }
+    } finally {
+      this.patch({ pendingAction: null });
+    }
+  }
+
+  private async handleBulkMove(): Promise<void> {
+    if (this.state.scanMode.kind !== "bulk" || this.state.scanMode.action !== "move") {
+      this.addToast("Switch to bulk move before submitting a bulk move batch.", "error");
+      return;
+    }
+
+    this.patch({ pendingAction: "bulk" });
+    this.bulkQueueActor.send({ type: "QUEUE.SUBMIT_REQUESTED" });
+    try {
+      const parsed = parseBulkMoveForm({
+        targets: this.buildBulkMoveTargets(),
+        location: this.state.bulkQueue.moveForm.location,
+        notes: this.state.bulkQueue.moveForm.notes,
+      });
+      if (!parsed.ok) {
+        this.bulkQueueActor.send({ type: "QUEUE.SUBMIT_FAILED", failure: parsed.error });
+        this.addToast(this.failureMessage(parsed.error), "error");
+        return;
+      }
+
+      const response = await api.bulkMoveEntities(parsed.value);
+      this.bulkQueueActor.send({ type: "QUEUE.SUBMIT_SUCCEEDED" });
+      this.clearBulkQueue("move");
+      this.addToast(`Bulk moved ${response.processedCount} Smart DB labels.`, "success");
+      await this.loadAuthenticatedData();
+    } catch (caught) {
+      const failure = this.createBulkSubmitFailure("bulk.move", caught);
+      this.bulkQueueActor.send({ type: "QUEUE.SUBMIT_FAILED", failure });
+      if (!this.handleApiFailure(caught)) {
+        this.addToast(failure.message, "error");
+      }
+    } finally {
+      this.patch({ pendingAction: null });
+    }
+  }
+
+  private async handleBulkDelete(): Promise<void> {
+    if (this.state.scanMode.kind !== "bulk" || this.state.scanMode.action !== "delete") {
+      this.addToast("Switch to bulk delete before submitting a bulk delete batch.", "error");
+      return;
+    }
+    if (
+      this.state.authState.status !== "authenticated" ||
+      !hasSmartDbRole(this.state.authState.session.roles, smartDbRoles.admin)
+    ) {
+      this.addToast("Bulk delete requires Smart DB admin access.", "error");
+      return;
+    }
+    if (
+      typeof window !== "undefined" &&
+      !window.confirm("Reverse every eligible ingest in this bulk queue? The correction audit will be preserved.")
+    ) {
+      return;
+    }
+
+    this.patch({ pendingAction: "bulk" });
+    this.bulkQueueActor.send({ type: "QUEUE.SUBMIT_REQUESTED" });
+    try {
+      const parsed = parseBulkDeleteForm({
+        targets: this.buildBulkDeleteTargets(),
+        reason: this.state.bulkQueue.deleteForm.reason,
+      });
+      if (!parsed.ok) {
+        this.bulkQueueActor.send({ type: "QUEUE.SUBMIT_FAILED", failure: parsed.error });
+        this.addToast(this.failureMessage(parsed.error), "error");
+        return;
+      }
+
+      const response = await api.bulkReverseIngest(parsed.value);
+      this.bulkQueueActor.send({ type: "QUEUE.SUBMIT_SUCCEEDED" });
+      this.clearBulkQueue("delete");
+      this.addToast(`Bulk deleted ${response.processedCount} fresh ingests.`, "success");
+      await this.loadAuthenticatedData();
+    } catch (caught) {
+      const failure = this.createBulkSubmitFailure("bulk.delete", caught);
+      this.bulkQueueActor.send({ type: "QUEUE.SUBMIT_FAILED", failure });
+      if (!this.handleApiFailure(caught)) {
+        this.addToast(failure.message, "error");
+      }
+    } finally {
+      this.patch({ pendingAction: null });
+    }
+  }
+
   private async handleRecordEvent(): Promise<void> {
     this.patch({ pendingAction: "event" });
     this.scanActor.send({ type: "EVENT.PARSE_REQUESTED", targetType: this.state.eventForm.targetType });
@@ -1972,16 +2596,235 @@ export class RewriteAppController {
     });
   }
 
-  private setScanMode(mode: "increment" | "inspect"): void {
-    try {
-      localStorage.setItem("smartdb:scanMode", mode);
-    } catch {}
-    this.patch({ scanMode: mode });
+  private setBulkLabelMode(mode: "existing" | "new"): void {
+    if (mode === "existing") {
+      this.patch({
+        bulkQueue: {
+          ...this.state.bulkQueue,
+          labelForm: {
+            ...this.state.bulkQueue.labelForm,
+            partTypeMode: "existing",
+            canonicalName: "",
+            category: "",
+          },
+        },
+      });
+      return;
+    }
+
+    this.patch({
+      bulkQueue: {
+        ...this.state.bulkQueue,
+        labelForm: {
+          ...this.state.bulkQueue.labelForm,
+          partTypeMode: "new",
+          existingPartTypeId: "",
+        },
+      },
+    });
   }
 
-  private restoreScanMode(): "increment" | "inspect" {
-    // Always start in view-only mode. User opts into auto-count per session.
-    return "inspect";
+  private setBulkLabelEntityKind(kind: "instance" | "bulk"): void {
+    this.patch({
+      bulkQueue: {
+        ...this.state.bulkQueue,
+        labelForm: {
+          ...this.state.bulkQueue.labelForm,
+          entityKind: kind,
+          countable: kind === "instance" ? true : this.state.bulkQueue.labelForm.countable,
+        },
+      },
+    });
+  }
+
+  private setBulkLabelCountability(countable: boolean): void {
+    const nextUnit = countable && !getMeasurementUnitBySymbol(this.state.bulkQueue.labelForm.unitSymbol)?.isInteger
+      ? "pcs"
+      : this.state.bulkQueue.labelForm.unitSymbol;
+    this.patch({
+      bulkQueue: {
+        ...this.state.bulkQueue,
+        labelForm: {
+          ...this.state.bulkQueue.labelForm,
+          entityKind: "bulk",
+          countable,
+          unitSymbol: nextUnit,
+        },
+      },
+    });
+  }
+
+  private selectBulkLabelPartType(partId: string): void {
+    const selected = this.state.bulkQueue.labelSearch.results.find((partType) => partType.id === partId) ??
+      this.state.catalogSuggestions.find((partType) => partType.id === partId);
+    if (!selected) {
+      return;
+    }
+
+    this.patch({
+      bulkQueue: {
+        ...this.state.bulkQueue,
+        labelForm: {
+          ...this.state.bulkQueue.labelForm,
+          entityKind: selected.countable
+            ? this.state.bulkQueue.labelForm.entityKind
+            : "bulk",
+          partTypeMode: "existing",
+          existingPartTypeId: selected.id,
+          canonicalName: "",
+          category: formatCategoryPath(selected.categoryPath),
+          countable: selected.countable,
+          unitSymbol: selected.unit.symbol,
+          initialStatus: "available",
+          initialQuantity: "1",
+          minimumQuantity: "",
+        },
+      },
+    });
+  }
+
+  private createBulkLabelVariant(partId: string): void {
+    const selected = this.state.bulkQueue.labelSearch.results.find((partType) => partType.id === partId) ??
+      this.state.catalogSuggestions.find((partType) => partType.id === partId);
+    if (!selected) {
+      return;
+    }
+
+    this.patch({
+      bulkQueue: {
+        ...this.state.bulkQueue,
+        labelForm: {
+          ...this.state.bulkQueue.labelForm,
+          partTypeMode: "new",
+          existingPartTypeId: "",
+          canonicalName: selected.canonicalName,
+          category: formatCategoryPath(selected.categoryPath),
+          countable: selected.countable,
+          entityKind: selected.countable ? this.state.bulkQueue.labelForm.entityKind : "bulk",
+          unitSymbol: selected.unit.symbol,
+        },
+      },
+    });
+  }
+
+  private setTopLevelScanMode(kind: "oneByOne" | "bulk"): void {
+    if (kind === "oneByOne") {
+      this.clearBulkQueue();
+      this.patch({
+        scanMode: {
+          kind: "oneByOne",
+          behavior: this.preferredOneByOneBehavior,
+        },
+      });
+      return;
+    }
+
+    this.clearCurrentScanWorkspace();
+    this.patch({
+      scanMode: {
+        kind: "bulk",
+        action: this.state.bulkQueue.action,
+      },
+    });
+  }
+
+  private setOneByOneBehavior(behavior: OneByOneScanBehavior): void {
+    this.preferredOneByOneBehavior = behavior;
+    this.patch({
+      scanMode: {
+        kind: "oneByOne",
+        behavior,
+      },
+    });
+  }
+
+  private setBulkQueueAction(action: BulkQueueAction): void {
+    this.clearBulkQueue(action);
+    this.patch({
+      scanMode: {
+        kind: "bulk",
+        action,
+      },
+    });
+  }
+
+  private restoreScanMode(): ScanModeState {
+    return defaultScanMode;
+  }
+
+  private clearCurrentScanWorkspace(): void {
+    this.cameraService.stop();
+    this.patch({
+      cameraLookupCode: null,
+      scanCode: "",
+      scanResult: null,
+      assignForm: defaultAssignForm,
+      eventForm: defaultEventForm,
+      labelSearch: defaultSearchState,
+    });
+  }
+
+  private clearBulkQueue(action: BulkQueueAction = this.state.bulkQueue.action): void {
+    this.bulkQueueActor.send({ type: "QUEUE.ACTION_CHANGED", action });
+    this.patch({
+      bulkQueue: {
+        ...defaultBulkQueueState,
+        action,
+        labelSearch: {
+          ...defaultSearchState,
+          results: [...this.state.catalogSuggestions],
+        },
+      },
+    });
+  }
+
+  private buildBulkMoveTargets(): BulkEntityTarget[] {
+    return this.state.bulkQueue.rows
+      .filter((row): row is BulkAssignedQueueRow => row.kind === "assigned")
+      .map((row) => ({
+        targetType: row.targetType,
+        targetId: row.targetId,
+        qrCode: row.code,
+      }));
+  }
+
+  private buildBulkDeleteTargets(): BulkReverseIngestTarget[] {
+    return this.state.bulkQueue.rows
+      .filter((row): row is BulkAssignedQueueRow => row.kind === "assigned")
+      .map((row) => ({
+        assignedKind: row.targetType,
+        assignedId: row.targetId,
+        qrCode: row.code,
+      }));
+  }
+
+  private createBulkSubmitFailure(
+    operation: "bulk.assign" | "bulk.move" | "bulk.delete",
+    caught: unknown,
+  ): RewriteFailure {
+    if (caught instanceof ApiClientError && caught.code === "conflict") {
+      return {
+        kind: "conflict",
+        operation,
+        code: "stale_state",
+        message: errorMessage(caught),
+        retryability: "after-user-action",
+        details: {
+          targetId: null,
+        },
+      };
+    }
+
+    return {
+      kind: "unexpected",
+      operation,
+      message: errorMessage(caught),
+      retryability: "never",
+      details: {
+        machine: "bulkQueue",
+      },
+      cause: caught,
+    };
   }
 
   private addToast(message: string, type: ToastRecord["type"]): void {
@@ -2102,4 +2945,13 @@ export function startRewriteApp(root: HTMLElement): RewriteAppController {
   const controller = new RewriteAppController(root);
   controller.start();
   return controller;
+}
+
+function summarizeBulkQueue(rows: readonly BulkQueueRow[]) {
+  const totalScanCount = rows.reduce((sum, row) => sum + row.count, 0);
+  return {
+    uniqueLabelCount: rows.length,
+    totalScanCount,
+    duplicateScanCount: totalScanCount - rows.length,
+  };
 }

@@ -3,10 +3,16 @@ import type { DatabaseSync } from "node:sqlite";
 import {
   bulkLevels,
   bulkStockSchema,
+  type BulkAssignQrsCommand,
+  type BulkAssignQrsResponse,
   categoryLeafFromPath,
   ConflictError,
   correctionEventSchema,
   defaultMeasurementUnit,
+  type BulkMoveEntitiesCommand,
+  type BulkMoveEntitiesResponse,
+  type BulkReverseIngestCommand,
+  type BulkReverseIngestResponse,
   type CorrectionEvent,
   type CorrectionKind,
   type CorrectionTargetKind,
@@ -96,6 +102,8 @@ interface ResetInventoryStateResult {
 }
 
 export class InventoryService {
+  private transactionDepth = 0;
+
   constructor(
     private readonly db: DatabaseSync,
     private readonly partDbClient: PartDbClient,
@@ -826,6 +834,40 @@ export class InventoryService {
     return summary;
   }
 
+  bulkAssignQrs(input: BulkAssignQrsCommand): BulkAssignQrsResponse {
+    return this.withTransaction(() => {
+      const entities: InventoryEntitySummary[] = [];
+      let sharedExistingPartTypeId: string | null = null;
+
+      for (const [index, qrCode] of input.qrs.entries()) {
+        const partType =
+          input.assignment.partType.kind === "new" && sharedExistingPartTypeId
+            ? {
+                kind: "existing" as const,
+                existingPartTypeId: sharedExistingPartTypeId,
+              }
+            : input.assignment.partType;
+
+        const entity = this.assignQr({
+          ...input.assignment,
+          qrCode,
+          partType,
+          actor: input.actor,
+        });
+        entities.push(entity);
+
+        if (index === 0 && input.assignment.partType.kind === "new") {
+          sharedExistingPartTypeId = entity.partType.id;
+        }
+      }
+
+      return {
+        entities,
+        processedCount: entities.length,
+      };
+    });
+  }
+
   recordEvent(input: RecordEventCommand): StockEvent {
     const actor = input.actor;
     const targetId = input.targetId;
@@ -999,6 +1041,26 @@ export class InventoryService {
     });
 
     return this.latestEvent("bulk", current.id);
+  }
+
+  bulkMoveEntities(input: BulkMoveEntitiesCommand): BulkMoveEntitiesResponse {
+    return this.withTransaction(() => {
+      const events = input.targets.map((target) =>
+        this.recordEvent({
+          targetType: target.targetType,
+          targetId: target.targetId,
+          event: "moved",
+          location: input.location,
+          notes: input.notes,
+          actor: input.actor,
+        }),
+      );
+
+      return {
+        events,
+        processedCount: events.length,
+      };
+    });
   }
 
   mergePartTypes(input: MergePartTypesRequest): PartType {
@@ -1494,6 +1556,31 @@ export class InventoryService {
       qrCode: mapQrCode(updated),
       correctionEvent,
     };
+  }
+
+  bulkReverseIngest(input: BulkReverseIngestCommand): BulkReverseIngestResponse {
+    return this.withTransaction(() => {
+      const qrCodes: QRCode[] = [];
+      const correctionEvents: CorrectionEvent[] = [];
+
+      for (const target of input.targets) {
+        const reversed = this.reverseIngestAssignment({
+          qrCode: target.qrCode,
+          assignedKind: target.assignedKind,
+          assignedId: target.assignedId,
+          actor: input.actor,
+          reason: input.reason,
+        });
+        qrCodes.push(reversed.qrCode);
+        correctionEvents.push(reversed.correctionEvent);
+      }
+
+      return {
+        qrCodes,
+        correctionEvents,
+        processedCount: qrCodes.length,
+      };
+    });
   }
 
   async getPartDbStatus(): Promise<PartDbConnectionStatus> {
@@ -2528,13 +2615,30 @@ export class InventoryService {
   }
 
   private withTransaction<T>(work: () => T): T {
-    this.db.exec("BEGIN");
+    const savepoint = `smartdb_tx_${this.transactionDepth}`;
+    if (this.transactionDepth === 0) {
+      this.db.exec("BEGIN");
+    } else {
+      this.db.exec(`SAVEPOINT ${savepoint}`);
+    }
+    this.transactionDepth += 1;
     try {
       const result = work();
-      this.db.exec("COMMIT");
+      this.transactionDepth -= 1;
+      if (this.transactionDepth === 0) {
+        this.db.exec("COMMIT");
+      } else {
+        this.db.exec(`RELEASE SAVEPOINT ${savepoint}`);
+      }
       return result;
     } catch (error) {
-      this.db.exec("ROLLBACK");
+      this.transactionDepth -= 1;
+      if (this.transactionDepth === 0) {
+        this.db.exec("ROLLBACK");
+      } else {
+        this.db.exec(`ROLLBACK TO SAVEPOINT ${savepoint}`);
+        this.db.exec(`RELEASE SAVEPOINT ${savepoint}`);
+      }
       throw error;
     }
   }

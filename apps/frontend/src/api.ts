@@ -3,6 +3,12 @@ import {
   applicationErrorResponseSchema,
   assignQrRequestSchema,
   authSessionSchema,
+  bulkAssignQrsRequestSchema,
+  bulkAssignQrsResponseSchema,
+  bulkMoveEntitiesRequestSchema,
+  bulkMoveEntitiesResponseSchema,
+  bulkReverseIngestRequestSchema,
+  bulkReverseIngestResponseSchema,
   correctionEventSchema,
   correctionHistoryQuerySchema,
   dashboardSummarySchema,
@@ -31,6 +37,12 @@ import {
   stockEventSchema,
   type AssignQrRequest,
   type AuthSession,
+  type BulkAssignQrsRequest,
+  type BulkAssignQrsResponse,
+  type BulkMoveEntitiesRequest,
+  type BulkMoveEntitiesResponse,
+  type BulkReverseIngestRequest,
+  type BulkReverseIngestResponse,
   type CorrectionEvent,
   type CorrectionHistoryQuery,
   type DashboardSummary,
@@ -283,10 +295,24 @@ export const api = {
       headers: idempotencyHeaders(),
     });
   },
+  bulkAssignQrs(payload: BulkAssignQrsRequest): Promise<BulkAssignQrsResponse> {
+    return request(bulkAssignQrsResponseSchema, "/api/bulk/assign", {
+      method: "POST",
+      body: JSON.stringify(parseWithSchema(bulkAssignQrsRequestSchema, payload, "bulk assignment form")),
+      headers: idempotencyHeaders(),
+    });
+  },
   recordEvent(payload: RecordEventRequest): Promise<StockEvent> {
     return request(stockEventSchema, "/api/events", {
       method: "POST",
       body: JSON.stringify(parseWithSchema(recordEventRequestSchema, payload, "event form")),
+      headers: idempotencyHeaders(),
+    });
+  },
+  bulkMoveEntities(payload: BulkMoveEntitiesRequest): Promise<BulkMoveEntitiesResponse> {
+    return request(bulkMoveEntitiesResponseSchema, "/api/bulk/move", {
+      method: "POST",
+      body: JSON.stringify(parseWithSchema(bulkMoveEntitiesRequestSchema, payload, "bulk move form")),
       headers: idempotencyHeaders(),
     });
   },
@@ -315,6 +341,13 @@ export const api = {
     return request(reverseIngestAssignmentResponseSchema, "/api/corrections/reverse-ingest", {
       method: "POST",
       body: JSON.stringify(parseWithSchema(reverseIngestAssignmentRequestSchema, payload, "reverse ingest request")),
+      headers: idempotencyHeaders(),
+    });
+  },
+  bulkReverseIngest(payload: BulkReverseIngestRequest): Promise<BulkReverseIngestResponse> {
+    return request(bulkReverseIngestResponseSchema, "/api/bulk/reverse-ingest", {
+      method: "POST",
+      body: JSON.stringify(parseWithSchema(bulkReverseIngestRequestSchema, payload, "bulk reverse ingest request")),
       headers: idempotencyHeaders(),
     });
   },
