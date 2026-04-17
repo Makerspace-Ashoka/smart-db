@@ -368,6 +368,31 @@ export class RewriteAppController {
           });
         }
         break;
+      case "tree-pick-assign-category":
+        this.patch({
+          assignForm: {
+            ...this.state.assignForm,
+            category: actionEl.dataset.category ?? "",
+          },
+        });
+        break;
+      case "tree-pick-scan-edit-category": {
+        const edit = this.state.scanEdit;
+        if (edit.status !== "open" || edit.form.action !== "editShared") {
+          break;
+        }
+        this.patch({
+          scanEdit: {
+            ...edit,
+            form: {
+              ...edit.form,
+              sharedCategory: actionEl.dataset.category ?? "",
+            },
+            dirty: true,
+          },
+        });
+        break;
+      }
       case "select-event-action":
         if (actionEl.dataset.event) {
           this.patch({

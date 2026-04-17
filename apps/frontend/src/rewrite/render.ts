@@ -18,6 +18,7 @@ import {
 import { attr, checked, disabled, escapeHtml, joinHtml, selected } from "./html";
 import type { RewriteUiState, TabId, ToastRecord } from "./ui-state";
 import { findSharedTypeConflictCandidates, getPartDbHealthPill, getPartDbSyncPill } from "./view-helpers";
+import { buildTreePickerView } from "./tree-picker";
 
 export function renderApp(state: RewriteUiState): string {
   if (state.authState.status === "checking") {
@@ -712,20 +713,7 @@ function renderNewPartTypeForm(
       <small style="margin-top:0.3rem;text-transform:none;letter-spacing:0;font-family:var(--font-sans)">Use <code>/</code> for sub-categories. Each level is created in Part-DB.</small>
       ${assignIssues.category ? `<span class="field-error">${escapeHtml(assignIssues.category)}</span>` : ""}
     </label>
-    ${state.knownCategories.length > 0 ? `
-      <div class="wide picker" role="listbox" aria-label="Known categories">
-        ${filterKnownValues(state.knownCategories, state.assignForm.category).map((cat) => {
-          const segments = cat.split(" / ");
-          const leaf = segments[segments.length - 1] ?? cat;
-          return `
-            <button type="button" role="option" aria-selected="${String(state.assignForm.category === cat)}" class="${state.assignForm.category === cat ? "selected" : ""}" data-action="pick-known-category" data-category="${attr(cat)}">
-              <strong>${escapeHtml(leaf)}</strong>
-              <span>${escapeHtml(cat)}</span>
-            </button>
-          `;
-        }).join("")}
-      </div>
-    ` : ""}
+    ${renderCategoryTreePicker(state.knownCategories, state.assignForm.category, "tree-pick-assign-category")}
     <div class="wide mode-toggle" role="radiogroup" aria-label="Tracking mode">
       <button type="button" role="radio" aria-checked="${String(state.assignForm.entityKind === "instance")}" class="${state.assignForm.entityKind === "instance" ? "selected" : ""}" data-action="set-entity-kind" data-entity-kind="instance">Tracked unit</button>
       <button type="button" role="radio" aria-checked="${String(state.assignForm.entityKind === "bulk")}" class="${state.assignForm.entityKind === "bulk" ? "selected" : ""}" data-action="set-entity-kind" data-entity-kind="bulk">Bulk pool</button>
@@ -889,15 +877,54 @@ function renderInteractCard(
   `;
 }
 
-function renderCurrentBorrow(state: RewriteUiState): string {
-  if (
-    !state.scanResult ||
-    state.scanResult.mode !== "interact" ||
-    state.scanResult.entity.targetType !== "instance"
-  ) {
+function renderCategoryTreePicker(
+  knownCategories: readonly string[],
+  current: string,
+  pickAction: string,
+): string {
+  const view = buildTreePickerView(knownCategories, current);
+  if (knownCategories.length === 0) {
     return "";
   }
-  const borrow = state.scanResult.currentBorrow;
+  const breadcrumbButtons = [
+    `<button type="button" class="disclosure" data-action="${attr(pickAction)}" data-category="">All</button>`,
+    ...view.breadcrumb.map(
+      (entry) =>
+        `<button type="button" class="disclosure" data-action="${attr(pickAction)}" data-category="${attr(entry.pathUpToHere)}">${escapeHtml(entry.segment)}</button>`,
+    ),
+  ].join(`<span aria-hidden="true" style="margin:0 0.25rem">/</span>`);
+
+  const children = view.children.length === 0
+    ? ""
+    : `
+      <div class="wide picker" role="listbox" aria-label="Category children">
+        ${view.children
+          .map(
+            (child) => `
+              <button type="button" role="option" data-action="${attr(pickAction)}" data-category="${attr(child.fullPath)}">
+                <strong>${escapeHtml(child.segment)}</strong>
+                ${child.hasChildren ? `<span>nested</span>` : child.isKnownLeaf ? `<span>leaf</span>` : ""}
+              </button>
+            `,
+          )
+          .join("")}
+      </div>
+    `;
+
+  return `
+    <div class="tree-picker wide" aria-label="Category tree">
+      <div class="tree-breadcrumb" style="display:flex;flex-wrap:wrap;align-items:center;margin-bottom:0.35rem">${breadcrumbButtons}</div>
+      ${children}
+    </div>
+  `;
+}
+
+function renderCurrentBorrow(state: RewriteUiState): string {
+  const scan = state.scanResult;
+  if (!scan || scan.mode !== "interact" || !("currentBorrow" in scan)) {
+    return "";
+  }
+  const borrow = scan.currentBorrow;
   if (!borrow) {
     return "";
   }
@@ -1105,6 +1132,7 @@ function renderScanEditSharedForm(
         Shared category path
         <input name="scanEdit.sharedCategory" value="${attr(form.sharedCategory)}" />
       </label>
+      ${renderCategoryTreePicker(state.knownCategories, form.sharedCategory, "tree-pick-scan-edit-category")}
       ${sharedEditConflicts.length > 0 ? `
         <div class="wide">
           <p class="banner error">A matching part type already exists. Use 'Fix this item only' to reassign this scan instead of renaming the shared type.</p>
