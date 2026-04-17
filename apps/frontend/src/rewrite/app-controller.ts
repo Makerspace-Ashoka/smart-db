@@ -358,6 +358,25 @@ export class RewriteAppController {
           });
         }
         break;
+      case "tree-pick-assign-location":
+        this.patch({
+          assignForm: {
+            ...this.state.assignForm,
+            location: actionEl.dataset.location ?? "",
+          },
+        });
+        break;
+      case "tree-pick-bulk-label-location":
+        this.patch({
+          bulkQueue: {
+            ...this.state.bulkQueue,
+            labelForm: {
+              ...this.state.bulkQueue.labelForm,
+              location: actionEl.dataset.location ?? "",
+            },
+          },
+        });
+        break;
       case "pick-known-category":
         if (actionEl.dataset.category) {
           this.patch({

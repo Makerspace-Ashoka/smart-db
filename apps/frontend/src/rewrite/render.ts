@@ -508,18 +508,10 @@ function renderBulkLabelForm(
       ` : ""}
       <label class="wide">
         Location
-        <input name="bulkLabel.location" value="${attr(form.location)}" placeholder="Shelf A" />
+        <input name="bulkLabel.location" value="${attr(form.location)}" placeholder="Shelf A / Bin 7" />
         ${assignIssues.location ? `<span class="field-error">${escapeHtml(assignIssues.location)}</span>` : ""}
       </label>
-      ${state.knownLocations.length > 0 ? `
-        <div class="wide picker" role="listbox" aria-label="Known locations">
-          ${state.knownLocations.map((location) => `
-            <button type="button" role="option" aria-selected="${String(form.location === location)}" class="${form.location === location ? "selected" : ""}" data-action="pick-bulk-label-known-location" data-location="${attr(location)}">
-              <strong>${escapeHtml(location)}</strong>
-            </button>
-          `).join("")}
-        </div>
-      ` : ""}
+      ${renderLocationTreePicker(state.knownLocations, form.location, "tree-pick-bulk-label-location")}
       <label class="wide">
         Notes
         <textarea name="bulkLabel.notes">${escapeHtml(form.notes)}</textarea>
@@ -750,19 +742,10 @@ function renderSharedAssignFields(
   return `
     <label class="wide">
       Location
-      <input name="assign.location" value="${attr(state.assignForm.location)}" placeholder="e.g. Shelf A · Bin 7" autocomplete="off" />
+      <input name="assign.location" value="${attr(state.assignForm.location)}" placeholder="e.g. Shelf A / Bin 7" autocomplete="off" />
       ${assignIssues.location ? `<span class="field-error">${escapeHtml(assignIssues.location)}</span>` : ""}
     </label>
-    ${state.knownLocations.length > 0 ? `
-      <div class="wide picker" role="listbox" aria-label="Known locations">
-        ${filterKnownValues(state.knownLocations, state.assignForm.location).map((location) => `
-          <button type="button" role="option" aria-selected="${String(state.assignForm.location === location)}" class="${state.assignForm.location === location ? "selected" : ""}" data-action="pick-known-location" data-location="${attr(location)}">
-            <strong>${escapeHtml(location)}</strong>
-            <span>existing location</span>
-          </button>
-        `).join("")}
-      </div>
-    ` : ""}
+    ${renderLocationTreePicker(state.knownLocations, state.assignForm.location, "tree-pick-assign-location")}
     ${state.assignForm.entityKind === "instance" ? `
       <label>
         Initial status
@@ -873,6 +856,48 @@ function renderInteractCard(
       ${state.scanEdit.status === "closed"
         ? `<button type="button" class="disclosure" data-action="scan-edit-open" ${disabled(state.pendingAction !== null)}>Edit this part</button>`
         : renderScanEditPanel(state)}
+    </div>
+  `;
+}
+
+function renderLocationTreePicker(
+  knownLocations: readonly string[],
+  current: string,
+  pickAction: string,
+): string {
+  if (knownLocations.length === 0) {
+    return "";
+  }
+  const view = buildTreePickerView(knownLocations, current);
+  const breadcrumbButtons = [
+    `<button type="button" class="disclosure" data-action="${attr(pickAction)}" data-location="">All</button>`,
+    ...view.breadcrumb.map(
+      (entry) =>
+        `<button type="button" class="disclosure" data-action="${attr(pickAction)}" data-location="${attr(entry.pathUpToHere)}">${escapeHtml(entry.segment)}</button>`,
+    ),
+  ].join(`<span aria-hidden="true" style="margin:0 0.25rem">/</span>`);
+
+  const children = view.children.length === 0
+    ? ""
+    : `
+      <div class="wide picker" role="listbox" aria-label="Location children">
+        ${view.children
+          .map(
+            (child) => `
+              <button type="button" role="option" data-action="${attr(pickAction)}" data-location="${attr(child.fullPath)}">
+                <strong>${escapeHtml(child.segment)}</strong>
+                ${child.hasChildren ? `<span>nested</span>` : child.isKnownLeaf ? `<span>leaf</span>` : ""}
+              </button>
+            `,
+          )
+          .join("")}
+      </div>
+    `;
+
+  return `
+    <div class="tree-picker wide" aria-label="Location tree">
+      <div class="tree-breadcrumb" style="display:flex;flex-wrap:wrap;align-items:center;margin-bottom:0.35rem">${breadcrumbButtons}</div>
+      ${children}
     </div>
   `;
 }

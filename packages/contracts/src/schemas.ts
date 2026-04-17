@@ -150,6 +150,58 @@ export function categoryLeafFromPath(path: z.output<typeof categoryPathSchema>):
   return path[path.length - 1] ?? "Uncategorized";
 }
 
+const locationSegmentPattern = /^[A-Za-z0-9 _\-+&().#]+$/;
+
+export const locationPathSchema = z
+  .array(z.string().trim().min(1).max(255))
+  .min(1)
+  .max(6);
+
+export type LocationPathParseError =
+  | { kind: "empty" }
+  | { kind: "too_deep"; maxDepth: number }
+  | { kind: "invalid_segment"; segment: string };
+
+export function parseLocationPathInput(
+  input: string,
+): Result<z.output<typeof locationPathSchema>, LocationPathParseError> {
+  const segments = input
+    .split("/")
+    .map((segment) => segment.trim())
+    .filter((segment) => segment.length > 0);
+
+  if (segments.length === 0) {
+    return Err({ kind: "empty" });
+  }
+
+  if (segments.length > 6) {
+    return Err({ kind: "too_deep", maxDepth: 6 });
+  }
+
+  for (const segment of segments) {
+    if (segment.length > 255 || !locationSegmentPattern.test(segment)) {
+      return Err({ kind: "invalid_segment", segment });
+    }
+  }
+
+  return Ok(segments);
+}
+
+export function describeLocationPathParseError(error: LocationPathParseError): string {
+  switch (error.kind) {
+    case "empty":
+      return "Location is required.";
+    case "too_deep":
+      return `Location paths can have at most ${error.maxDepth} levels.`;
+    case "invalid_segment":
+      return `Location segment '${error.segment}' contains unsupported characters.`;
+  }
+}
+
+export function locationLeafFromPath(path: z.output<typeof locationPathSchema>): string {
+  return path[path.length - 1] ?? "";
+}
+
 export function getMeasurementUnitBySymbol(symbol: string): z.output<typeof measurementUnitSchema> | null {
   return (
     measurementUnitCatalog.find((unit) => unit.symbol === symbol) ?? null
