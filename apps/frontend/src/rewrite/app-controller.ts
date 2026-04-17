@@ -114,6 +114,8 @@ export class RewriteAppController {
     inventoryUi: defaultInventoryUiState,
     scanEdit: defaultScanEditState,
     scanLocations: defaultScanLocationsState,
+    correctionLog: [],
+    correctionLogError: null,
     provisionalPartTypes: [],
     labelSearch: defaultSearchState,
     mergeSearch: defaultSearchState,
@@ -474,6 +476,11 @@ export class RewriteAppController {
         break;
       case "quick-instance-return":
         this.handleQuickInstanceReturn();
+        break;
+      case "open-correction-on-scan":
+        if (actionEl.dataset.qrCode) {
+          void this.openCorrectionOnScan(actionEl.dataset.qrCode);
+        }
         break;
       case "scan-edit-open":
         this.openScanEdit("reassign");
@@ -1115,6 +1122,7 @@ export class RewriteAppController {
       latestBatchResult,
       locationsResult,
       inventoryResult,
+      correctionLogResult,
     ] = await Promise.allSettled([
       api.getDashboard(),
       api.getPartDbStatus(),
@@ -1125,6 +1133,7 @@ export class RewriteAppController {
       canAccessAdmin ? api.getLatestQrBatch() : Promise.resolve(null),
       api.getKnownLocations(),
       api.getInventorySummary(),
+      canAccessAdmin ? api.listCorrectionEvents(50) : Promise.resolve([]),
     ]);
 
     for (const result of [
@@ -1137,6 +1146,7 @@ export class RewriteAppController {
       latestBatchResult,
       locationsResult,
       inventoryResult,
+      correctionLogResult,
     ]) {
       if (result.status === "rejected" && this.handleApiFailure(result.reason)) {
         return;
@@ -1153,6 +1163,7 @@ export class RewriteAppController {
       latestBatchResult,
       locationsResult,
       inventoryResult,
+      correctionLogResult,
     ].filter((result): result is PromiseRejectedResult => result.status === "rejected");
 
     const patch: RewritePatch = {};
@@ -1201,6 +1212,13 @@ export class RewriteAppController {
               error: null,
             },
       };
+    }
+
+    if (correctionLogResult.status === "fulfilled") {
+      patch.correctionLog = correctionLogResult.value;
+      patch.correctionLogError = null;
+    } else {
+      patch.correctionLogError = errorMessage(correctionLogResult.reason);
     }
 
     patch.refreshError =
@@ -1905,6 +1923,15 @@ export class RewriteAppController {
       return null;
     }
     return scanResult;
+  }
+
+  private async openCorrectionOnScan(qrCode: string): Promise<void> {
+    this.patch({
+      activeTab: "scan",
+      scanEdit: defaultScanEditState,
+      scanCode: qrCode,
+    });
+    await this.performScan(qrCode, { silent: false });
   }
 
   private openScanEdit(action: ScanEditAction = "reassign"): void {

@@ -1341,6 +1341,7 @@ function renderActivityTab(state: RewriteUiState): string {
           `).join("")}
         </ul>
       ` : ""}
+      ${renderCorrectionLog(state)}
       ${state.scanHistory.length > 0 ? `
         <h3 class="activity-section-title">This session</h3>
         <ul class="activity-list">
@@ -1356,6 +1357,38 @@ function renderActivityTab(state: RewriteUiState): string {
         </ul>
       ` : ""}
     </section>
+  `;
+}
+
+function renderCorrectionLog(state: RewriteUiState): string {
+  if (state.correctionLog.length === 0 && !state.correctionLogError) {
+    return "";
+  }
+  return `
+    <h3 class="activity-section-title">Corrections</h3>
+    ${state.correctionLogError ? `<p class="banner error">${escapeHtml(state.correctionLogError)}</p>` : ""}
+    <ul class="activity-list correction-log">
+      ${state.correctionLog.map((event) => {
+        const after = (event.after ?? null) as Record<string, unknown> | null;
+        const before = (event.before ?? null) as Record<string, unknown> | null;
+        const qrCode =
+          typeof after?.qrCode === "string"
+            ? after.qrCode
+            : typeof before?.qrCode === "string"
+              ? before.qrCode
+              : null;
+        return `
+          <li class="activity-item">
+            <div class="activity-item-header">
+              <span class="activity-action">${escapeHtml(correctionLabel(event.correctionKind))} by ${escapeHtml(event.actor)}</span>
+              <span class="activity-time">${escapeHtml(formatTimestamp(event.createdAt))}</span>
+            </div>
+            <span class="activity-detail">${escapeHtml(event.reason)}</span>
+            ${qrCode ? `<button type="button" class="disclosure" data-action="open-correction-on-scan" data-qr-code="${attr(qrCode)}" style="margin-top:0.25rem;font-size:0.8rem">Open ${escapeHtml(qrCode)} on scan</button>` : ""}
+          </li>
+        `;
+      }).join("")}
+    </ul>
   `;
 }
 

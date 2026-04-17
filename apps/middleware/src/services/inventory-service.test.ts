@@ -2271,6 +2271,31 @@ describe("InventoryService", () => {
       ).toThrowError(/UNIQUE|constraint/i);
     });
 
+    it("listCorrectionEvents returns events ordered newest-first with a bounded limit", () => {
+      const { service } = makeService();
+      const instance = assignBorrowInstance(service, "BR-7170");
+      service.reverseIngestAssignment({
+        qrCode: "BR-7170",
+        assignedKind: "instance",
+        assignedId: instance.id,
+        actor: "labeler",
+        reason: "Fat-finger",
+      });
+
+      const all = service.listCorrectionEvents();
+      expect(all).toHaveLength(1);
+      expect(all[0]).toMatchObject({
+        correctionKind: "ingest_reversed",
+        reason: "Fat-finger",
+        targetType: "instance",
+      });
+
+      const bounded = service.listCorrectionEvents(0);
+      expect(bounded).toHaveLength(1);
+      const big = service.listCorrectionEvents(999);
+      expect(big.length).toBeLessThanOrEqual(200);
+    });
+
     it("exposes canReverseIngest as true for a fresh assignment and false after any event", async () => {
       const { service } = makeService();
       const instance = assignBorrowInstance(service, "BR-7150");

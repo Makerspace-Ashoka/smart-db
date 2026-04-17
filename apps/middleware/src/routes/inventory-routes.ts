@@ -84,6 +84,12 @@ export async function registerInventoryRoutes(
     return inventoryService.getCorrectionHistory(query.targetType, query.targetId);
   });
 
+  app.get("/api/corrections", admin, async (request) => {
+    const rawQuery = request.query as Record<string, string | undefined> | undefined;
+    const limit = Number(rawQuery?.limit);
+    return inventoryService.listCorrectionEvents(Number.isFinite(limit) ? limit : 50);
+  });
+
   app.post("/api/qr-batches", adminMutation, async (request) => {
     const command = parseWithSchema(
       registerQrBatchRequestSchema,

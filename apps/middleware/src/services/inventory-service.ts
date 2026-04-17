@@ -1302,6 +1302,21 @@ export class InventoryService {
       .map((row) => mapCorrectionEvent(row as SqlRow));
   }
 
+  listCorrectionEvents(limit: number = 50): CorrectionEvent[] {
+    const bounded = Math.max(1, Math.min(200, Math.floor(limit)));
+    return this.db
+      .prepare(
+        `
+        SELECT *
+        FROM correction_events
+        ORDER BY created_at DESC, id DESC
+        LIMIT ?
+      `,
+      )
+      .all(bounded)
+      .map((row) => mapCorrectionEvent(row as SqlRow));
+  }
+
   reassignEntityPartType(input: ReassignEntityPartTypeCommand): ReassignEntityPartTypeResponse {
     const target = this.loadCorrectionEntity(input.targetType, input.targetId);
     if (!target) {

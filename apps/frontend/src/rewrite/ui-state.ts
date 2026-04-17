@@ -214,6 +214,8 @@ export interface RewriteUiState {
   readonly inventoryUi: InventoryUiState;
   readonly scanEdit: ScanEditState;
   readonly scanLocations: ScanLocationsState;
+  readonly correctionLog: readonly CorrectionEvent[];
+  readonly correctionLogError: string | null;
   readonly provisionalPartTypes: readonly PartType[];
   readonly labelSearch: SearchState;
   readonly mergeSearch: SearchState;

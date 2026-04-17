@@ -26,6 +26,7 @@ const apiMock = vi.hoisted(() => ({
   bulkMoveEntities: vi.fn(),
   bulkReverseIngest: vi.fn(),
   getCorrectionHistory: vi.fn(),
+  listCorrectionEvents: vi.fn(),
   reassignEntityPartType: vi.fn(),
   editPartTypeDefinition: vi.fn(),
   reverseIngestAssignment: vi.fn(),
@@ -176,6 +177,7 @@ describe("RewriteAppController", () => {
     apiMock.getKnownLocations.mockResolvedValue(["Shelf A"]);
     apiMock.getInventorySummary.mockResolvedValue([]);
     apiMock.getCorrectionHistory.mockResolvedValue([]);
+    apiMock.listCorrectionEvents.mockResolvedValue([]);
     apiMock.reassignEntityPartType.mockResolvedValue({
       entity: {
         id: "instance-1",
@@ -1160,6 +1162,64 @@ describe("RewriteAppController", () => {
 
     expect(apiMock.reassignEntityPartType).not.toHaveBeenCalled();
     expect(document.querySelector('form[data-form="scan-edit-reassign"]')).not.toBeNull();
+    controller.dispose();
+  });
+
+  it("jumps from a correction-log row to the scan tab on that QR", async () => {
+    const { startRewriteApp } = await import("./app-controller");
+    apiMock.getSession.mockResolvedValueOnce({
+      subject: "user-1",
+      username: "lab-admin",
+      name: "Lab Admin",
+      email: "lab@example.com",
+      roles: ["smartdb.admin"],
+      issuedAt: "2026-01-01T00:00:00.000Z",
+      expiresAt: null,
+    });
+    apiMock.listCorrectionEvents.mockResolvedValueOnce([
+      {
+        id: "corr-2",
+        targetType: "instance",
+        targetId: "instance-9700",
+        correctionKind: "ingest_reversed",
+        actor: "lab-admin",
+        reason: "Fat-finger",
+        before: { qrCode: "QR-9700" },
+        after: { qrCode: "QR-9700", qrStatus: "printed" },
+        createdAt: "2026-01-01T00:00:00.000Z",
+      },
+    ]);
+    apiMock.scan.mockResolvedValueOnce({
+      mode: "label",
+      qrCode: {
+        code: "QR-9700",
+        batchId: "batch-1",
+        status: "printed",
+        assignedKind: null,
+        assignedId: null,
+        createdAt: "2026-01-01T00:00:00.000Z",
+        updatedAt: "2026-01-01T00:00:00.000Z",
+      },
+      suggestions: [],
+      partDb: { configured: false, connected: false, message: "not found" },
+    });
+
+    const controller = startRewriteApp(document.getElementById("root")!);
+    await flush();
+
+    (document.querySelector('[data-tab="activity"]') as HTMLButtonElement).click();
+    await flush();
+
+    const jumpButton = document.querySelector<HTMLButtonElement>(
+      '[data-action="open-correction-on-scan"][data-qr-code="QR-9700"]',
+    );
+    expect(jumpButton).not.toBeNull();
+    jumpButton!.click();
+    await flush();
+
+    expect(apiMock.scan).toHaveBeenCalledWith("QR-9700", expect.objectContaining({ autoIncrement: false }));
+    const scanPanel = document.getElementById("panel-scan");
+    expect(scanPanel).not.toBeNull();
     controller.dispose();
   });
 

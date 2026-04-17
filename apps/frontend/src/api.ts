@@ -256,6 +256,10 @@ export const api = {
     });
     return request(correctionEventSchema.array(), `/api/corrections/history?${params.toString()}`);
   },
+  listCorrectionEvents(limit: number = 50): Promise<CorrectionEvent[]> {
+    const params = new URLSearchParams({ limit: String(Math.max(1, Math.min(200, Math.floor(limit)))) });
+    return request(correctionEventSchema.array(), `/api/corrections?${params.toString()}`);
+  },
   getInventorySummary(): Promise<InventorySummaryRow[]> {
     return request(inventorySummaryRowSchema.array(), "/api/inventory/summary");
   },
