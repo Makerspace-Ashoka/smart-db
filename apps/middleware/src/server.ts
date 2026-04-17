@@ -21,6 +21,7 @@ import { PartDbOutbox } from "./outbox/partdb-outbox.js";
 import { PartDbOutboxWorker } from "./outbox/partdb-worker.js";
 import { PartDbClient } from "./partdb/partdb-client.js";
 import { CategoryResolver } from "./partdb/category-resolver.js";
+import { LocationResolver } from "./partdb/location-resolver.js";
 import { PartDbOperations } from "./partdb/partdb-operations.js";
 import { registerAuthRoutes } from "./routes/auth-routes.js";
 import { registerInventoryRoutes } from "./routes/inventory-routes.js";
@@ -120,6 +121,15 @@ export async function buildServer(options: BuildServerOptions = {}) {
               baseUrl: activeConfig.partDb.baseUrl!,
               apiToken: activeConfig.partDb.apiToken!,
             }),
+          ),
+          new LocationResolver(
+            db,
+            new PartDbStorageLocationsResource(
+              new PartDbRestClient({
+                baseUrl: activeConfig.partDb.baseUrl!,
+                apiToken: activeConfig.partDb.apiToken!,
+              }),
+            ),
           ),
         ),
         app.log,

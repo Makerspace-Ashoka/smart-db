@@ -49,6 +49,7 @@ import {
   partTypeSchema as persistedPartTypeSchema,
   physicalInstanceSchema,
   parseCategoryPathInput,
+  parseLocationPathInput,
   qrCodeSchema,
   stockEventSchema,
   getAvailableInstanceActions,
@@ -1732,6 +1733,7 @@ export class InventoryService {
       this.db.prepare(`DELETE FROM qr_batches`).run();
       this.db.prepare(`DELETE FROM part_types`).run();
       this.db.prepare(`DELETE FROM partdb_category_cache`).run();
+      this.db.prepare(`DELETE FROM partdb_location_cache`).run();
       this.db.prepare(`DELETE FROM idempotency_keys`).run();
     });
 
@@ -2039,12 +2041,16 @@ export class InventoryService {
       return;
     }
 
+    const parsedLocationPath = parseLocationPathInput(location);
+    const storageLocationPath = parsedLocationPath.ok ? parsedLocationPath.value : undefined;
+
     this.partDbOutbox.enqueue(
       {
         kind: "create_lot",
         payload: {
           partIri: partType.partDbPartId ? `/api/parts/${partType.partDbPartId}` : null,
           storageLocationName: location,
+          ...(storageLocationPath ? { storageLocationPath } : {}),
           amount,
           description,
           userBarcode: qrCode,
@@ -2063,6 +2069,7 @@ export class InventoryService {
     patch: {
       amount?: number | undefined;
       storageLocationName?: string | undefined;
+      storageLocationPath?: string[] | undefined;
     },
   ): void {
     if (!this.partDbOutbox) {
@@ -2079,12 +2086,22 @@ export class InventoryService {
       return;
     }
 
+    const enrichedPatch =
+      patch.storageLocationName && !patch.storageLocationPath
+        ? ((): typeof patch => {
+            const parsed = parseLocationPathInput(patch.storageLocationName);
+            return parsed.ok
+              ? { ...patch, storageLocationPath: parsed.value }
+              : patch;
+          })()
+        : patch;
+
     this.partDbOutbox.enqueue(
       {
         kind: "update_lot",
         payload: {
           lotIri: lotId ? `/api/part_lots/${lotId}` : null,
-          patch,
+          patch: enrichedPatch,
         },
         target,
         dependsOnId: dependency?.id ?? null,

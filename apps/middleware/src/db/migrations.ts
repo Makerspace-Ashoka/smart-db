@@ -267,6 +267,17 @@ WHERE pi.status = 'checked_out'
   );
     `,
   },
+  {
+    version: 10,
+    description: "partdb storage location cache",
+    sql: `
+CREATE TABLE IF NOT EXISTS partdb_location_cache (
+  path_key TEXT PRIMARY KEY,
+  partdb_iri TEXT NOT NULL,
+  cached_at TEXT NOT NULL
+);
+    `,
+  },
 ];
 
 export function applyMigrations(
