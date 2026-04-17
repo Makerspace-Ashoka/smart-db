@@ -20,5 +20,5 @@ services:
 
 networks:
   smartdb-previews:
+    external: true
     name: smartdb-previews
-    driver: bridge
