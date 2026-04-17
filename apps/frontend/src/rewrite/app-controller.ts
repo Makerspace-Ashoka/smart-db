@@ -1804,6 +1804,7 @@ export class RewriteAppController {
     if (!target) {
       return;
     }
+    this.scanActor.send({ type: "EDIT.OPEN", editKind: "reassign" });
     this.patch({
       scanEdit: {
         status: "open",
@@ -1828,6 +1829,9 @@ export class RewriteAppController {
 
   private closeScanEdit(): void {
     this.searchControllers.edit?.abort();
+    if (this.state.scanEdit.status === "open") {
+      this.scanActor.send({ type: "EDIT.CLOSE" });
+    }
     this.patch({ scanEdit: defaultScanEditState });
   }
 
@@ -1950,9 +1954,11 @@ export class RewriteAppController {
       return;
     }
 
+    this.scanActor.send({ type: "EDIT.SUBMIT_REQUESTED" });
     this.patch({ pendingAction: "correct" as PendingAction });
     try {
       await api.reassignEntityPartType(parsed.value);
+      this.scanActor.send({ type: "EDIT.SUCCEEDED", editKind: "reassign" });
       const refreshed = await api.scan(target.qrCode.code, { autoIncrement: false });
       this.patch({
         scanResult: refreshed,
@@ -1961,6 +1967,17 @@ export class RewriteAppController {
       this.addToast("Item corrected to the replacement part type.", "success");
       await this.loadAuthenticatedData();
     } catch (caught) {
+      this.scanActor.send({
+        type: "EDIT.FAILED",
+        failure: {
+          kind: "unexpected",
+          operation: "correction.reassignEntityPartType",
+          message: errorMessage(caught),
+          retryability: "never",
+          details: { machine: "scanSession" },
+          cause: caught,
+        },
+      });
       if (!this.handleApiFailure(caught)) {
         this.addToast(errorMessage(caught), "error");
       }
@@ -2016,9 +2033,11 @@ export class RewriteAppController {
       return;
     }
 
+    this.scanActor.send({ type: "EDIT.SUBMIT_REQUESTED" });
     this.patch({ pendingAction: "correct" as PendingAction });
     try {
       await api.editPartTypeDefinition(parsed.value);
+      this.scanActor.send({ type: "EDIT.SUCCEEDED", editKind: "editShared" });
       const refreshed = await api.scan(target.qrCode.code, { autoIncrement: false });
       this.patch({
         scanResult: refreshed,
@@ -2027,6 +2046,17 @@ export class RewriteAppController {
       this.addToast("Shared part type updated.", "success");
       await this.loadAuthenticatedData();
     } catch (caught) {
+      this.scanActor.send({
+        type: "EDIT.FAILED",
+        failure: {
+          kind: "unexpected",
+          operation: "correction.editPartTypeDefinition",
+          message: errorMessage(caught),
+          retryability: "never",
+          details: { machine: "scanSession" },
+          cause: caught,
+        },
+      });
       if (!this.handleApiFailure(caught)) {
         this.addToast(errorMessage(caught), "error");
       }
@@ -2060,9 +2090,11 @@ export class RewriteAppController {
       return;
     }
 
+    this.scanActor.send({ type: "EDIT.SUBMIT_REQUESTED" });
     this.patch({ pendingAction: "correct" as PendingAction });
     try {
       await api.reverseIngestAssignment(parsed.value);
+      this.scanActor.send({ type: "EDIT.SUCCEEDED", editKind: "reverseIngest" });
       this.patch({
         scanResult: null,
         scanEdit: defaultScanEditState,
@@ -2070,6 +2102,17 @@ export class RewriteAppController {
       this.addToast("Ingest reversed. The item is no longer assigned.", "success");
       await this.loadAuthenticatedData();
     } catch (caught) {
+      this.scanActor.send({
+        type: "EDIT.FAILED",
+        failure: {
+          kind: "unexpected",
+          operation: "correction.reverseIngest",
+          message: errorMessage(caught),
+          retryability: "never",
+          details: { machine: "scanSession" },
+          cause: caught,
+        },
+      });
       if (!this.handleApiFailure(caught)) {
         this.addToast(errorMessage(caught), "error");
       }
