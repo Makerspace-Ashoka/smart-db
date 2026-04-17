@@ -2056,7 +2056,7 @@ export class RewriteAppController {
       const stored = localStorage.getItem("smartdb:theme");
       if (stored === "dark" || stored === "light") return stored;
     } catch {}
-    if (window.matchMedia("(prefers-color-scheme: dark)").matches) {
+    if (window.matchMedia?.("(prefers-color-scheme: dark)").matches) {
       return "dark";
     }
     return "light";
