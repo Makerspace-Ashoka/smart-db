@@ -157,23 +157,6 @@ export interface BulkQueueUiState {
   readonly deleteForm: BulkDeleteFormState;
 }
 
-export type CorrectionAction = "reassign" | "editShared" | "reverseIngest" | null;
-
-export interface CorrectionUiState {
-  readonly scanCode: string;
-  readonly target: Extract<ScanResponse, { mode: "interact" }> | null;
-  readonly targetError: string | null;
-  readonly history: readonly CorrectionEvent[];
-  readonly historyError: string | null;
-  readonly search: SearchState;
-  readonly replacementPartTypeId: string;
-  readonly action: CorrectionAction;
-  readonly reason: string;
-  readonly sharedCanonicalName: string;
-  readonly sharedCategory: string;
-  readonly sharedExpectedUpdatedAt: string;
-}
-
 export type ScanEditForm =
   | {
       readonly action: "reassign";
@@ -215,7 +198,6 @@ export interface RewriteUiState {
   readonly knownCategories: readonly string[];
   readonly inventorySummary: readonly InventorySummaryRow[];
   readonly inventoryUi: InventoryUiState;
-  readonly correctionUi: CorrectionUiState;
   readonly scanEdit: ScanEditState;
   readonly provisionalPartTypes: readonly PartType[];
   readonly labelSearch: SearchState;
@@ -367,26 +349,6 @@ export function makeReverseIngestForm(): Extract<ScanEditForm, { action: "revers
     reason: "",
   };
 }
-
-export const defaultCorrectionUiState: CorrectionUiState = {
-  scanCode: "",
-  target: null,
-  targetError: null,
-  history: [],
-  historyError: null,
-  search: {
-    query: "",
-    results: [],
-    status: "idle",
-    error: null,
-  },
-  replacementPartTypeId: "",
-  action: null,
-  reason: "",
-  sharedCanonicalName: "",
-  sharedCategory: "",
-  sharedExpectedUpdatedAt: "",
-};
 
 export const defaultCameraState: CameraScannerSnapshot = {
   phase: "idle",

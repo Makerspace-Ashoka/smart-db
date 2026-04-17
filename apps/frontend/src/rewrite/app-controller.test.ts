@@ -784,7 +784,7 @@ describe("RewriteAppController", () => {
     controller.dispose();
   });
 
-  it("loads an ingested target into the correction panel and shows correction history", async () => {
+  it("loads correction history when opening the scan-card Edit panel", async () => {
     const { startRewriteApp } = await import("./app-controller");
     apiMock.getSession.mockResolvedValueOnce({
       subject: "user-1",
@@ -820,11 +820,7 @@ describe("RewriteAppController", () => {
       },
       recentEvents: [],
       availableActions: ["moved", "checked_out", "consumed", "damaged", "lost", "disposed"],
-      partDb: {
-        configured: false,
-        connected: false,
-        message: "not found",
-      },
+      partDb: { configured: false, connected: false, message: "not found" },
     });
     apiMock.getCorrectionHistory.mockResolvedValueOnce([
       {
@@ -843,29 +839,25 @@ describe("RewriteAppController", () => {
     const controller = startRewriteApp(document.getElementById("root")!);
     await flush();
 
-    (document.querySelector('[data-tab="admin"]') as HTMLButtonElement).click();
+    const scanInput = document.querySelector<HTMLInputElement>('input[name="scanCode"]')!;
+    scanInput.value = "QR-9001";
+    scanInput.dispatchEvent(new Event("input", { bubbles: true }));
+    document.querySelector<HTMLFormElement>('form[data-form="scan"]')!
+      .dispatchEvent(new Event("submit", { bubbles: true, cancelable: true }));
     await flush();
 
-    const scanInput = document.querySelector<HTMLInputElement>('input[name="correction.scanCode"]');
-    expect(scanInput).not.toBeNull();
-    scanInput!.value = "QR-9001";
-    scanInput!.dispatchEvent(new Event("input", { bubbles: true }));
-    const form = document.querySelector<HTMLFormElement>('form[data-form="correction-scan"]');
-    expect(form).not.toBeNull();
-    form!.dispatchEvent(new Event("submit", { bubbles: true, cancelable: true }));
+    document.querySelector<HTMLButtonElement>('[data-action="scan-edit-open"]')!.click();
     await flush();
 
     expect(apiMock.getCorrectionHistory).toHaveBeenCalledWith({
       targetType: "instance",
       targetId: "instance-1",
     });
-    expect(document.body.textContent).toContain("Correct mislabeled ingest");
-    expect(document.body.textContent).toContain("QR-9001");
     expect(document.body.textContent).toContain("Item/bin reassigned");
     controller.dispose();
   });
 
-  it("blocks shared type rename when a matching existing type already exists", async () => {
+  it("blocks scan-card shared rename when a matching type already exists", async () => {
     const { startRewriteApp } = await import("./app-controller");
     apiMock.getSession.mockResolvedValueOnce({
       subject: "user-1",
@@ -932,131 +924,33 @@ describe("RewriteAppController", () => {
     const controller = startRewriteApp(document.getElementById("root")!);
     await flush();
 
-    (document.querySelector('[data-tab="admin"]') as HTMLButtonElement).click();
-    await flush();
-
-    const scanInput = document.querySelector<HTMLInputElement>('input[name="correction.scanCode"]')!;
+    const scanInput = document.querySelector<HTMLInputElement>('input[name="scanCode"]')!;
     scanInput.value = "QR-9001";
     scanInput.dispatchEvent(new Event("input", { bubbles: true }));
-    document.querySelector<HTMLFormElement>('form[data-form="correction-scan"]')!
+    document.querySelector<HTMLFormElement>('form[data-form="scan"]')!
       .dispatchEvent(new Event("submit", { bubbles: true, cancelable: true }));
     await flush();
 
-    (document.querySelector('[data-correction-action="editShared"]') as HTMLButtonElement).click();
+    document.querySelector<HTMLButtonElement>('[data-action="scan-edit-open"]')!.click();
+    await flush();
+    document.querySelector<HTMLButtonElement>('[data-scan-edit-action="editShared"]')!.click();
     await flush();
 
-    const nameInput = document.querySelector<HTMLInputElement>('input[name="correction.sharedCanonicalName"]')!;
+    const nameInput = document.querySelector<HTMLInputElement>('input[name="scanEdit.sharedCanonicalName"]')!;
     nameInput.value = "60 RPM Motor";
     nameInput.dispatchEvent(new Event("input", { bubbles: true }));
-    const reason = document.querySelector<HTMLTextAreaElement>('textarea[name="correction.reason"]')!;
+    const reason = document.querySelector<HTMLTextAreaElement>('textarea[name="scanEdit.reason"]')!;
     reason.value = "Testing collision";
     reason.dispatchEvent(new Event("input", { bubbles: true }));
     await flush();
 
     expect(document.body.textContent).toContain("A matching part type already exists");
 
-    document.querySelector<HTMLFormElement>('form[data-form="correction-edit-shared"]')!
+    document.querySelector<HTMLFormElement>('form[data-form="scan-edit-shared"]')!
       .dispatchEvent(new Event("submit", { bubbles: true, cancelable: true }));
     await flush();
 
     expect(apiMock.editPartTypeDefinition).not.toHaveBeenCalled();
-    controller.dispose();
-  });
-
-  it("reassigns a scanned correction target through the correction flow", async () => {
-    const { startRewriteApp } = await import("./app-controller");
-    apiMock.getSession.mockResolvedValueOnce({
-      subject: "user-1",
-      username: "lab-admin",
-      name: "Lab Admin",
-      email: "lab@example.com",
-      roles: ["smartdb.admin"],
-      issuedAt: "2026-01-01T00:00:00.000Z",
-      expiresAt: null,
-    });
-    apiMock.scan
-      .mockResolvedValueOnce({
-        mode: "interact",
-        qrCode: {
-          code: "QR-9001",
-          batchId: "batch-1",
-          status: "assigned",
-          assignedKind: "instance",
-          assignedId: "instance-1",
-          createdAt: "2026-01-01T00:00:00.000Z",
-          updatedAt: "2026-01-01T00:00:00.000Z",
-        },
-        entity: {
-          id: "instance-1",
-          targetType: "instance",
-          qrCode: "QR-9001",
-          partType: { ...partType, id: "part-old", canonicalName: "Wrong Type" },
-          location: "Shelf A",
-          state: "available",
-          assignee: null,
-          partDbSyncStatus: "never",
-          quantity: null,
-          minimumQuantity: null,
-        },
-        recentEvents: [],
-        availableActions: ["moved", "checked_out", "consumed", "damaged", "lost", "disposed"],
-        partDb: { configured: false, connected: false, message: "not found" },
-      })
-      .mockResolvedValueOnce({
-        mode: "interact",
-        qrCode: {
-          code: "QR-9001",
-          batchId: "batch-1",
-          status: "assigned",
-          assignedKind: "instance",
-          assignedId: "instance-1",
-          createdAt: "2026-01-01T00:00:00.000Z",
-          updatedAt: "2026-01-01T00:00:00.000Z",
-        },
-        entity: {
-          id: "instance-1",
-          targetType: "instance",
-          qrCode: "QR-9001",
-          partType,
-          location: "Shelf A",
-          state: "available",
-          assignee: null,
-          partDbSyncStatus: "never",
-          quantity: null,
-          minimumQuantity: null,
-        },
-        recentEvents: [],
-        availableActions: ["moved", "checked_out", "consumed", "damaged", "lost", "disposed"],
-        partDb: { configured: false, connected: false, message: "not found" },
-      });
-    apiMock.getCorrectionHistory.mockResolvedValue([]);
-
-    const controller = startRewriteApp(document.getElementById("root")!);
-    await flush();
-
-    (document.querySelector('[data-tab="admin"]') as HTMLButtonElement).click();
-    await flush();
-
-    const scanInput = document.querySelector<HTMLInputElement>('input[name="correction.scanCode"]');
-    scanInput!.value = "QR-9001";
-    scanInput!.dispatchEvent(new Event("input", { bubbles: true }));
-    document.querySelector<HTMLFormElement>('form[data-form="correction-scan"]')!
-      .dispatchEvent(new Event("submit", { bubbles: true, cancelable: true }));
-    await flush();
-
-    (document.querySelector('[data-correction-action="reassign"]') as HTMLButtonElement).click();
-    await flush();
-    (document.querySelector('[data-action="select-correction-part"]') as HTMLButtonElement).click();
-    const reason = document.querySelector<HTMLTextAreaElement>('textarea[name="correction.reason"]');
-    reason!.value = "Wrong type";
-    reason!.dispatchEvent(new Event("input", { bubbles: true }));
-
-    document.querySelector<HTMLFormElement>('form[data-form="correction-reassign"]')!
-      .dispatchEvent(new Event("submit", { bubbles: true, cancelable: true }));
-    await flush();
-
-    expect(apiMock.reassignEntityPartType).toHaveBeenCalled();
-    expect(document.body.textContent).toContain("Item corrected to the replacement part type.");
     controller.dispose();
   });
 

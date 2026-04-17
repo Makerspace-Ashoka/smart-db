@@ -52,7 +52,6 @@ import {
   defaultBulkLabelForm,
   defaultBulkQueueState,
   defaultCameraState,
-  defaultCorrectionUiState,
   defaultScanEditState,
   defaultScanMode,
   defaultEventForm,
@@ -93,7 +92,7 @@ type RewritePatch = {
   -readonly [K in keyof RewriteUiState]?: RewriteUiState[K];
 };
 
-type SearchSurface = "label" | "merge" | "correction" | "bulkLabel" | "edit";
+type SearchSurface = "label" | "merge" | "bulkLabel" | "edit";
 
 export class RewriteAppController {
   private state: RewriteUiState = {
@@ -112,7 +111,6 @@ export class RewriteAppController {
     knownCategories: [],
     inventorySummary: [],
     inventoryUi: defaultInventoryUiState,
-    correctionUi: defaultCorrectionUiState,
     scanEdit: defaultScanEditState,
     provisionalPartTypes: [],
     labelSearch: defaultSearchState,
@@ -150,14 +148,12 @@ export class RewriteAppController {
   private readonly searchControllers: Record<SearchSurface, AbortController | null> = {
     label: null,
     merge: null,
-    correction: null,
     bulkLabel: null,
     edit: null,
   };
   private readonly searchRequestIds: Record<SearchSurface, number> = {
     label: 0,
     merge: 0,
-    correction: 0,
     bulkLabel: 0,
     edit: 0,
   };
@@ -229,7 +225,6 @@ export class RewriteAppController {
     this.cameraService.destroy();
     this.searchControllers.label?.abort();
     this.searchControllers.merge?.abort();
-    this.searchControllers.correction?.abort();
     this.searchControllers.bulkLabel?.abort();
     this.searchControllers.edit?.abort();
     this.scanAbortController?.abort();
@@ -328,45 +323,6 @@ export class RewriteAppController {
           this.setAssignMode(actionEl.dataset.assignMode);
         }
         break;
-      case "set-correction-action":
-        if (
-          actionEl.dataset.correctionAction === "reassign" ||
-          actionEl.dataset.correctionAction === "editShared" ||
-          actionEl.dataset.correctionAction === "reverseIngest"
-        ) {
-          this.setCorrectionAction(actionEl.dataset.correctionAction);
-        }
-        break;
-      case "select-correction-part":
-        if (actionEl.dataset.partId) {
-          this.patch({
-            correctionUi: {
-              ...this.state.correctionUi,
-              replacementPartTypeId: actionEl.dataset.partId,
-            },
-          });
-        }
-        break;
-      case "use-correction-match":
-        if (actionEl.dataset.partId) {
-          this.patch({
-            correctionUi: {
-              ...this.state.correctionUi,
-              action: "reassign",
-              replacementPartTypeId: actionEl.dataset.partId,
-              reason: "",
-              search: {
-                ...this.state.correctionUi.search,
-                query: actionEl.dataset.query ?? "",
-                results: [...this.state.catalogSuggestions],
-                status: "idle",
-                error: null,
-              },
-            },
-          });
-          void this.performSearch("correction", actionEl.dataset.query ?? "");
-        }
-        break;
       case "select-existing-part":
         if (actionEl.dataset.partId) {
           this.selectExistingPartType(actionEl.dataset.partId);
@@ -457,9 +413,6 @@ export class RewriteAppController {
         break;
       case "camera-scan-next":
         this.handleCameraScanNext();
-        break;
-      case "correction-clear":
-        this.patch({ correctionUi: defaultCorrectionUiState });
         break;
       case "scan-edit-open":
         this.openScanEdit();
@@ -567,9 +520,6 @@ export class RewriteAppController {
       case "scan":
         void this.handleScan();
         break;
-      case "correction-scan":
-        void this.handleCorrectionScan();
-        break;
       case "assign":
         void this.handleAssign();
         break;
@@ -587,15 +537,6 @@ export class RewriteAppController {
         break;
       case "batch":
         void this.handleRegisterBatch();
-        break;
-      case "correction-reassign":
-        void this.handleCorrectionReassign();
-        break;
-      case "correction-edit-shared":
-        void this.handleCorrectionEditShared();
-        break;
-      case "correction-reverse-ingest":
-        void this.handleCorrectionReverseIngest();
         break;
       case "scan-edit-reassign":
         void this.handleScanEditReassign();
@@ -674,14 +615,6 @@ export class RewriteAppController {
       case "scanCode":
         this.patch({ scanCode: String(rawValue) });
         return;
-      case "correction.scanCode":
-        this.patch({
-          correctionUi: {
-            ...this.state.correctionUi,
-            scanCode: String(rawValue),
-          },
-        });
-        return;
       case "bulkLabelSearch.query":
         this.patch({
           bulkQueue: {
@@ -711,18 +644,6 @@ export class RewriteAppController {
           },
         });
         void this.performSearch("merge", String(rawValue));
-        return;
-      case "correctionSearch.query":
-        this.patch({
-          correctionUi: {
-            ...this.state.correctionUi,
-            search: {
-              ...this.state.correctionUi.search,
-              query: String(rawValue),
-            },
-          },
-        });
-        void this.performSearch("correction", String(rawValue));
         return;
       case "inventory.query":
         this.patch({
@@ -759,8 +680,6 @@ export class RewriteAppController {
           this.updateBulkDeleteForm(name, rawValue);
         } else if (name.startsWith("event.")) {
           this.updateEventForm(name, rawValue);
-        } else if (name.startsWith("correction.")) {
-          this.updateCorrectionForm(name, rawValue);
         } else if (name.startsWith("scanEdit.")) {
           this.updateScanEditForm(name, rawValue);
         }
@@ -960,25 +879,6 @@ export class RewriteAppController {
     this.patch({ eventForm: next });
   }
 
-  private updateCorrectionForm(name: string, rawValue: string | boolean): void {
-    const value = String(rawValue);
-    const next = { ...this.state.correctionUi };
-    switch (name) {
-      case "correction.reason":
-        next.reason = value;
-        break;
-      case "correction.sharedCanonicalName":
-        next.sharedCanonicalName = value;
-        break;
-      case "correction.sharedCategory":
-        next.sharedCategory = value;
-        break;
-      default:
-        return;
-    }
-    this.patch({ correctionUi: next });
-  }
-
   private async restoreSession(signal: AbortSignal, authError: string | null): Promise<void> {
     this.authActor.send({ type: "SESSION.MISSING" });
     this.patch({
@@ -1060,7 +960,6 @@ export class RewriteAppController {
     void this.cameraService.attachVideoElement(null);
     this.searchControllers.label?.abort();
     this.searchControllers.merge?.abort();
-    this.searchControllers.correction?.abort();
     this.searchControllers.bulkLabel?.abort();
     this.searchControllers.edit?.abort();
     this.scanAbortController?.abort();
@@ -1076,7 +975,6 @@ export class RewriteAppController {
       knownCategories: [],
       inventorySummary: [],
       inventoryUi: defaultInventoryUiState,
-      correctionUi: defaultCorrectionUiState,
       scanEdit: defaultScanEditState,
       provisionalPartTypes: [],
       labelSearch: defaultSearchState,
@@ -1360,8 +1258,6 @@ export class RewriteAppController {
         return this.state.labelSearch;
       case "merge":
         return this.state.mergeSearch;
-      case "correction":
-        return this.state.correctionUi.search;
       case "bulkLabel":
         return this.state.bulkQueue.labelSearch;
       case "edit":
@@ -1379,11 +1275,6 @@ export class RewriteAppController {
         return;
       case "merge":
         this.patch({ mergeSearch: next });
-        return;
-      case "correction":
-        this.patch({
-          correctionUi: { ...this.state.correctionUi, search: next },
-        });
         return;
       case "bulkLabel":
         this.patch({
@@ -1897,244 +1788,6 @@ export class RewriteAppController {
     const video = this.root.querySelector<HTMLVideoElement>("#rewrite-camera-video");
     if (video && this.cameraService.getSnapshot().activeStream) {
       await this.cameraService.attachVideoElement(video);
-    }
-  }
-
-  private setCorrectionAction(action: "reassign" | "editShared" | "reverseIngest"): void {
-    this.patch({
-      correctionUi: {
-        ...this.state.correctionUi,
-        action,
-        reason: "",
-        replacementPartTypeId: "",
-        search:
-          action === "reassign"
-            ? {
-                ...this.state.correctionUi.search,
-                query: "",
-                results: [...this.state.catalogSuggestions],
-                status: "idle",
-                error: null,
-              }
-            : this.state.correctionUi.search,
-      },
-    });
-  }
-
-  private async handleCorrectionScan(): Promise<void> {
-    const code = sanitizeScannedCode(this.state.correctionUi.scanCode);
-    if (!code) {
-      return;
-    }
-
-    try {
-      const response = await api.scan(code, { autoIncrement: false });
-      if (response.mode !== "interact") {
-        this.patch({
-          correctionUi: {
-            ...defaultCorrectionUiState,
-            scanCode: code,
-            targetError: "Only already-ingested assigned items can be corrected.",
-          },
-        });
-        return;
-      }
-
-      const history = await api.getCorrectionHistory({
-        targetType: response.entity.targetType,
-        targetId: response.entity.id,
-      }).catch((caught) => {
-        return this.handleApiFailure(caught)
-          ? []
-          : (() => {
-              this.addToast(errorMessage(caught), "error");
-              return [];
-            })();
-      });
-
-      this.patch({
-        correctionUi: {
-          ...defaultCorrectionUiState,
-          scanCode: code,
-          target: response,
-          history,
-          action: "reassign",
-          search: {
-            query: "",
-            results: [...this.state.catalogSuggestions],
-            status: "idle",
-            error: null,
-          },
-          sharedCanonicalName: response.entity.partType.canonicalName,
-          sharedCategory: formatCategoryPath(response.entity.partType.categoryPath),
-          sharedExpectedUpdatedAt: response.entity.partType.updatedAt,
-        },
-      });
-    } catch (caught) {
-      if (!this.handleApiFailure(caught)) {
-        this.patch({
-          correctionUi: {
-            ...defaultCorrectionUiState,
-            scanCode: code,
-            targetError: errorMessage(caught),
-          },
-        });
-      }
-    }
-  }
-
-  private async handleCorrectionReassign(): Promise<void> {
-    const target = this.state.correctionUi.target;
-    if (!target) {
-      this.addToast("Scan an ingested item first.", "error");
-      return;
-    }
-
-    this.patch({ pendingAction: "correct" as PendingAction });
-    try {
-      const parsed = parseReassignPartTypeForm({
-        targetType: target.entity.targetType,
-        targetId: target.entity.id,
-        fromPartTypeId: target.entity.partType.id,
-        toPartTypeId: this.state.correctionUi.replacementPartTypeId,
-        reason: this.state.correctionUi.reason,
-      });
-      if (!parsed.ok) {
-        this.addToast(this.failureMessage(parsed.error), "error");
-        return;
-      }
-
-      const response = await api.reassignEntityPartType(parsed.value);
-      const refreshedTarget = await api.scan(target.qrCode.code, { autoIncrement: false });
-      const history = await api.getCorrectionHistory({
-        targetType: target.entity.targetType,
-        targetId: target.entity.id,
-      });
-
-      this.patch({
-        correctionUi: {
-          ...this.state.correctionUi,
-          target: refreshedTarget.mode === "interact" ? refreshedTarget : this.state.correctionUi.target,
-          history,
-          action: null,
-          reason: "",
-          replacementPartTypeId: "",
-          sharedCanonicalName: response.entity.partType.canonicalName,
-          sharedCategory: formatCategoryPath(response.entity.partType.categoryPath),
-          sharedExpectedUpdatedAt: response.entity.partType.updatedAt,
-        },
-      });
-      this.addToast("Item corrected to the replacement part type.", "success");
-      await this.loadAuthenticatedData();
-    } catch (caught) {
-      if (!this.handleApiFailure(caught)) {
-        this.addToast(errorMessage(caught), "error");
-      }
-    } finally {
-      this.patch({ pendingAction: null });
-    }
-  }
-
-  private async handleCorrectionEditShared(): Promise<void> {
-    const target = this.state.correctionUi.target;
-    if (!target) {
-      this.addToast("Scan an ingested item first.", "error");
-      return;
-    }
-
-    this.patch({ pendingAction: "correct" as PendingAction });
-    try {
-      const parsed = parseEditPartTypeDefinitionForm({
-        partTypeId: target.entity.partType.id,
-        expectedUpdatedAt: this.state.correctionUi.sharedExpectedUpdatedAt,
-        canonicalName: this.state.correctionUi.sharedCanonicalName,
-        category: this.state.correctionUi.sharedCategory,
-        reason: this.state.correctionUi.reason,
-      });
-      if (!parsed.ok) {
-        this.addToast(this.failureMessage(parsed.error), "error");
-        return;
-      }
-
-      const conflicts = this.findCorrectionSharedEditConflicts();
-      if (conflicts.length > 0) {
-        this.addToast(
-          `A part type named '${conflicts[0]!.canonicalName}' already exists in ${conflicts[0]!.categoryPath.join(" / ")}. Use 'Fix this item/bin only' to reassign this scanned item instead of renaming the shared type.`,
-          "error",
-        );
-        return;
-      }
-
-      const usage = this.state.inventorySummary.find((row) => row.id === target.entity.partType.id);
-      const linkedCount = (usage?.bins ?? 0) + (usage?.instanceCount ?? 0);
-      if (
-        typeof window !== "undefined" &&
-        !window.confirm(
-          linkedCount > 0
-            ? `Rename the shared type '${target.entity.partType.canonicalName}' for ${linkedCount} linked inventory rows? This is not item-only.`
-            : `Rename the shared type '${target.entity.partType.canonicalName}'? This changes the catalog definition itself, not just the scanned item.`,
-        )
-      ) {
-        return;
-      }
-
-      const response = await api.editPartTypeDefinition(parsed.value);
-      const refreshedTarget = await api.scan(target.qrCode.code, { autoIncrement: false });
-      this.patch({
-        correctionUi: {
-          ...this.state.correctionUi,
-          target: refreshedTarget.mode === "interact" ? refreshedTarget : this.state.correctionUi.target,
-          action: null,
-          reason: "",
-          sharedCanonicalName: response.partType.canonicalName,
-          sharedCategory: formatCategoryPath(response.partType.categoryPath),
-          sharedExpectedUpdatedAt: response.partType.updatedAt,
-        },
-      });
-      this.addToast("Shared part type updated.", "success");
-      await this.loadAuthenticatedData();
-    } catch (caught) {
-      if (!this.handleApiFailure(caught)) {
-        this.addToast(errorMessage(caught), "error");
-      }
-    } finally {
-      this.patch({ pendingAction: null });
-    }
-  }
-
-  private async handleCorrectionReverseIngest(): Promise<void> {
-    const target = this.state.correctionUi.target;
-    if (!target) {
-      this.addToast("Scan an ingested item first.", "error");
-      return;
-    }
-    if (typeof window !== "undefined" && !window.confirm("Reverse this ingest? The QR/Data Matrix will return to printed state, while the correction audit remains.")) {
-      return;
-    }
-
-    this.patch({ pendingAction: "correct" as PendingAction });
-    try {
-      const parsed = parseReverseIngestForm({
-        qrCode: target.qrCode.code,
-        assignedKind: target.entity.targetType,
-        assignedId: target.entity.id,
-        reason: this.state.correctionUi.reason,
-      });
-      if (!parsed.ok) {
-        this.addToast(this.failureMessage(parsed.error), "error");
-        return;
-      }
-
-      await api.reverseIngestAssignment(parsed.value);
-      this.patch({ correctionUi: defaultCorrectionUiState });
-      this.addToast("Ingest reversed. The item is no longer assigned.", "success");
-      await this.loadAuthenticatedData();
-    } catch (caught) {
-      if (!this.handleApiFailure(caught)) {
-        this.addToast(errorMessage(caught), "error");
-      }
-    } finally {
-      this.patch({ pendingAction: null });
     }
   }
 
@@ -3242,20 +2895,6 @@ export class RewriteAppController {
     return failure.kind === "parse"
       ? failure.issues[0]?.message ?? failure.message
       : failure.message;
-  }
-
-  private findCorrectionSharedEditConflicts() {
-    const target = this.state.correctionUi.target;
-    if (!target) {
-      return [];
-    }
-
-    return findSharedTypeConflictCandidates(
-      this.state.inventorySummary,
-      target.entity.partType.id,
-      this.state.correctionUi.sharedCanonicalName,
-      this.state.correctionUi.sharedCategory,
-    );
   }
 
   private patch(nextPatch: Partial<RewriteUiState>): void {
