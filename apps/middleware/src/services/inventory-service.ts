@@ -502,6 +502,8 @@ export class InventoryService {
         .all(entity.targetType, entity.id)
         .map((row) => mapStockEvent(row as SqlRow));
 
+      const canReverseIngest = this.canReverseIngest(entity.targetType, entity.id);
+      const canEditSharedType = this.isAdminActor(actor);
       if (entity.targetType === "instance") {
         return {
           mode: "interact",
@@ -514,6 +516,8 @@ export class InventoryService {
           availableActions: getAvailableInstanceActions(entity.state as PhysicalInstance["status"]),
           partDb,
           currentBorrow: this.getOpenBorrow(entity.id),
+          canReverseIngest,
+          canEditSharedType,
         };
       }
 
@@ -554,6 +558,8 @@ export class InventoryService {
         recentEvents: workingRecentEvents,
         availableActions: getAvailableBulkActions(workingEntity.quantity ?? 0),
         partDb,
+        canReverseIngest,
+        canEditSharedType,
         ...(autoIncremented ? { autoIncremented: true } : {}),
       };
     }
@@ -2643,22 +2649,35 @@ export class InventoryService {
   }
 
   private assertOnlyLabeledHistory(targetType: InventoryTargetKind, targetId: string): void {
+    if (!this.canReverseIngest(targetType, targetId)) {
+      throw new ConflictError("Only fresh ingest assignments can be reversed.", {
+        targetType,
+        targetId,
+      });
+    }
+  }
+
+  private isAdminActor(actor: string | null): boolean {
+    // All authenticated sessions currently get admin (see commit 605c1e7); this
+    // helper is the sanctioned hook to tighten gating without threading role
+    // through every call site. Returning true when the caller is authenticated
+    // keeps behaviour identical today; it also narrows the place to change when
+    // non-admin sessions are reintroduced.
+    return actor !== null && actor.trim().length > 0;
+  }
+
+  canReverseIngest(targetType: InventoryTargetKind, targetId: string): boolean {
     const rows = this.db
-      .prepare(`
+      .prepare(
+        `
         SELECT event
         FROM stock_events
         WHERE target_type = ? AND target_id = ?
         ORDER BY created_at, id
-      `)
+      `,
+      )
       .all(targetType, targetId) as Array<{ event: string }>;
-
-    if (rows.length !== 1 || rows[0]?.event !== "labeled") {
-      throw new ConflictError("Only fresh ingest assignments can be reversed.", {
-        targetType,
-        targetId,
-        eventCount: rows.length,
-      });
-    }
+    return rows.length === 1 && rows[0]?.event === "labeled";
   }
 
   private applyBorrowSideEffect(input: {

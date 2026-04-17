@@ -2271,6 +2271,31 @@ describe("InventoryService", () => {
       ).toThrowError(/UNIQUE|constraint/i);
     });
 
+    it("exposes canReverseIngest as true for a fresh assignment and false after any event", async () => {
+      const { service } = makeService();
+      const instance = assignBorrowInstance(service, "BR-7150");
+
+      const fresh = await service.scanCode("BR-7150", "lab-admin");
+      if (fresh.mode !== "interact") throw new Error("expected interact");
+      expect(fresh.canReverseIngest).toBe(true);
+      expect(fresh.canEditSharedType).toBe(true);
+
+      service.recordEvent({
+        targetType: "instance",
+        targetId: instance.id,
+        actor: "lab-admin",
+        event: "checked_out",
+        location: null,
+        notes: null,
+        assignee: "alice",
+      });
+
+      const after = await service.scanCode("BR-7150", "lab-admin");
+      if (after.mode !== "interact") throw new Error("expected interact");
+      expect(after.canReverseIngest).toBe(false);
+      expect(after.canEditSharedType).toBe(true);
+    });
+
     it("marks a record as overdue when due_at is past", () => {
       const { db, service } = makeService();
       const instance = assignBorrowInstance(service, "BR-7105");

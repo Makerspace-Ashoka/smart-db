@@ -1135,6 +1135,86 @@ describe("RewriteAppController", () => {
     controller.dispose();
   });
 
+  it("reverses an ingest via the scan-card Edit panel when the admin confirms", async () => {
+    const { startRewriteApp } = await import("./app-controller");
+    const originalConfirm = window.confirm;
+    window.confirm = () => true;
+    try {
+      apiMock.getSession.mockResolvedValueOnce({
+        subject: "user-1",
+        username: "lab-admin",
+        name: "Lab Admin",
+        email: "lab@example.com",
+        roles: ["smartdb.admin"],
+        issuedAt: "2026-01-01T00:00:00.000Z",
+        expiresAt: null,
+      });
+      apiMock.scan.mockResolvedValueOnce({
+        mode: "interact",
+        qrCode: {
+          code: "QR-9500",
+          batchId: "batch-1",
+          status: "assigned",
+          assignedKind: "instance",
+          assignedId: "instance-9500",
+          createdAt: "2026-01-01T00:00:00.000Z",
+          updatedAt: "2026-01-01T00:00:00.000Z",
+        },
+        entity: {
+          id: "instance-9500",
+          targetType: "instance",
+          qrCode: "QR-9500",
+          partType,
+          location: "Shelf A",
+          state: "available",
+          assignee: null,
+          partDbSyncStatus: "never",
+          quantity: null,
+          minimumQuantity: null,
+        },
+        recentEvents: [],
+        availableActions: ["moved", "checked_out", "consumed", "damaged", "lost", "disposed"],
+        partDb: { configured: false, connected: false, message: "not found" },
+      });
+      apiMock.getPartTypeItems.mockResolvedValue({ bulkStocks: [], instances: [] });
+
+      const controller = startRewriteApp(document.getElementById("root")!);
+      await flush();
+
+      const scanInput = document.querySelector<HTMLInputElement>('input[name="scanCode"]')!;
+      scanInput.value = "QR-9500";
+      scanInput.dispatchEvent(new Event("input", { bubbles: true }));
+      document.querySelector<HTMLFormElement>('form[data-form="scan"]')!
+        .dispatchEvent(new Event("submit", { bubbles: true, cancelable: true }));
+      await flush();
+
+      document.querySelector<HTMLButtonElement>('[data-action="scan-edit-open"]')!.click();
+      await flush();
+      document.querySelector<HTMLButtonElement>('[data-scan-edit-action="reverseIngest"]')!.click();
+      await flush();
+
+      expect(document.querySelector('form[data-form="scan-edit-reverse"]')).not.toBeNull();
+      const reason = document.querySelector<HTMLTextAreaElement>('textarea[name="scanEdit.reason"]')!;
+      reason.value = "Mislabeled on intake";
+      reason.dispatchEvent(new Event("input", { bubbles: true }));
+
+      document.querySelector<HTMLFormElement>('form[data-form="scan-edit-reverse"]')!
+        .dispatchEvent(new Event("submit", { bubbles: true, cancelable: true }));
+      await flush();
+
+      expect(apiMock.reverseIngestAssignment).toHaveBeenCalledWith({
+        qrCode: "QR-9500",
+        assignedKind: "instance",
+        assignedId: "instance-9500",
+        reason: "Mislabeled on intake",
+      });
+      expect(document.body.textContent).toContain("Ingest reversed.");
+      controller.dispose();
+    } finally {
+      window.confirm = originalConfirm;
+    }
+  });
+
   it("renders every location a scanned part type is stored at", async () => {
     const { startRewriteApp } = await import("./app-controller");
     apiMock.getSession.mockResolvedValueOnce({

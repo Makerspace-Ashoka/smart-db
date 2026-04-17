@@ -1103,6 +1103,8 @@ export const interactInstanceScanResponseSchema = z
     availableActions: z.array(instanceActionSchema),
     partDb: partDbLookupSummarySchema,
     currentBorrow: openBorrowSummarySchema.nullable(),
+    canReverseIngest: z.boolean(),
+    canEditSharedType: z.boolean(),
   })
   .strict();
 
@@ -1117,6 +1119,8 @@ export const interactBulkScanResponseSchema = z
     availableActions: z.array(bulkActionSchema),
     partDb: partDbLookupSummarySchema,
     autoIncremented: z.boolean().optional(),
+    canReverseIngest: z.boolean(),
+    canEditSharedType: z.boolean(),
   })
   .strict();
 

@@ -739,6 +739,8 @@ describe("schemas", () => {
           message: "Not configured",
         },
         currentBorrow: null,
+        canReverseIngest: true,
+        canEditSharedType: true,
       }),
     ).toEqual({
       mode: "interact",
@@ -792,6 +794,8 @@ describe("schemas", () => {
         message: "Not configured",
       },
       currentBorrow: null,
+      canReverseIngest: true,
+      canEditSharedType: true,
     });
 
     expect(
