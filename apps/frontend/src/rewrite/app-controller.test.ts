@@ -22,6 +22,9 @@ const apiMock = vi.hoisted(() => ({
   registerQrBatch: vi.fn(),
   scan: vi.fn(),
   assignQr: vi.fn(),
+  bulkAssignQrs: vi.fn(),
+  bulkMoveEntities: vi.fn(),
+  bulkReverseIngest: vi.fn(),
   getCorrectionHistory: vi.fn(),
   reassignEntityPartType: vi.fn(),
   editPartTypeDefinition: vi.fn(),
@@ -245,6 +248,19 @@ describe("RewriteAppController", () => {
       },
       created: 25,
       skipped: 0,
+    });
+    apiMock.bulkAssignQrs.mockResolvedValue({
+      entities: [],
+      processedCount: 0,
+    });
+    apiMock.bulkMoveEntities.mockResolvedValue({
+      events: [],
+      processedCount: 0,
+    });
+    apiMock.bulkReverseIngest.mockResolvedValue({
+      qrCodes: [],
+      correctionEvents: [],
+      processedCount: 0,
     });
   });
 
@@ -562,6 +578,209 @@ describe("RewriteAppController", () => {
 
     expect(document.body.textContent).toContain("Some data could not be refreshed");
     expect(document.body.textContent).toContain("dashboard refresh failed");
+    controller.dispose();
+  });
+
+  it("switches into bulk mode and changes bulk action views cleanly", async () => {
+    const { startRewriteApp } = await import("./app-controller");
+    apiMock.getSession.mockResolvedValueOnce({
+      subject: "user-1",
+      username: "lab-admin",
+      name: "Lab Admin",
+      email: "lab@example.com",
+      roles: ["smartdb.admin"],
+      issuedAt: "2026-01-01T00:00:00.000Z",
+      expiresAt: null,
+    });
+    const controller = startRewriteApp(document.getElementById("root")!);
+    await flush();
+
+    (Array.from(document.querySelectorAll('[data-action="set-scan-mode-kind"]')) as HTMLButtonElement[])
+      .find((button) => button.dataset.scanModeKind === "bulk")!
+      .click();
+    await flush();
+    expect(document.body.textContent).toContain("Bulk label queue");
+
+    (Array.from(document.querySelectorAll('[data-action="set-bulk-action"]')) as HTMLButtonElement[])
+      .find((button) => button.dataset.bulkAction === "move")!
+      .click();
+    await flush();
+
+    expect(document.body.textContent).toContain("Bulk move queue");
+    controller.dispose();
+  });
+
+  it("submits a shared bulk label payload", async () => {
+    const { startRewriteApp } = await import("./app-controller");
+    apiMock.getSession.mockResolvedValueOnce({
+      subject: "user-1",
+      username: "lab-admin",
+      name: "Lab Admin",
+      email: "lab@example.com",
+      roles: ["smartdb.admin"],
+      issuedAt: "2026-01-01T00:00:00.000Z",
+      expiresAt: null,
+    });
+    apiMock.scan.mockResolvedValueOnce({
+      mode: "label",
+      qrCode: {
+        code: "QR-2301",
+        batchId: "batch-1",
+        status: "printed",
+        assignedKind: null,
+        assignedId: null,
+        createdAt: "2026-01-01T00:00:00.000Z",
+        updatedAt: "2026-01-01T00:00:00.000Z",
+      },
+      suggestions: [partType],
+      partDb: { configured: false, connected: false, message: "not found" },
+    });
+    apiMock.bulkAssignQrs.mockResolvedValueOnce({
+      entities: [
+        {
+          id: "instance-1",
+          targetType: "instance",
+          qrCode: "QR-2301",
+          partType,
+          location: "Shelf A",
+          state: "available",
+          assignee: null,
+          partDbSyncStatus: "never",
+          quantity: null,
+          minimumQuantity: null,
+        },
+      ],
+      processedCount: 1,
+    });
+
+    const controller = startRewriteApp(document.getElementById("root")!);
+    await flush();
+
+    (Array.from(document.querySelectorAll('[data-action="set-scan-mode-kind"]')) as HTMLButtonElement[])
+      .find((button) => button.dataset.scanModeKind === "bulk")!
+      .click();
+    await flush();
+
+    const scanInput = document.querySelector<HTMLInputElement>('input[name="scanCode"]')!;
+    scanInput.value = "QR-2301";
+    scanInput.dispatchEvent(new Event("input", { bubbles: true }));
+    document.querySelector<HTMLFormElement>('form[data-form="scan"]')!
+      .dispatchEvent(new Event("submit", { bubbles: true, cancelable: true }));
+    await flush();
+
+    (document.querySelector('[data-action="select-bulk-label-part"]') as HTMLButtonElement).click();
+    await flush();
+
+    const locationInput = document.querySelector<HTMLInputElement>('input[name="bulkLabel.location"]')!;
+    locationInput.value = "Shelf A";
+    locationInput.dispatchEvent(new Event("input", { bubbles: true }));
+
+    document.querySelector<HTMLFormElement>('form[data-form="bulk-label"]')!
+      .dispatchEvent(new Event("submit", { bubbles: true, cancelable: true }));
+    await flush();
+
+    expect(apiMock.bulkAssignQrs).toHaveBeenCalledWith({
+      qrs: ["QR-2301"],
+      assignment: {
+        entityKind: "instance",
+        location: "Shelf A",
+        notes: null,
+        partType: {
+          kind: "existing",
+          existingPartTypeId: "part-1",
+        },
+        initialStatus: "available",
+      },
+    });
+    controller.dispose();
+  });
+
+  it("rejects ineligible bulk delete scans without mutating the queue", async () => {
+    const { startRewriteApp } = await import("./app-controller");
+    apiMock.getSession.mockResolvedValueOnce({
+      subject: "user-1",
+      username: "lab-admin",
+      name: "Lab Admin",
+      email: "lab@example.com",
+      roles: ["smartdb.admin"],
+      issuedAt: "2026-01-01T00:00:00.000Z",
+      expiresAt: null,
+    });
+    apiMock.scan.mockResolvedValueOnce({
+      mode: "interact",
+      qrCode: {
+        code: "QR-2401",
+        batchId: "batch-1",
+        status: "assigned",
+        assignedKind: "bulk",
+        assignedId: "bulk-1",
+        createdAt: "2026-01-01T00:00:00.000Z",
+        updatedAt: "2026-01-01T00:00:00.000Z",
+      },
+      entity: {
+        id: "bulk-1",
+        targetType: "bulk",
+        qrCode: "QR-2401",
+        partType: measuredPartType,
+        location: "Shelf A",
+        state: "2 kg",
+        assignee: null,
+        partDbSyncStatus: "never",
+        quantity: 2,
+        minimumQuantity: 0.5,
+      },
+      recentEvents: [
+        {
+          id: "event-1",
+          targetType: "bulk",
+          targetId: "bulk-1",
+          event: "labeled",
+          fromState: null,
+          toState: "2 kg",
+          location: "Shelf A",
+          actor: "labeler",
+          notes: null,
+          createdAt: "2026-01-01T00:00:00.000Z",
+        },
+        {
+          id: "event-2",
+          targetType: "bulk",
+          targetId: "bulk-1",
+          event: "moved",
+          fromState: "2 kg",
+          toState: "2 kg",
+          location: "Shelf B",
+          actor: "labeler",
+          notes: null,
+          createdAt: "2026-01-01T00:10:00.000Z",
+        },
+      ],
+      availableActions: ["moved", "restocked", "consumed", "stocktaken", "adjusted"],
+      partDb: { configured: false, connected: false, message: "not found" },
+    });
+
+    const controller = startRewriteApp(document.getElementById("root")!);
+    await flush();
+
+    (Array.from(document.querySelectorAll('[data-action="set-scan-mode-kind"]')) as HTMLButtonElement[])
+      .find((button) => button.dataset.scanModeKind === "bulk")!
+      .click();
+    await flush();
+    (Array.from(document.querySelectorAll('[data-action="set-bulk-action"]')) as HTMLButtonElement[])
+      .find((button) => button.dataset.bulkAction === "delete")!
+      .click();
+    await flush();
+
+    const scanInput = document.querySelector<HTMLInputElement>('input[name="scanCode"]')!;
+    scanInput.value = "QR-2401";
+    scanInput.dispatchEvent(new Event("input", { bubbles: true }));
+    document.querySelector<HTMLFormElement>('form[data-form="scan"]')!
+      .dispatchEvent(new Event("submit", { bubbles: true, cancelable: true }));
+    await flush();
+
+    expect(document.body.textContent).toContain("Bulk delete only supports fresh ingests");
+    expect(document.body.textContent).toContain("0 unique labels");
+    expect(apiMock.bulkReverseIngest).not.toHaveBeenCalled();
     controller.dispose();
   });
 

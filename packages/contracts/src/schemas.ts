@@ -411,6 +411,150 @@ export const assignQrCommandSchema = z.discriminatedUnion("entityKind", [
   bulkAssignQrCommandSchema,
 ]);
 
+const uniqueQrCodesSchema = z
+  .array(nonEmptyString)
+  .min(1)
+  .superRefine((codes, context) => {
+    const seen = new Set<string>();
+    for (const [index, code] of codes.entries()) {
+      if (seen.has(code)) {
+        context.addIssue({
+          code: z.ZodIssueCode.custom,
+          path: [index],
+          message: "Each QR/Data Matrix code may appear only once in a batch.",
+        });
+      }
+      seen.add(code);
+    }
+  });
+
+export const sharedInstanceAssignRequestSchema = instanceAssignQrRequestSchema
+  .omit({
+    qrCode: true,
+  })
+  .strict();
+
+export const sharedBulkAssignRequestSchema = bulkAssignQrRequestSchema
+  .omit({
+    qrCode: true,
+  })
+  .strict();
+
+export const sharedAssignRequestSchema = z.discriminatedUnion("entityKind", [
+  sharedInstanceAssignRequestSchema,
+  sharedBulkAssignRequestSchema,
+]);
+
+export const bulkAssignQrsRequestSchema = z
+  .object({
+    qrs: uniqueQrCodesSchema,
+    assignment: sharedAssignRequestSchema,
+  })
+  .strict();
+
+export const bulkAssignQrsCommandSchema = bulkAssignQrsRequestSchema
+  .extend({
+    actor: nonEmptyString,
+  })
+  .strict();
+
+export const bulkEntityTargetSchema = z
+  .object({
+    targetType: inventoryTargetKindSchema,
+    targetId: identifierSchema,
+    qrCode: nonEmptyString,
+  })
+  .strict();
+
+const uniqueBulkEntityTargetsSchema = z
+  .array(bulkEntityTargetSchema)
+  .min(1)
+  .superRefine((targets, context) => {
+    const seenTargets = new Set<string>();
+    const seenCodes = new Set<string>();
+    for (const [index, target] of targets.entries()) {
+      const targetKey = `${target.targetType}:${target.targetId}`;
+      if (seenTargets.has(targetKey)) {
+        context.addIssue({
+          code: z.ZodIssueCode.custom,
+          path: [index, "targetId"],
+          message: "Each inventory target may appear only once in a batch.",
+        });
+      }
+      if (seenCodes.has(target.qrCode)) {
+        context.addIssue({
+          code: z.ZodIssueCode.custom,
+          path: [index, "qrCode"],
+          message: "Each QR/Data Matrix code may appear only once in a batch.",
+        });
+      }
+      seenTargets.add(targetKey);
+      seenCodes.add(target.qrCode);
+    }
+  });
+
+export const bulkMoveEntitiesRequestSchema = z
+  .object({
+    targets: uniqueBulkEntityTargetsSchema,
+    location: nonEmptyString,
+    notes: nullableLooseString.default(null),
+  })
+  .strict();
+
+export const bulkMoveEntitiesCommandSchema = bulkMoveEntitiesRequestSchema
+  .extend({
+    actor: nonEmptyString,
+  })
+  .strict();
+
+export const bulkReverseIngestTargetSchema = z
+  .object({
+    assignedKind: inventoryTargetKindSchema,
+    assignedId: identifierSchema,
+    qrCode: nonEmptyString,
+  })
+  .strict();
+
+const uniqueBulkReverseTargetsSchema = z
+  .array(bulkReverseIngestTargetSchema)
+  .min(1)
+  .superRefine((targets, context) => {
+    const seenTargets = new Set<string>();
+    const seenCodes = new Set<string>();
+    for (const [index, target] of targets.entries()) {
+      const targetKey = `${target.assignedKind}:${target.assignedId}`;
+      if (seenTargets.has(targetKey)) {
+        context.addIssue({
+          code: z.ZodIssueCode.custom,
+          path: [index, "assignedId"],
+          message: "Each inventory target may appear only once in a batch.",
+        });
+      }
+      if (seenCodes.has(target.qrCode)) {
+        context.addIssue({
+          code: z.ZodIssueCode.custom,
+          path: [index, "qrCode"],
+          message: "Each QR/Data Matrix code may appear only once in a batch.",
+        });
+      }
+      seenTargets.add(targetKey);
+      seenCodes.add(target.qrCode);
+    }
+  });
+
+export const bulkReverseIngestRequestSchema = z
+  .object({
+    targets: uniqueBulkReverseTargetsSchema,
+    reason: nonEmptyString,
+  })
+  .strict();
+
+export const bulkReverseIngestCommandSchema = bulkReverseIngestRequestSchema
+  .extend({
+    actor: nonEmptyString,
+  })
+  .strict();
+
 export const instanceRecordEventRequestSchema = z
   .discriminatedUnion("event", [
     z
@@ -675,6 +819,55 @@ export const reverseIngestAssignmentResponseSchema = z
   })
   .strict();
 
+export const bulkAssignQrsResponseSchema = z
+  .object({
+    entities: z.array(inventoryEntitySummarySchema).min(1),
+    processedCount: z.number().int().positive(),
+  })
+  .strict()
+  .superRefine((value, context) => {
+    if (value.processedCount !== value.entities.length) {
+      context.addIssue({
+        code: z.ZodIssueCode.custom,
+        path: ["processedCount"],
+        message: "processedCount must equal the number of returned entities.",
+      });
+    }
+  });
+
+export const bulkMoveEntitiesResponseSchema = z
+  .object({
+    events: z.array(stockEventSchema).min(1),
+    processedCount: z.number().int().positive(),
+  })
+  .strict()
+  .superRefine((value, context) => {
+    if (value.processedCount !== value.events.length) {
+      context.addIssue({
+        code: z.ZodIssueCode.custom,
+        path: ["processedCount"],
+        message: "processedCount must equal the number of returned events.",
+      });
+    }
+  });
+
+export const bulkReverseIngestResponseSchema = z
+  .object({
+    qrCodes: z.array(qrCodeSchema).min(1),
+    correctionEvents: z.array(correctionEventSchema).min(1),
+    processedCount: z.number().int().positive(),
+  })
+  .strict()
+  .superRefine((value, context) => {
+    if (value.processedCount !== value.qrCodes.length || value.processedCount !== value.correctionEvents.length) {
+      context.addIssue({
+        code: z.ZodIssueCode.custom,
+        path: ["processedCount"],
+        message: "processedCount must equal the number of returned QR codes and correction events.",
+      });
+    }
+  });
+
 export const mergePartTypesRequestSchema = z
   .object({
     sourcePartTypeId: identifierSchema,
@@ -879,6 +1072,15 @@ export type NewPartTypeDraft = z.output<typeof newPartTypeDraftSchema>;
 export type PartTypeDraft = z.output<typeof partTypeDraftSchema>;
 export type AssignQrRequest = z.output<typeof assignQrRequestSchema>;
 export type AssignQrCommand = z.output<typeof assignQrCommandSchema>;
+export type SharedAssignRequest = z.output<typeof sharedAssignRequestSchema>;
+export type BulkAssignQrsRequest = z.output<typeof bulkAssignQrsRequestSchema>;
+export type BulkAssignQrsCommand = z.output<typeof bulkAssignQrsCommandSchema>;
+export type BulkEntityTarget = z.output<typeof bulkEntityTargetSchema>;
+export type BulkMoveEntitiesRequest = z.output<typeof bulkMoveEntitiesRequestSchema>;
+export type BulkMoveEntitiesCommand = z.output<typeof bulkMoveEntitiesCommandSchema>;
+export type BulkReverseIngestTarget = z.output<typeof bulkReverseIngestTargetSchema>;
+export type BulkReverseIngestRequest = z.output<typeof bulkReverseIngestRequestSchema>;
+export type BulkReverseIngestCommand = z.output<typeof bulkReverseIngestCommandSchema>;
 export type RecordEventRequest = z.output<typeof recordEventRequestSchema>;
 export type RecordEventCommand = z.output<typeof recordEventCommandSchema>;
 export type CorrectionEvent = z.output<typeof correctionEventSchema>;
@@ -892,6 +1094,9 @@ export type CorrectionHistoryQuery = z.output<typeof correctionHistoryQuerySchem
 export type ReassignEntityPartTypeResponse = z.output<typeof reassignEntityPartTypeResponseSchema>;
 export type EditPartTypeDefinitionResponse = z.output<typeof editPartTypeDefinitionResponseSchema>;
 export type ReverseIngestAssignmentResponse = z.output<typeof reverseIngestAssignmentResponseSchema>;
+export type BulkAssignQrsResponse = z.output<typeof bulkAssignQrsResponseSchema>;
+export type BulkMoveEntitiesResponse = z.output<typeof bulkMoveEntitiesResponseSchema>;
+export type BulkReverseIngestResponse = z.output<typeof bulkReverseIngestResponseSchema>;
 export type MergePartTypesRequest = z.output<typeof mergePartTypesRequestSchema>;
 export type PartTypeSearchQuery = z.output<typeof partTypeSearchQuerySchema>;
 export type PartDbDiscoveredResources = z.output<typeof partDbDiscoveredResourcesSchema>;

@@ -1457,6 +1457,182 @@ describe("InventoryService", () => {
     expect(service.getCorrectionHistory("bulk", entity.id)).toHaveLength(1);
   });
 
+  it("bulk labels multiple QR codes against one shared assignment and reuses the created part type", () => {
+    const { service } = makeService();
+
+    service.registerQrBatch({
+      actor: "lab-admin",
+      prefix: "QR",
+      startNumber: 6750,
+      count: 2,
+    });
+
+    const response = service.bulkAssignQrs({
+      qrs: ["QR-6750", "QR-6751"],
+      assignment: {
+        entityKind: "instance",
+        location: "Shelf A",
+        notes: null,
+        partType: {
+          kind: "new",
+          canonicalName: "Bulk Label Part",
+          category: "Fixtures",
+          aliases: [],
+          notes: null,
+          imageUrl: null,
+          countable: true,
+          unit: {
+            symbol: "pcs",
+            name: "Pieces",
+            isInteger: true,
+          },
+        },
+        initialStatus: "available",
+      },
+      actor: "labeler",
+    });
+
+    expect(response.processedCount).toBe(2);
+    expect(new Set(response.entities.map((entity) => entity.partType.id)).size).toBe(1);
+    expect(service.searchPartTypes("Bulk Label Part")).toHaveLength(1);
+  });
+
+  it("bulk moves mixed assigned targets with one shared location payload", () => {
+    const { service } = makeService();
+
+    service.registerQrBatch({
+      actor: "lab-admin",
+      prefix: "QR",
+      startNumber: 6760,
+      count: 2,
+    });
+
+    const instance = service.assignQr({
+      qrCode: "QR-6760",
+      actor: "labeler",
+      entityKind: "instance",
+      location: "Shelf A",
+      notes: null,
+      partType: {
+        kind: "new",
+        canonicalName: "Bulk Move Instance",
+        category: "Fixtures",
+        aliases: [],
+        notes: null,
+        imageUrl: null,
+        countable: true,
+      },
+      initialStatus: "available",
+    });
+
+    const bulk = service.assignQr({
+      qrCode: "QR-6761",
+      actor: "labeler",
+      entityKind: "bulk",
+      location: "Shelf A",
+      notes: null,
+      partType: {
+        kind: "new",
+        canonicalName: "Bulk Move Stock",
+        category: "Consumables",
+        aliases: [],
+        notes: null,
+        imageUrl: null,
+        countable: false,
+      },
+      initialQuantity: 2,
+      minimumQuantity: null,
+    });
+
+    const moved = service.bulkMoveEntities({
+      targets: [
+        { targetType: "instance", targetId: instance.id, qrCode: "QR-6760" },
+        { targetType: "bulk", targetId: bulk.id, qrCode: "QR-6761" },
+      ],
+      location: "Shelf B",
+      notes: "Batch relocation",
+      actor: "labeler",
+    });
+
+    expect(moved.processedCount).toBe(2);
+    expect(moved.events.every((event) => event.location === "Shelf B")).toBe(true);
+  });
+
+  it("rolls back an entire bulk delete when any target is no longer reverse-ingest eligible", async () => {
+    const { service } = makeService();
+
+    service.registerQrBatch({
+      actor: "lab-admin",
+      prefix: "QR",
+      startNumber: 6770,
+      count: 2,
+    });
+
+    const fresh = service.assignQr({
+      qrCode: "QR-6770",
+      actor: "labeler",
+      entityKind: "bulk",
+      location: "Shelf A",
+      notes: null,
+      partType: {
+        kind: "new",
+        canonicalName: "Fresh Ingest",
+        category: "Materials",
+        aliases: [],
+        notes: null,
+        imageUrl: null,
+        countable: false,
+      },
+      initialQuantity: 2,
+      minimumQuantity: null,
+    });
+
+    const touched = service.assignQr({
+      qrCode: "QR-6771",
+      actor: "labeler",
+      entityKind: "bulk",
+      location: "Shelf A",
+      notes: null,
+      partType: {
+        kind: "new",
+        canonicalName: "Touched Ingest",
+        category: "Materials",
+        aliases: [],
+        notes: null,
+        imageUrl: null,
+        countable: false,
+      },
+      initialQuantity: 2,
+      minimumQuantity: null,
+    });
+    service.recordEvent({
+      targetType: "bulk",
+      targetId: touched.id,
+      event: "moved",
+      location: "Shelf B",
+      notes: null,
+      actor: "labeler",
+    });
+
+    expect(() =>
+      service.bulkReverseIngest({
+        targets: [
+          { assignedKind: "bulk", assignedId: fresh.id, qrCode: "QR-6770" },
+          { assignedKind: "bulk", assignedId: touched.id, qrCode: "QR-6771" },
+        ],
+        reason: "Undo bad batch",
+        actor: "admin",
+      }),
+    ).toThrowError(ConflictError);
+
+    await expect(service.scanCode("QR-6770")).resolves.toMatchObject({
+      mode: "interact",
+      entity: {
+        id: fresh.id,
+      },
+    });
+  });
+
   it("rejects ambiguous normalized barcode matches instead of choosing arbitrarily", async () => {
     const { db, service } = makeService();
     const now = new Date().toISOString();

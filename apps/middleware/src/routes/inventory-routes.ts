@@ -1,7 +1,10 @@
 import type { FastifyInstance, preHandlerAsyncHookHandler } from "fastify";
 import {
   assignQrRequestSchema,
+  bulkAssignQrsRequestSchema,
+  bulkMoveEntitiesRequestSchema,
   bulkSplitRequestSchema,
+  bulkReverseIngestRequestSchema,
   correctionHistoryQuerySchema,
   editPartTypeDefinitionRequestSchema,
   mergePartTypesRequestSchema,
@@ -129,9 +132,25 @@ export async function registerInventoryRoutes(
     });
   });
 
+  app.post("/api/bulk/assign", authenticatedMutation, async (request) => {
+    const command = parseWithSchema(bulkAssignQrsRequestSchema, request.body, "bulk assignment request");
+    return inventoryService.bulkAssignQrs({
+      ...command,
+      actor: request.authContext!.session.username,
+    });
+  });
+
   app.post("/api/events", authenticatedMutation, async (request) => {
     const command = parseWithSchema(recordEventRequestSchema, request.body, "stock event request");
     return inventoryService.recordEvent({
+      ...command,
+      actor: request.authContext!.session.username,
+    });
+  });
+
+  app.post("/api/bulk/move", authenticatedMutation, async (request) => {
+    const command = parseWithSchema(bulkMoveEntitiesRequestSchema, request.body, "bulk move request");
+    return inventoryService.bulkMoveEntities({
       ...command,
       actor: request.authContext!.session.username,
     });
@@ -201,6 +220,18 @@ export async function registerInventoryRoutes(
       "reverse ingest request",
     );
     return inventoryService.reverseIngestAssignment({
+      ...command,
+      actor: request.authContext!.session.username,
+    });
+  });
+
+  app.post("/api/bulk/reverse-ingest", adminMutation, async (request) => {
+    const command = parseWithSchema(
+      bulkReverseIngestRequestSchema,
+      request.body,
+      "bulk reverse ingest request",
+    );
+    return inventoryService.bulkReverseIngest({
       ...command,
       actor: request.authContext!.session.username,
     });

@@ -17,12 +17,14 @@ import type {
   EventFormState,
   SearchState,
 } from "./presentation-helpers";
+import type { RewriteFailure } from "./errors";
 
 export type PendingAction =
   | "login"
   | "logout"
   | "batch"
   | "scan"
+  | "bulk"
   | "assign"
   | "event"
   | "correct"
@@ -75,6 +77,85 @@ export interface InventoryUiState {
   readonly expandedErrors: ReadonlyMap<string, string>;
 }
 
+export type OneByOneScanBehavior = "increment" | "viewOnly";
+export type BulkQueueAction = "label" | "move" | "delete";
+
+export type ScanModeState =
+  | {
+      readonly kind: "oneByOne";
+      readonly behavior: OneByOneScanBehavior;
+    }
+  | {
+      readonly kind: "bulk";
+      readonly action: BulkQueueAction;
+    };
+
+export interface BulkQueueSummary {
+  readonly uniqueLabelCount: number;
+  readonly totalScanCount: number;
+  readonly duplicateScanCount: number;
+}
+
+export interface BulkLabelFormState extends Omit<AssignFormState, "qrCode"> {}
+
+export interface BulkMoveFormState {
+  readonly location: string;
+  readonly notes: string;
+}
+
+export interface BulkDeleteFormState {
+  readonly reason: string;
+}
+
+export interface BulkUnlabeledQueueRow {
+  readonly kind: "unlabeled";
+  readonly code: string;
+  readonly batchId: string;
+  readonly count: number;
+  readonly firstSeenAt: string;
+  readonly lastSeenAt: string;
+}
+
+export type BulkDeleteEligibility =
+  | {
+      readonly status: "eligible";
+    }
+  | {
+      readonly status: "ineligible";
+      readonly reason: string;
+    };
+
+export interface BulkAssignedQueueRow {
+  readonly kind: "assigned";
+  readonly code: string;
+  readonly count: number;
+  readonly firstSeenAt: string;
+  readonly lastSeenAt: string;
+  readonly targetType: "instance" | "bulk";
+  readonly targetId: string;
+  readonly partTypeId: string;
+  readonly partTypeName: string;
+  readonly location: string;
+  readonly deleteEligibility: BulkDeleteEligibility;
+}
+
+export type BulkQueueRow = BulkUnlabeledQueueRow | BulkAssignedQueueRow;
+
+export type BulkQueueStatus = "empty" | "ready" | "submitting" | "failed";
+
+export interface BulkQueueUiState {
+  readonly status: BulkQueueStatus;
+  readonly action: BulkQueueAction;
+  readonly kind: "unlabeled" | "assigned" | null;
+  readonly rows: readonly BulkQueueRow[];
+  readonly summary: BulkQueueSummary;
+  readonly failure: RewriteFailure | null;
+  readonly labelForm: BulkLabelFormState;
+  readonly labelSearch: SearchState;
+  readonly moveForm: BulkMoveFormState;
+  readonly deleteForm: BulkDeleteFormState;
+}
+
 export type CorrectionAction = "reassign" | "editShared" | "reverseIngest" | null;
 
 export interface CorrectionUiState {
@@ -113,7 +194,8 @@ export interface RewriteUiState {
   readonly assignForm: AssignFormState;
   readonly eventForm: EventFormState;
   readonly scanCode: string;
-  readonly scanMode: "increment" | "inspect";
+  readonly scanMode: ScanModeState;
+  readonly bulkQueue: BulkQueueUiState;
   readonly scanHistory: readonly ScanHistoryEntry[];
   readonly lastAssignment: LastAssignment | null;
   readonly camera: CameraScannerSnapshot;
@@ -151,6 +233,21 @@ export const defaultAssignForm: AssignFormState = {
   minimumQuantity: "",
 };
 
+export const defaultBulkLabelForm: BulkLabelFormState = {
+  entityKind: "instance",
+  location: "",
+  notes: "",
+  partTypeMode: "existing",
+  existingPartTypeId: "",
+  canonicalName: "",
+  category: "",
+  countable: true,
+  unitSymbol: "pcs",
+  initialStatus: "available",
+  initialQuantity: "1",
+  minimumQuantity: "",
+};
+
 export const defaultEventForm: EventFormState = {
   targetType: "instance",
   targetId: "",
@@ -169,6 +266,33 @@ export const defaultSearchState: SearchState = {
   results: [],
   status: "idle",
   error: null,
+};
+
+export const defaultScanMode: ScanModeState = {
+  kind: "oneByOne",
+  behavior: "viewOnly",
+};
+
+export const defaultBulkQueueState: BulkQueueUiState = {
+  status: "empty",
+  action: "label",
+  kind: null,
+  rows: [],
+  summary: {
+    uniqueLabelCount: 0,
+    totalScanCount: 0,
+    duplicateScanCount: 0,
+  },
+  failure: null,
+  labelForm: defaultBulkLabelForm,
+  labelSearch: defaultSearchState,
+  moveForm: {
+    location: "",
+    notes: "",
+  },
+  deleteForm: {
+    reason: "",
+  },
 };
 
 export const defaultInventoryUiState: InventoryUiState = {
