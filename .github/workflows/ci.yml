@@ -36,7 +36,16 @@ jobs:
     steps:
       - name: Pull latest code
         run: |
+          mkdir -p /opt/smart-db
           cd /opt/smart-db
+          if [ ! -d .git ]; then
+            git init -q
+          fi
+          if ! git remote get-url origin >/dev/null 2>&1; then
+            git remote add origin https://github.com/Makerspace-Ashoka/smart-db.git
+          else
+            git remote set-url origin https://github.com/Makerspace-Ashoka/smart-db.git
+          fi
           git fetch origin main
           git reset --hard origin/main
 
