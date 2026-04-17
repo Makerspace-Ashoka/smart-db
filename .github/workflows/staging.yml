@@ -14,7 +14,47 @@ env:
   SMART_DB_CONFIG: /opt/smart-db/config/staging
 
 jobs:
+  lint:
+    name: Lint commit messages
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Validate commit messages
+        run: |
+          BEFORE="${{ github.event.before }}"
+          SHA="${{ github.sha }}"
+          PATTERN='^(feat|impr|fix|docs|style|refactor|perf|test|build|ci|revert|chore)(\([^)]+\))?: .+ \(@[a-zA-Z0-9][a-zA-Z0-9_-]*(, @[a-zA-Z0-9][a-zA-Z0-9_-]*)*\)$'
+
+          if [ "$BEFORE" = "0000000000000000000000000000000000000000" ]; then
+            RANGE="-1"
+          else
+            RANGE="${BEFORE}..${SHA}"
+          fi
+
+          FAILED=0
+          while IFS= read -r msg; do
+            case "$msg" in Merge*|Revert*) continue ;; esac
+            if ! echo "$msg" | grep -qE "$PATTERN"; then
+              echo "✗ $msg"
+              FAILED=1
+            else
+              echo "✓ $msg"
+            fi
+          done < <(git log --format="%s" $RANGE)
+
+          if [ "$FAILED" -eq 1 ]; then
+            echo ""
+            echo "  Format:  type(scope)?: description (@author)"
+            echo "  Types:   feat | impr | fix | docs | style | refactor | perf | test | build | ci | revert | chore"
+            echo "  Example: feat: add dark mode toggle (@saikhurana98)"
+            exit 1
+          fi
+
   check:
+    needs: lint
     uses: ./.github/workflows/_check.yml
 
   deploy:

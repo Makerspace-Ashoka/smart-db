@@ -15,8 +15,32 @@ env:
   ROUTER_PORT: "9444"
 
 jobs:
+  lint:
+    name: Lint PR title
+    if: github.event.action != 'closed'
+    runs-on: ubuntu-latest
+    steps:
+      - name: Validate PR title
+        env:
+          PR_TITLE: ${{ github.event.pull_request.title }}
+        run: |
+          PATTERN='^(feat|impr|fix|docs|style|refactor|perf|test|build|ci|revert|chore)(\([^)]+\))?: .+ \(@[a-zA-Z0-9][a-zA-Z0-9_-]*(, @[a-zA-Z0-9][a-zA-Z0-9_-]*)*\)$'
+          if echo "$PR_TITLE" | grep -qE "$PATTERN"; then
+            echo "✓ $PR_TITLE"
+          else
+            echo "✗ PR title does not match the commit convention."
+            echo ""
+            echo "  Format:  type(scope)?: description (@author)"
+            echo "  Types:   feat | impr | fix | docs | style | refactor | perf | test | build | ci | revert | chore"
+            echo "  Example: feat: add dark mode toggle (@saikhurana98)"
+            echo ""
+            echo "  Got: $PR_TITLE"
+            exit 1
+          fi
+
   check:
     if: github.event.action != 'closed'
+    needs: lint
     uses: ./.github/workflows/_check.yml
 
   deploy:
