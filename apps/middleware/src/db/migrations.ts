@@ -224,6 +224,49 @@ CREATE INDEX IF NOT EXISTS correction_events_target_idx
   ON correction_events (target_type, target_id, created_at DESC);
     `,
   },
+  {
+    version: 9,
+    description: "borrow records for countable instances",
+    sql: `
+CREATE TABLE IF NOT EXISTS borrow_records (
+  id TEXT PRIMARY KEY,
+  instance_id TEXT NOT NULL REFERENCES physical_instances(id),
+  borrower TEXT NOT NULL,
+  borrowed_at TEXT NOT NULL,
+  due_at TEXT,
+  returned_at TEXT,
+  close_reason TEXT,
+  notes TEXT,
+  actor TEXT NOT NULL,
+  created_at TEXT NOT NULL
+);
+
+CREATE UNIQUE INDEX IF NOT EXISTS borrow_records_open_one_per_instance
+  ON borrow_records(instance_id) WHERE returned_at IS NULL;
+
+CREATE INDEX IF NOT EXISTS borrow_records_overdue_idx
+  ON borrow_records(due_at) WHERE returned_at IS NULL;
+
+INSERT INTO borrow_records (id, instance_id, borrower, borrowed_at, due_at, returned_at, close_reason, notes, actor, created_at)
+SELECT
+  lower(hex(randomblob(4))) || '-' || lower(hex(randomblob(2))) || '-' || lower(hex(randomblob(2))) || '-' || lower(hex(randomblob(2))) || '-' || lower(hex(randomblob(6))),
+  pi.id,
+  COALESCE(NULLIF(TRIM(pi.assignee), ''), 'unknown (migrated)'),
+  pi.updated_at,
+  NULL,
+  NULL,
+  NULL,
+  NULL,
+  'migration',
+  pi.updated_at
+FROM physical_instances pi
+WHERE pi.status = 'checked_out'
+  AND NOT EXISTS (
+    SELECT 1 FROM borrow_records br
+    WHERE br.instance_id = pi.id AND br.returned_at IS NULL
+  );
+    `,
+  },
 ];
 
 export function applyMigrations(

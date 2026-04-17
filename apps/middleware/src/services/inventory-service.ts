@@ -28,8 +28,10 @@ import {
   partTypeSchema,
   qrBatchSchema,
   type AssignQrCommand,
+  type BorrowCloseReason,
   type BulkLevel,
   type DashboardSummary,
+  type OpenBorrowSummary,
   type InventoryEntitySummary,
   type InventoryTargetKind,
   type MergePartTypesRequest,
@@ -229,6 +231,40 @@ export class InventoryService {
         location: r.location,
         assignee: r.assignee !== null ? String(r.assignee) : null,
       })),
+    };
+  }
+
+  getOpenBorrow(instanceId: string): OpenBorrowSummary | null {
+    const row = this.db
+      .prepare(
+        `
+        SELECT id, instance_id, borrower, borrowed_at, due_at
+        FROM borrow_records
+        WHERE instance_id = ? AND returned_at IS NULL
+        LIMIT 1
+        `,
+      )
+      .get(instanceId) as
+      | {
+          id: string;
+          instance_id: string;
+          borrower: string;
+          borrowed_at: string;
+          due_at: string | null;
+        }
+      | undefined;
+    if (!row) {
+      return null;
+    }
+    const dueAt = row.due_at;
+    const isOverdue = dueAt !== null ? Date.parse(dueAt) < Date.now() : false;
+    return {
+      id: row.id,
+      instanceId: row.instance_id,
+      borrower: row.borrower,
+      borrowedAt: row.borrowed_at,
+      dueAt,
+      isOverdue,
     };
   }
 
@@ -476,6 +512,7 @@ export class InventoryService {
           recentEvents,
           availableActions: getAvailableInstanceActions(entity.state as PhysicalInstance["status"]),
           partDb,
+          currentBorrow: this.getOpenBorrow(entity.id),
         };
       }
 
@@ -926,6 +963,17 @@ export class InventoryService {
           createdAt: timestamp,
         });
 
+        this.applyBorrowSideEffect({
+          instanceId: current.id,
+          event: input.event,
+          borrower: input.event === "checked_out" ? assignee ?? null : null,
+          dueAt: input.event === "checked_out" ? input.dueAt ?? null : null,
+          notes: input.notes ?? null,
+          actor,
+          timestamp,
+          previousStatus: current.status,
+        });
+
         if (input.event === "moved") {
           this.enqueueLotUpdate(
             {
@@ -1163,6 +1211,7 @@ export class InventoryService {
               notes: "Voided via QR void",
               createdAt: timestamp,
             });
+            this.closeOpenBorrow(instance.id, "void_cascade", timestamp);
             this.enqueueDeleteLot(
               {
                 table: "physical_instances",
@@ -1674,6 +1723,8 @@ export class InventoryService {
         }
       }
 
+      this.db.prepare(`DELETE FROM borrow_records`).run();
+      this.db.prepare(`DELETE FROM correction_events`).run();
       this.db.prepare(`DELETE FROM stock_events`).run();
       this.db.prepare(`DELETE FROM physical_instances`).run();
       this.db.prepare(`DELETE FROM bulk_stocks`).run();
@@ -2591,6 +2642,63 @@ export class InventoryService {
         eventCount: rows.length,
       });
     }
+  }
+
+  private applyBorrowSideEffect(input: {
+    instanceId: string;
+    event: string;
+    borrower: string | null;
+    dueAt: string | null;
+    notes: string | null;
+    actor: string;
+    timestamp: string;
+    previousStatus: string;
+  }): void {
+    const { instanceId, event, borrower, dueAt, notes, actor, timestamp, previousStatus } = input;
+
+    if (event === "checked_out") {
+      if (previousStatus === "checked_out") {
+        this.closeOpenBorrow(instanceId, "re_checkout", timestamp);
+      }
+      const resolvedBorrower = borrower && borrower.trim().length > 0 ? borrower : actor;
+      this.db
+        .prepare(
+          `
+          INSERT INTO borrow_records
+            (id, instance_id, borrower, borrowed_at, due_at, returned_at, close_reason, notes, actor, created_at)
+          VALUES (?, ?, ?, ?, ?, NULL, NULL, ?, ?, ?)
+          `,
+        )
+        .run(randomUUID(), instanceId, resolvedBorrower, timestamp, dueAt, notes, actor, timestamp);
+      return;
+    }
+
+    const closeMap: Record<string, BorrowCloseReason> = {
+      returned: previousStatus === "lost" ? "returned_after_lost" : "returned",
+      consumed: "consumed",
+      disposed: "disposed",
+      lost: "lost",
+    };
+    const closeReason = closeMap[event];
+    if (closeReason) {
+      this.closeOpenBorrow(instanceId, closeReason, timestamp);
+    }
+  }
+
+  private closeOpenBorrow(
+    instanceId: string,
+    closeReason: BorrowCloseReason,
+    timestamp: string,
+  ): void {
+    this.db
+      .prepare(
+        `
+        UPDATE borrow_records
+        SET returned_at = ?, close_reason = ?
+        WHERE instance_id = ? AND returned_at IS NULL
+        `,
+      )
+      .run(timestamp, closeReason, instanceId);
   }
 
   private insertEvent(input: {

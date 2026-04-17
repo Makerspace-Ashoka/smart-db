@@ -2103,4 +2103,192 @@ describe("InventoryService", () => {
     db.prepare(`DELETE FROM physical_instances WHERE id = ?`).run(dangling.id);
     await expect(service.scanCode("QR-6001")).rejects.toThrowError(InvariantError);
   });
+
+  describe("borrow records", () => {
+    function assignBorrowInstance(service: InventoryService, qrCode: string) {
+      service.registerQrBatch({ actor: "admin", prefix: qrCode.split("-")[0]!, startNumber: Number(qrCode.split("-")[1]!), count: 1 });
+      return service.assignQr({
+        qrCode,
+        actor: "labeler",
+        entityKind: "instance",
+        location: "Shelf A",
+        notes: null,
+        partType: {
+          kind: "new",
+          canonicalName: `Borrow ${qrCode}`,
+          category: "Fixtures",
+          aliases: [],
+          notes: null,
+          imageUrl: null,
+          countable: true,
+        },
+        initialStatus: "available",
+      });
+    }
+
+    function listBorrows(db: ReturnType<typeof createDatabase>, instanceId: string) {
+      return db
+        .prepare(
+          `SELECT id, instance_id AS instanceId, borrower, borrowed_at AS borrowedAt, due_at AS dueAt, returned_at AS returnedAt, close_reason AS closeReason, actor FROM borrow_records WHERE instance_id = ? ORDER BY created_at, id`,
+        )
+        .all(instanceId) as Array<{
+        id: string;
+        instanceId: string;
+        borrower: string;
+        borrowedAt: string;
+        dueAt: string | null;
+        returnedAt: string | null;
+        closeReason: string | null;
+        actor: string;
+      }>;
+    }
+
+    it("opens a borrow record when an instance is checked out", () => {
+      const { db, service } = makeService();
+      const instance = assignBorrowInstance(service, "BR-7100");
+
+      service.recordEvent({
+        targetType: "instance",
+        targetId: instance.id,
+        actor: "labeler",
+        event: "checked_out",
+        location: null,
+        notes: null,
+        assignee: "maker-jo",
+      });
+
+      const rows = listBorrows(db, instance.id);
+      expect(rows).toHaveLength(1);
+      expect(rows[0]).toMatchObject({
+        borrower: "maker-jo",
+        returnedAt: null,
+        closeReason: null,
+        actor: "labeler",
+      });
+      expect(service.getOpenBorrow(instance.id)).toMatchObject({ borrower: "maker-jo", isOverdue: false });
+    });
+
+    it("closes the previous borrow with close_reason='re_checkout' on re-checkout", () => {
+      const { db, service } = makeService();
+      const instance = assignBorrowInstance(service, "BR-7101");
+
+      service.recordEvent({
+        targetType: "instance",
+        targetId: instance.id,
+        actor: "labeler",
+        event: "checked_out",
+        location: null,
+        notes: null,
+        assignee: "alice",
+      });
+      service.recordEvent({
+        targetType: "instance",
+        targetId: instance.id,
+        actor: "labeler",
+        event: "checked_out",
+        location: null,
+        notes: null,
+        assignee: "bob",
+      });
+
+      const rows = listBorrows(db, instance.id);
+      expect(rows).toHaveLength(2);
+      const closed = rows.find((row) => row.returnedAt !== null);
+      const open = rows.find((row) => row.returnedAt === null);
+      expect(closed).toMatchObject({ borrower: "alice", closeReason: "re_checkout" });
+      expect(open).toMatchObject({ borrower: "bob", closeReason: null });
+    });
+
+    it("closes the open borrow with close_reason='returned' on return", () => {
+      const { db, service } = makeService();
+      const instance = assignBorrowInstance(service, "BR-7102");
+
+      service.recordEvent({
+        targetType: "instance",
+        targetId: instance.id,
+        actor: "labeler",
+        event: "checked_out",
+        location: null,
+        notes: null,
+        assignee: "alice",
+      });
+      service.recordEvent({
+        targetType: "instance",
+        targetId: instance.id,
+        actor: "labeler",
+        event: "returned",
+        location: null,
+        notes: null,
+        assignee: null,
+      });
+
+      const [row] = listBorrows(db, instance.id);
+      expect(row).toMatchObject({ borrower: "alice", closeReason: "returned" });
+      expect(row!.returnedAt).not.toBeNull();
+      expect(service.getOpenBorrow(instance.id)).toBeNull();
+    });
+
+    it("closes the open borrow with close_reason='void_cascade' when the QR is voided", () => {
+      const { db, service } = makeService();
+      const instance = assignBorrowInstance(service, "BR-7103");
+
+      service.recordEvent({
+        targetType: "instance",
+        targetId: instance.id,
+        actor: "labeler",
+        event: "checked_out",
+        location: null,
+        notes: null,
+        assignee: "alice",
+      });
+      service.voidQrCode("BR-7103", "admin");
+
+      const [row] = listBorrows(db, instance.id);
+      expect(row).toMatchObject({ borrower: "alice", closeReason: "void_cascade" });
+      expect(row!.returnedAt).not.toBeNull();
+    });
+
+    it("enforces one-open-borrow-per-instance via the unique partial index", () => {
+      const { db, service } = makeService();
+      const instance = assignBorrowInstance(service, "BR-7104");
+
+      service.recordEvent({
+        targetType: "instance",
+        targetId: instance.id,
+        actor: "labeler",
+        event: "checked_out",
+        location: null,
+        notes: null,
+        assignee: "alice",
+      });
+
+      expect(() =>
+        db
+          .prepare(
+            `INSERT INTO borrow_records (id, instance_id, borrower, borrowed_at, due_at, returned_at, close_reason, notes, actor, created_at) VALUES (?, ?, ?, ?, NULL, NULL, NULL, NULL, ?, ?)`,
+          )
+          .run("dup-id", instance.id, "bob", new Date().toISOString(), "labeler", new Date().toISOString()),
+      ).toThrowError(/UNIQUE|constraint/i);
+    });
+
+    it("marks a record as overdue when due_at is past", () => {
+      const { db, service } = makeService();
+      const instance = assignBorrowInstance(service, "BR-7105");
+
+      service.recordEvent({
+        targetType: "instance",
+        targetId: instance.id,
+        actor: "labeler",
+        event: "checked_out",
+        location: null,
+        notes: null,
+        assignee: "alice",
+      });
+
+      const pastDue = new Date(Date.now() - 24 * 60 * 60 * 1000).toISOString();
+      db.prepare(`UPDATE borrow_records SET due_at = ? WHERE instance_id = ? AND returned_at IS NULL`).run(pastDue, instance.id);
+
+      expect(service.getOpenBorrow(instance.id)).toMatchObject({ isOverdue: true });
+    });
+  });
 });

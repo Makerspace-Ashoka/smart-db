@@ -80,6 +80,11 @@ export const correctionKindSchema = z.enum(correctionKinds);
 
 const isoTimestampSchema = z.string().datetime();
 const identifierSchema = nonEmptyString;
+
+export const borrowDueDateSchema = isoTimestampSchema.refine(
+  (value) => Date.parse(value) > Date.now(),
+  { message: "Due date must be in the future." },
+);
 const booleanEnvironmentSchema = z
   .union([
     z.boolean(),
@@ -574,6 +579,7 @@ export const instanceRecordEventRequestSchema = z
         notes: normalizedOptionalString,
         location: normalizedOptionalString,
         assignee: normalizedOptionalString,
+        dueAt: borrowDueDateSchema.nullable().optional(),
       })
       .strict(),
     z
@@ -992,6 +998,48 @@ export const applicationErrorResponseSchema = z
   })
   .strict();
 
+export const borrowCloseReasonSchema = z.enum([
+  "returned",
+  "returned_after_lost",
+  "disposed",
+  "consumed",
+  "lost",
+  "re_checkout",
+  "void_cascade",
+]);
+
+export type BorrowCloseReason = z.output<typeof borrowCloseReasonSchema>;
+
+export const borrowRecordSchema = z
+  .object({
+    id: nonEmptyString,
+    instanceId: nonEmptyString,
+    borrower: nonEmptyString,
+    borrowedAt: isoTimestampSchema,
+    dueAt: isoTimestampSchema.nullable(),
+    returnedAt: isoTimestampSchema.nullable(),
+    closeReason: borrowCloseReasonSchema.nullable(),
+    notes: z.string().nullable(),
+    actor: nonEmptyString,
+    createdAt: isoTimestampSchema,
+  })
+  .strict();
+
+export type BorrowRecord = z.output<typeof borrowRecordSchema>;
+
+export const openBorrowSummarySchema = z
+  .object({
+    id: nonEmptyString,
+    instanceId: nonEmptyString,
+    borrower: nonEmptyString,
+    borrowedAt: isoTimestampSchema,
+    dueAt: isoTimestampSchema.nullable(),
+    isOverdue: z.boolean(),
+  })
+  .strict();
+
+export type OpenBorrowSummary = z.output<typeof openBorrowSummarySchema>;
+
 export const interactInstanceScanResponseSchema = z
   .object({
     mode: z.literal("interact"),
@@ -1002,6 +1050,7 @@ export const interactInstanceScanResponseSchema = z
     recentEvents: z.array(stockEventSchema),
     availableActions: z.array(instanceActionSchema),
     partDb: partDbLookupSummarySchema,
+    currentBorrow: openBorrowSummarySchema.nullable(),
   })
   .strict();
 

@@ -738,6 +738,7 @@ describe("schemas", () => {
           connected: false,
           message: "Not configured",
         },
+        currentBorrow: null,
       }),
     ).toEqual({
       mode: "interact",
@@ -790,6 +791,7 @@ describe("schemas", () => {
         connected: false,
         message: "Not configured",
       },
+      currentBorrow: null,
     });
 
     expect(
