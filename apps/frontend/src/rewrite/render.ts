@@ -819,6 +819,7 @@ function renderInteractCard(
           ${state.scanResult.entity.minimumQuantity !== null ? `<span class="quantity-threshold">min ${escapeHtml(formatQuantity(state.scanResult.entity.minimumQuantity))} ${escapeHtml(state.scanResult.entity.partType.unit.symbol)}</span>` : ""}
         </div>
       ` : `<p>Current state: <strong>${escapeHtml(state.scanResult.entity.state)}</strong></p>`}
+      ${renderCurrentBorrow(state)}
       <p class="muted-copy" style="font-size:0.78rem">Part-DB sync: ${escapeHtml(state.scanResult.entity.partDbSyncStatus)}</p>
       ${renderScanQuickChips(state)}
       <div class="action-buttons">
@@ -885,6 +886,31 @@ function renderInteractCard(
         ? `<button type="button" class="disclosure" data-action="scan-edit-open" ${disabled(state.pendingAction !== null)}>Edit this part</button>`
         : renderScanEditPanel(state)}
     </div>
+  `;
+}
+
+function renderCurrentBorrow(state: RewriteUiState): string {
+  if (
+    !state.scanResult ||
+    state.scanResult.mode !== "interact" ||
+    state.scanResult.entity.targetType !== "instance"
+  ) {
+    return "";
+  }
+  const borrow = state.scanResult.currentBorrow;
+  if (!borrow) {
+    return "";
+  }
+  const overdue = borrow.isOverdue
+    ? `<span class="pill overdue" style="margin-left:0.5rem">Overdue</span>`
+    : "";
+  const due = borrow.dueAt
+    ? ` · due ${escapeHtml(formatTimestamp(borrow.dueAt))}`
+    : "";
+  return `
+    <p class="borrow-status" style="margin-top:0.25rem">
+      Borrowed by <strong>${escapeHtml(borrow.borrower)}</strong> since ${escapeHtml(formatTimestamp(borrow.borrowedAt))}${due}${overdue}
+    </p>
   `;
 }
 

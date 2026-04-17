@@ -1200,6 +1200,71 @@ describe("RewriteAppController", () => {
     controller.dispose();
   });
 
+  it("renders the current borrow on the scan card for a checked-out instance", async () => {
+    const { startRewriteApp } = await import("./app-controller");
+    apiMock.getSession.mockResolvedValueOnce({
+      subject: "user-1",
+      username: "lab-admin",
+      name: "Lab Admin",
+      email: "lab@example.com",
+      roles: ["smartdb.admin"],
+      issuedAt: "2026-01-01T00:00:00.000Z",
+      expiresAt: null,
+    });
+    apiMock.scan.mockResolvedValueOnce({
+      mode: "interact",
+      qrCode: {
+        code: "QR-9400",
+        batchId: "batch-1",
+        status: "assigned",
+        assignedKind: "instance",
+        assignedId: "instance-9400",
+        createdAt: "2026-01-01T00:00:00.000Z",
+        updatedAt: "2026-01-01T00:00:00.000Z",
+      },
+      entity: {
+        id: "instance-9400",
+        targetType: "instance",
+        qrCode: "QR-9400",
+        partType,
+        location: "Shelf A",
+        state: "checked_out",
+        assignee: "alice",
+        partDbSyncStatus: "never",
+        quantity: null,
+        minimumQuantity: null,
+      },
+      recentEvents: [],
+      availableActions: ["moved", "returned", "checked_out", "consumed", "damaged", "lost", "disposed"],
+      partDb: { configured: false, connected: false, message: "not found" },
+      currentBorrow: {
+        id: "borrow-1",
+        instanceId: "instance-9400",
+        borrower: "alice",
+        borrowedAt: "2026-01-01T00:00:00.000Z",
+        dueAt: "2025-01-01T00:00:00.000Z",
+        isOverdue: true,
+      },
+    });
+    apiMock.getPartTypeItems.mockResolvedValue({ bulkStocks: [], instances: [] });
+
+    const controller = startRewriteApp(document.getElementById("root")!);
+    await flush();
+
+    const scanInput = document.querySelector<HTMLInputElement>('input[name="scanCode"]')!;
+    scanInput.value = "QR-9400";
+    scanInput.dispatchEvent(new Event("input", { bubbles: true }));
+    document.querySelector<HTMLFormElement>('form[data-form="scan"]')!
+      .dispatchEvent(new Event("submit", { bubbles: true, cancelable: true }));
+    await flush();
+
+    const borrowStatus = document.querySelector(".borrow-status");
+    expect(borrowStatus).not.toBeNull();
+    expect(borrowStatus!.textContent).toContain("alice");
+    expect(document.querySelector(".pill.overdue")).not.toBeNull();
+    controller.dispose();
+  });
+
   it("+1 chip submits a restocked event with quantityDelta 1 and refreshes the scan", async () => {
     const { startRewriteApp } = await import("./app-controller");
     apiMock.getSession.mockResolvedValueOnce({
