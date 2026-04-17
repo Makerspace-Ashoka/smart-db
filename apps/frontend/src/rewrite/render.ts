@@ -820,6 +820,7 @@ function renderInteractCard(
         </div>
       ` : `<p>Current state: <strong>${escapeHtml(state.scanResult.entity.state)}</strong></p>`}
       <p class="muted-copy" style="font-size:0.78rem">Part-DB sync: ${escapeHtml(state.scanResult.entity.partDbSyncStatus)}</p>
+      ${renderScanQuickChips(state)}
       <div class="action-buttons">
         ${state.scanResult.availableActions.map((action) => `
           <button type="button" aria-pressed="${String(state.eventForm.event === action)}" class="${state.eventForm.event === action ? "selected" : ""}" data-action="select-event-action" data-event="${attr(action)}">${escapeHtml(actionLabel(action))}</button>
@@ -885,6 +886,38 @@ function renderInteractCard(
         : renderScanEditPanel(state)}
     </div>
   `;
+}
+
+function renderScanQuickChips(state: RewriteUiState): string {
+  if (!state.scanResult || state.scanResult.mode !== "interact") {
+    return "";
+  }
+  const entity = state.scanResult.entity;
+  const available = new Set(state.scanResult.availableActions);
+  const pending = state.pendingAction !== null;
+
+  const chips: string[] = [];
+  if (entity.targetType === "bulk") {
+    if (available.has("restocked")) {
+      chips.push(`<button type="button" data-action="quick-bulk-increment" ${disabled(pending)}>+1</button>`);
+    }
+    if (available.has("consumed") && (entity.quantity ?? 0) > 0) {
+      chips.push(`<button type="button" data-action="quick-bulk-decrement" ${disabled(pending)}>-1</button>`);
+    }
+  } else {
+    if (available.has("checked_out")) {
+      chips.push(`<button type="button" data-action="quick-instance-checkout-me" ${disabled(pending)}>Check out (me)</button>`);
+    }
+    if (available.has("returned")) {
+      chips.push(`<button type="button" data-action="quick-instance-return" ${disabled(pending)}>Return</button>`);
+    }
+  }
+
+  if (chips.length === 0) {
+    return "";
+  }
+
+  return `<div class="quick-chips" aria-label="Quick actions">${chips.join("")}</div>`;
 }
 
 function renderScanLocations(state: RewriteUiState): string {

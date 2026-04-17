@@ -419,6 +419,18 @@ export class RewriteAppController {
       case "camera-scan-next":
         this.handleCameraScanNext();
         break;
+      case "quick-bulk-increment":
+        this.handleQuickBulkDelta(1);
+        break;
+      case "quick-bulk-decrement":
+        this.handleQuickBulkDelta(-1);
+        break;
+      case "quick-instance-checkout-me":
+        this.handleQuickInstanceCheckoutMe();
+        break;
+      case "quick-instance-return":
+        this.handleQuickInstanceReturn();
+        break;
       case "scan-edit-open":
         this.openScanEdit();
         break;
@@ -2165,6 +2177,133 @@ export class RewriteAppController {
     } finally {
       this.patch({ pendingAction: null });
     }
+  }
+
+  private async submitQuickEvent(
+    input: Record<string, unknown>,
+    targetType: "instance" | "bulk",
+    successToast: string,
+  ): Promise<void> {
+    const target = this.interactTarget();
+    if (!target) {
+      return;
+    }
+    const parsed = parseEventForm(input);
+    if (!parsed.ok) {
+      this.addToast(this.failureMessage(parsed.error), "error");
+      return;
+    }
+    if (parsed.value.kind !== "record") {
+      this.addToast("Quick action cannot emit a split.", "error");
+      return;
+    }
+
+    this.scanActor.send({
+      type: "EVENT.PARSE_REQUESTED",
+      targetType,
+    });
+    this.scanActor.send({
+      type: "EVENT.SUBMIT_REQUESTED",
+      targetType,
+    });
+    this.patch({ pendingAction: "event" as PendingAction });
+    try {
+      await api.recordEvent(parsed.value.request);
+      this.scanActor.send({
+        type: "EVENT.SUCCEEDED",
+        targetType,
+        qrCode: target.qrCode.code,
+        targetId: target.entity.id,
+      });
+      const refreshed = await api.scan(target.qrCode.code, { autoIncrement: false });
+      this.patch({ scanResult: refreshed });
+      void this.loadScanLocations(refreshed.mode === "interact"
+        ? refreshed.entity.partType.id
+        : target.entity.partType.id);
+      this.addToast(successToast, "success");
+      await this.loadAuthenticatedData();
+    } catch (caught) {
+      this.scanActor.send({
+        type: "EVENT.FAILED",
+        failure: {
+          kind: "unexpected",
+          operation: "scan.recordEvent",
+          message: errorMessage(caught),
+          retryability: "never",
+          details: { machine: "scanSession" },
+          cause: caught,
+        },
+      });
+      if (!this.handleApiFailure(caught)) {
+        this.addToast(errorMessage(caught), "error");
+      }
+    } finally {
+      this.patch({ pendingAction: null });
+    }
+  }
+
+  private handleQuickBulkDelta(direction: 1 | -1): void {
+    const target = this.interactTarget();
+    if (!target || target.entity.targetType !== "bulk") {
+      return;
+    }
+    const event = direction === 1 ? "restocked" : "consumed";
+    const nextQty =
+      direction === 1
+        ? (target.entity.quantity ?? 0) + 1
+        : (target.entity.quantity ?? 0) - 1;
+    const symbol = target.entity.partType.unit.symbol;
+    void this.submitQuickEvent(
+      {
+        targetType: "bulk",
+        targetId: target.entity.id,
+        event,
+        quantityDelta: 1,
+      },
+      "bulk",
+      `${direction === 1 ? "+1" : "-1"} ${target.entity.partType.canonicalName} (now ${nextQty} ${symbol})`,
+    );
+  }
+
+  private handleQuickInstanceCheckoutMe(): void {
+    const target = this.interactTarget();
+    if (!target || target.entity.targetType !== "instance") {
+      return;
+    }
+    const session =
+      this.state.authState.status === "authenticated"
+        ? this.state.authState.session
+        : null;
+    if (!session) {
+      this.addToast("Sign in to check this out.", "error");
+      return;
+    }
+    void this.submitQuickEvent(
+      {
+        targetType: "instance",
+        targetId: target.entity.id,
+        event: "checked_out",
+        assignee: session.username,
+      },
+      "instance",
+      `Checked out to ${session.username}.`,
+    );
+  }
+
+  private handleQuickInstanceReturn(): void {
+    const target = this.interactTarget();
+    if (!target || target.entity.targetType !== "instance") {
+      return;
+    }
+    void this.submitQuickEvent(
+      {
+        targetType: "instance",
+        targetId: target.entity.id,
+        event: "returned",
+      },
+      "instance",
+      `Returned.`,
+    );
   }
 
   private handleRegisterUnknown(code: string): void {
