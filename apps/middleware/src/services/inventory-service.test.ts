@@ -2271,6 +2271,38 @@ describe("InventoryService", () => {
       ).toThrowError(/UNIQUE|constraint/i);
     });
 
+    it("reverses only one of two sibling instances, leaving the other intact and printing the QR", async () => {
+      const { service } = makeService();
+      const first = assignBorrowInstance(service, "BR-7180");
+      service.registerQrBatch({ actor: "lab-admin", prefix: "BR", startNumber: 7181, count: 1 });
+      const second = service.assignQr({
+        qrCode: "BR-7181",
+        actor: "labeler",
+        entityKind: "instance",
+        location: "Shelf A",
+        notes: null,
+        partType: { kind: "existing", existingPartTypeId: first.partType.id },
+        initialStatus: "available",
+      });
+
+      const itemsBefore = service.getPartTypeItems(first.partType.id);
+      expect(itemsBefore.instances).toHaveLength(2);
+      expect(itemsBefore.instances.every((row) => row.canReverseIngest)).toBe(true);
+
+      service.bulkReverseIngest({
+        targets: [{ assignedKind: "instance", assignedId: second.id, qrCode: "BR-7181" }],
+        reason: "Mislabeled on intake",
+        actor: "lab-admin",
+      });
+
+      const itemsAfter = service.getPartTypeItems(first.partType.id);
+      expect(itemsAfter.instances).toHaveLength(1);
+      expect(itemsAfter.instances[0]!.id).toBe(first.id);
+
+      const rescan = await service.scanCode("BR-7181", "lab-admin");
+      expect(rescan.mode).toBe("label");
+    });
+
     it("listCorrectionEvents returns events ordered newest-first with a bounded limit", () => {
       const { service } = makeService();
       const instance = assignBorrowInstance(service, "BR-7170");

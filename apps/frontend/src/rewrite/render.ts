@@ -1226,6 +1226,29 @@ function renderScanEditReverseForm(
   `;
 }
 
+function renderInventoryReverseToolbar(state: RewriteUiState, partTypeId: string): string {
+  const selection = state.inventoryReverseSelection;
+  if (selection.partTypeId !== partTypeId || selection.targets.length === 0) {
+    return "";
+  }
+  const count = selection.targets.length;
+  return `
+    <form class="form-grid inventory-reverse-toolbar" data-form="inventory-reverse" style="margin-top:0.75rem;border-top:1px solid var(--rule, #ccc);padding-top:0.75rem">
+      <p class="banner error wide">Reversing sends each selected QR back to printed. The correction audit row survives.</p>
+      <label class="wide">
+        Reason
+        <textarea name="inventoryReverse.reason" placeholder="Why is this being reversed?">${escapeHtml(selection.reason)}</textarea>
+      </label>
+      <div class="inventory-reverse-actions" style="display:flex;gap:0.5rem;align-items:center">
+        <button type="submit" ${disabled(state.pendingAction !== null || selection.reason.trim().length === 0)}>
+          ${state.pendingAction === "correct" ? "Reversing..." : `Reverse ${count} ingest${count === 1 ? "" : "s"}`}
+        </button>
+        <button type="button" class="disclosure" data-action="inventory-reverse-clear" ${disabled(state.pendingAction !== null)}>Clear selection</button>
+      </div>
+    </form>
+  `;
+}
+
 function renderInventoryTab(state: RewriteUiState): string {
   const rows = state.inventorySummary.filter((row) => {
     if (!state.inventoryUi.showEmpty && row.bins === 0 && row.instanceCount === 0) {
@@ -1289,22 +1312,37 @@ function renderInventoryTab(state: RewriteUiState): string {
                     <div class="inventory-row-detail">
                       ${expandedError ? `<p class="banner error">${escapeHtml(expandedError)}</p>` : expandedItems && (expandedItems.bulkStocks.length > 0 || expandedItems.instances.length > 0) ? `
                         <ul class="inventory-detail-list">
-                          ${expandedItems.bulkStocks.map((bulk) => `
-                            <li class="inventory-detail-item">
-                              <code>${escapeHtml(bulk.qrCode)}</code>
-                              <span>${escapeHtml(bulk.location)}</span>
-                              <strong>${escapeHtml(formatQuantity(bulk.quantity))} ${escapeHtml(row.unit.symbol)}</strong>
-                            </li>
-                          `).join("")}
-                          ${expandedItems.instances.map((instance) => `
-                            <li class="inventory-detail-item">
-                              <code>${escapeHtml(instance.qrCode)}</code>
-                              <span>${escapeHtml(instance.location)}</span>
-                              <strong>${escapeHtml(instance.status)}</strong>
-                              ${instance.assignee ? `<span>${escapeHtml(instance.assignee)}</span>` : ""}
-                            </li>
-                          `).join("")}
+                          ${expandedItems.bulkStocks.map((bulk) => {
+                            const key = `bulk:${bulk.id}`;
+                            const selected =
+                              state.inventoryReverseSelection.partTypeId === row.id &&
+                              state.inventoryReverseSelection.targets.some((t) => `${t.kind}:${t.id}` === key);
+                            return `
+                              <li class="inventory-detail-item${selected ? " selected" : ""}">
+                                ${bulk.canReverseIngest ? `<input type="checkbox"${selected ? " checked" : ""} data-action="inventory-reverse-toggle" data-part-type-id="${attr(row.id)}" data-kind="bulk" data-id="${attr(bulk.id)}" data-qr-code="${attr(bulk.qrCode)}" aria-label="Select ${attr(bulk.qrCode)} for reverse" />` : `<span style="width:1rem;display:inline-block" aria-hidden="true"></span>`}
+                                <code>${escapeHtml(bulk.qrCode)}</code>
+                                <span>${escapeHtml(bulk.location)}</span>
+                                <strong>${escapeHtml(formatQuantity(bulk.quantity))} ${escapeHtml(row.unit.symbol)}</strong>
+                              </li>
+                            `;
+                          }).join("")}
+                          ${expandedItems.instances.map((instance) => {
+                            const key = `instance:${instance.id}`;
+                            const selected =
+                              state.inventoryReverseSelection.partTypeId === row.id &&
+                              state.inventoryReverseSelection.targets.some((t) => `${t.kind}:${t.id}` === key);
+                            return `
+                              <li class="inventory-detail-item${selected ? " selected" : ""}">
+                                ${instance.canReverseIngest ? `<input type="checkbox"${selected ? " checked" : ""} data-action="inventory-reverse-toggle" data-part-type-id="${attr(row.id)}" data-kind="instance" data-id="${attr(instance.id)}" data-qr-code="${attr(instance.qrCode)}" aria-label="Select ${attr(instance.qrCode)} for reverse" />` : `<span style="width:1rem;display:inline-block" aria-hidden="true"></span>`}
+                                <code>${escapeHtml(instance.qrCode)}</code>
+                                <span>${escapeHtml(instance.location)}</span>
+                                <strong>${escapeHtml(instance.status)}</strong>
+                                ${instance.assignee ? `<span>${escapeHtml(instance.assignee)}</span>` : ""}
+                              </li>
+                            `;
+                          }).join("")}
                         </ul>
+                        ${renderInventoryReverseToolbar(state, row.id)}
                       ` : `<p class="muted-copy">No items assigned to this part type.</p>`}
                     </div>
                   ` : ""}

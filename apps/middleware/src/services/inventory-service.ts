@@ -199,8 +199,8 @@ export class InventoryService {
   }
 
   getPartTypeItems(partTypeId: string): {
-    bulkStocks: Array<{ id: string; qrCode: string; quantity: number; location: string; minimumQuantity: number | null }>;
-    instances: Array<{ id: string; qrCode: string; status: string; location: string; assignee: string | null }>;
+    bulkStocks: Array<{ id: string; qrCode: string; quantity: number; location: string; minimumQuantity: number | null; canReverseIngest: boolean }>;
+    instances: Array<{ id: string; qrCode: string; status: string; location: string; assignee: string | null; canReverseIngest: boolean }>;
   } {
     const pt = this.db
       .prepare(`SELECT id FROM part_types WHERE id = ?`)
@@ -224,6 +224,7 @@ export class InventoryService {
         quantity: Number(r.quantity),
         location: r.location,
         minimumQuantity: r.minimum_quantity !== null ? Number(r.minimum_quantity) : null,
+        canReverseIngest: this.canReverseIngest("bulk", r.id),
       })),
       instances: instances.map((r) => ({
         id: r.id,
@@ -231,6 +232,7 @@ export class InventoryService {
         status: r.status,
         location: r.location,
         assignee: r.assignee !== null ? String(r.assignee) : null,
+        canReverseIngest: this.canReverseIngest("instance", r.id),
       })),
     };
   }

@@ -166,6 +166,7 @@ export const partTypeItemsResponseSchema = z.object({
     quantity: z.number(),
     location: z.string(),
     minimumQuantity: z.number().nullable(),
+    canReverseIngest: z.boolean(),
   })),
   instances: z.array(z.object({
     id: z.string(),
@@ -173,6 +174,7 @@ export const partTypeItemsResponseSchema = z.object({
     status: z.string(),
     location: z.string(),
     assignee: z.string().nullable(),
+    canReverseIngest: z.boolean(),
   })),
 });
 export type PartTypeItemsResponse = z.output<typeof partTypeItemsResponseSchema>;

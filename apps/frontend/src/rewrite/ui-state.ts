@@ -176,6 +176,24 @@ export type ScanEditForm =
       readonly reason: string;
     };
 
+export interface InventoryReverseTarget {
+  readonly kind: "instance" | "bulk";
+  readonly id: string;
+  readonly qrCode: string;
+}
+
+export interface InventoryReverseSelection {
+  readonly partTypeId: string | null;
+  readonly targets: readonly InventoryReverseTarget[];
+  readonly reason: string;
+}
+
+export const defaultInventoryReverseSelection: InventoryReverseSelection = {
+  partTypeId: null,
+  targets: [],
+  reason: "",
+};
+
 export type ScanLocationsState =
   | { readonly status: "idle" }
   | { readonly status: "loading"; readonly partTypeId: string }
@@ -216,6 +234,7 @@ export interface RewriteUiState {
   readonly scanLocations: ScanLocationsState;
   readonly correctionLog: readonly CorrectionEvent[];
   readonly correctionLogError: string | null;
+  readonly inventoryReverseSelection: InventoryReverseSelection;
   readonly provisionalPartTypes: readonly PartType[];
   readonly labelSearch: SearchState;
   readonly mergeSearch: SearchState;

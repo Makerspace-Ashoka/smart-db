@@ -52,6 +52,7 @@ import {
   defaultBulkLabelForm,
   defaultBulkQueueState,
   defaultCameraState,
+  defaultInventoryReverseSelection,
   defaultScanEditState,
   defaultScanLocationsState,
   defaultScanMode,
@@ -72,6 +73,7 @@ import {
   type ScanEditAction,
   type ScanEditForm,
   type ScanEditState,
+  type InventoryReverseTarget,
   type ScanModeState,
   type TabId,
   type ToastRecord,
@@ -116,6 +118,7 @@ export class RewriteAppController {
     scanLocations: defaultScanLocationsState,
     correctionLog: [],
     correctionLogError: null,
+    inventoryReverseSelection: defaultInventoryReverseSelection,
     provisionalPartTypes: [],
     labelSearch: defaultSearchState,
     mergeSearch: defaultSearchState,
@@ -429,6 +432,23 @@ export class RewriteAppController {
           void this.toggleInventoryExpand(actionEl.dataset.partTypeId);
         }
         break;
+      case "inventory-reverse-toggle":
+        if (
+          actionEl.dataset.partTypeId &&
+          actionEl.dataset.id &&
+          actionEl.dataset.qrCode &&
+          (actionEl.dataset.kind === "instance" || actionEl.dataset.kind === "bulk")
+        ) {
+          this.toggleInventoryReverseTarget(actionEl.dataset.partTypeId, {
+            kind: actionEl.dataset.kind,
+            id: actionEl.dataset.id,
+            qrCode: actionEl.dataset.qrCode,
+          });
+        }
+        break;
+      case "inventory-reverse-clear":
+        this.patch({ inventoryReverseSelection: defaultInventoryReverseSelection });
+        break;
       case "download-labels":
         void this.handleDownloadLatestBatchLabels();
         break;
@@ -621,6 +641,9 @@ export class RewriteAppController {
       case "scan-edit-reverse":
         void this.handleScanEditReverseIngest();
         break;
+      case "inventory-reverse":
+        void this.handleInventoryReverseIngest();
+        break;
       default:
         break;
     }
@@ -756,7 +779,111 @@ export class RewriteAppController {
           this.updateEventForm(name, rawValue);
         } else if (name.startsWith("scanEdit.")) {
           this.updateScanEditForm(name, rawValue);
+        } else if (name === "inventoryReverse.reason") {
+          this.patch({
+            inventoryReverseSelection: {
+              ...this.state.inventoryReverseSelection,
+              reason: String(rawValue),
+            },
+          });
         }
+    }
+  }
+
+  private toggleInventoryReverseTarget(partTypeId: string, target: InventoryReverseTarget): void {
+    const current = this.state.inventoryReverseSelection;
+    const basePartType = current.partTypeId === partTypeId ? partTypeId : partTypeId;
+    const baseTargets =
+      current.partTypeId === partTypeId ? current.targets : [];
+    const key = `${target.kind}:${target.id}`;
+    const exists = baseTargets.some((row) => `${row.kind}:${row.id}` === key);
+    const nextTargets = exists
+      ? baseTargets.filter((row) => `${row.kind}:${row.id}` !== key)
+      : [...baseTargets, target];
+    this.patch({
+      inventoryReverseSelection: {
+        partTypeId: nextTargets.length > 0 ? basePartType : null,
+        targets: nextTargets,
+        reason: current.partTypeId === partTypeId ? current.reason : "",
+      },
+    });
+  }
+
+  private async handleInventoryReverseIngest(): Promise<void> {
+    const selection = this.state.inventoryReverseSelection;
+    if (!selection.partTypeId || selection.targets.length === 0) {
+      return;
+    }
+    if (!selection.reason.trim()) {
+      this.addToast("Enter a reason before reversing.", "error");
+      return;
+    }
+    if (
+      typeof window !== "undefined" &&
+      !window.confirm(
+        selection.targets.length === 1
+          ? `Reverse ingest of ${selection.targets[0]!.qrCode}? The QR will return to printed.`
+          : `Reverse ingest of ${selection.targets.length} items? Each QR will return to printed.`,
+      )
+    ) {
+      return;
+    }
+
+    this.patch({ pendingAction: "correct" as PendingAction });
+    try {
+      await api.bulkReverseIngest({
+        targets: selection.targets.map((row) => ({
+          assignedKind: row.kind,
+          assignedId: row.id,
+          qrCode: row.qrCode,
+        })),
+        reason: selection.reason.trim(),
+      });
+      this.addToast(
+        selection.targets.length === 1
+          ? `Reversed ${selection.targets[0]!.qrCode}. The QR is back to printed.`
+          : `Reversed ${selection.targets.length} items. Their QRs are back to printed.`,
+        "success",
+      );
+      const expandedId = selection.partTypeId;
+      this.patch({ inventoryReverseSelection: defaultInventoryReverseSelection });
+      await this.loadAuthenticatedData();
+      if (expandedId && this.state.inventoryUi.expandedId === expandedId) {
+        await this.refreshInventoryDetail(expandedId);
+      }
+    } catch (caught) {
+      if (!this.handleApiFailure(caught)) {
+        this.addToast(errorMessage(caught), "error");
+      }
+    } finally {
+      this.patch({ pendingAction: null });
+    }
+  }
+
+  private async refreshInventoryDetail(partTypeId: string): Promise<void> {
+    try {
+      const data = await api.getPartTypeItems(partTypeId);
+      const nextItems = new Map(this.state.inventoryUi.expandedItems);
+      nextItems.set(partTypeId, data);
+      const nextErrors = new Map(this.state.inventoryUi.expandedErrors);
+      nextErrors.delete(partTypeId);
+      this.patch({
+        inventoryUi: {
+          ...this.state.inventoryUi,
+          expandedItems: nextItems,
+          expandedErrors: nextErrors,
+        },
+      });
+    } catch (caught) {
+      if (this.handleApiFailure(caught)) return;
+      const nextErrors = new Map(this.state.inventoryUi.expandedErrors);
+      nextErrors.set(partTypeId, errorMessage(caught));
+      this.patch({
+        inventoryUi: {
+          ...this.state.inventoryUi,
+          expandedErrors: nextErrors,
+        },
+      });
     }
   }
 
