@@ -1497,6 +1497,64 @@ describe("InventoryService", () => {
     expect(service.searchPartTypes("Bulk Label Part")).toHaveLength(1);
   });
 
+  it("bulk labels reuse a pre-existing part type rather than creating a duplicate", () => {
+    const { service } = makeService();
+
+    const existing = service.assignQr({
+      qrCode: "QR-6740",
+      actor: "labeler",
+      entityKind: "instance",
+      location: "Shelf Z",
+      notes: null,
+      partType: {
+        kind: "new",
+        canonicalName: "Shared Fixture",
+        category: "Fixtures",
+        aliases: [],
+        notes: null,
+        imageUrl: null,
+        countable: true,
+      },
+      initialStatus: "available",
+    });
+
+    service.registerQrBatch({
+      actor: "lab-admin",
+      prefix: "QR",
+      startNumber: 6741,
+      count: 3,
+    });
+
+    const response = service.bulkAssignQrs({
+      qrs: ["QR-6741", "QR-6742", "QR-6743"],
+      assignment: {
+        entityKind: "instance",
+        location: "Shelf A",
+        notes: null,
+        partType: {
+          kind: "new",
+          canonicalName: "Shared Fixture",
+          category: "Fixtures",
+          aliases: [],
+          notes: null,
+          imageUrl: null,
+          countable: true,
+          unit: {
+            symbol: "pcs",
+            name: "Pieces",
+            isInteger: true,
+          },
+        },
+        initialStatus: "available",
+      },
+      actor: "labeler",
+    });
+
+    expect(response.processedCount).toBe(3);
+    expect(new Set(response.entities.map((entity) => entity.partType.id))).toEqual(new Set([existing.partType.id]));
+    expect(service.searchPartTypes("Shared Fixture")).toHaveLength(1);
+  });
+
   it("bulk moves mixed assigned targets with one shared location payload", () => {
     const { service } = makeService();
 
