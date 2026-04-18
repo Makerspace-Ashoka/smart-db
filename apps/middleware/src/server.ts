@@ -211,10 +211,25 @@ export async function buildServer(options: BuildServerOptions = {}) {
     });
   }
 
-  app.setErrorHandler((error, _request, reply) => {
+  app.setErrorHandler((error, request, reply) => {
     const applicationError = isApplicationError(error)
       ? error
       : new InvariantError("Unhandled middleware failure.", {}, { cause: error });
+
+    // Log non-application (invariant-wrapped) errors with their cause so we
+    // can diagnose "code: invariant, message: Unhandled middleware failure"
+    // from production without having to redeploy with extra logging. Every
+    // such case is a bug we want to see.
+    if (!isApplicationError(error)) {
+      request.log.error(
+        {
+          err: error,
+          url: request.url,
+          method: request.method,
+        },
+        "unhandled middleware failure",
+      );
+    }
 
     reply.status(applicationError.httpStatus).send({
       error: {
