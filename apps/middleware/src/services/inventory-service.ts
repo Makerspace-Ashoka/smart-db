@@ -237,6 +237,74 @@ export class InventoryService {
     };
   }
 
+  private syncEntityFromInstance(instanceId: string): void {
+    this.db
+      .prepare(
+        `
+        INSERT INTO entities (id, qr_code, part_type_id, location, quantity, minimum_quantity, status, assignee, version, partdb_lot_id, partdb_sync_status, created_at, updated_at, source_kind)
+        SELECT id, qr_code, part_type_id, location, 1, NULL, status, assignee, version, partdb_lot_id, partdb_sync_status, created_at, updated_at, 'instance'
+        FROM physical_instances
+        WHERE id = ?
+        ON CONFLICT(id) DO UPDATE SET
+          qr_code = excluded.qr_code,
+          part_type_id = excluded.part_type_id,
+          location = excluded.location,
+          quantity = excluded.quantity,
+          minimum_quantity = excluded.minimum_quantity,
+          status = excluded.status,
+          assignee = excluded.assignee,
+          version = excluded.version,
+          partdb_lot_id = excluded.partdb_lot_id,
+          partdb_sync_status = excluded.partdb_sync_status,
+          updated_at = excluded.updated_at
+      `,
+      )
+      .run(instanceId);
+  }
+
+  private syncEntityFromBulk(bulkId: string): void {
+    this.db
+      .prepare(
+        `
+        INSERT INTO entities (id, qr_code, part_type_id, location, quantity, minimum_quantity, status, assignee, version, partdb_lot_id, partdb_sync_status, created_at, updated_at, source_kind)
+        SELECT id, qr_code, part_type_id, location, quantity, minimum_quantity, 'available', NULL, version, partdb_lot_id, partdb_sync_status, created_at, updated_at, 'bulk'
+        FROM bulk_stocks
+        WHERE id = ?
+        ON CONFLICT(id) DO UPDATE SET
+          qr_code = excluded.qr_code,
+          part_type_id = excluded.part_type_id,
+          location = excluded.location,
+          quantity = excluded.quantity,
+          minimum_quantity = excluded.minimum_quantity,
+          status = excluded.status,
+          version = excluded.version,
+          partdb_lot_id = excluded.partdb_lot_id,
+          partdb_sync_status = excluded.partdb_sync_status,
+          updated_at = excluded.updated_at
+      `,
+      )
+      .run(bulkId);
+  }
+
+  private removeEntity(id: string): void {
+    this.db.prepare(`DELETE FROM entities WHERE id = ?`).run(id);
+  }
+
+  private syncAllEntitiesFromPartType(partTypeId: string): void {
+    const instances = this.db
+      .prepare(`SELECT id FROM physical_instances WHERE part_type_id = ?`)
+      .all(partTypeId) as Array<{ id: string }>;
+    const bulks = this.db
+      .prepare(`SELECT id FROM bulk_stocks WHERE part_type_id = ?`)
+      .all(partTypeId) as Array<{ id: string }>;
+    for (const row of instances) {
+      this.syncEntityFromInstance(row.id);
+    }
+    for (const row of bulks) {
+      this.syncEntityFromBulk(row.id);
+    }
+  }
+
   listEntitiesForPartType(partTypeId: string): Array<{
     id: string;
     qrCode: string;
@@ -701,6 +769,7 @@ export class InventoryService {
         this.db.prepare(`UPDATE bulk_stocks SET location = ?, updated_at = ? WHERE id = ?`).run(canonicalDest, timestamp, bulkId);
         this.insertEvent({ targetType: "bulk", targetId: bulkId, event: "moved", fromState: formatBulkState(sourceQty, unitSymbol, minQty), toState: formatBulkState(sourceQty, unitSymbol, minQty), location: canonicalDest, actor, notes, createdAt: timestamp });
         this.enqueueLotUpdate({ table: "bulk_stocks", rowId: bulkId, column: "partdb_lot_id" }, correlationId, { storageLocationName: canonicalDest });
+        this.syncEntityFromBulk(bulkId);
         return { source: { id: bulkId, quantity: sourceQty }, destination: { id: bulkId, quantity: sourceQty } };
       }
 
@@ -720,6 +789,8 @@ export class InventoryService {
         this.db.prepare(`UPDATE bulk_stocks SET quantity = ?, updated_at = ? WHERE id = ?`).run(newDestQty, timestamp, existingDest.id);
         this.insertEvent({ targetType: "bulk", targetId: existingDest.id, event: "restocked", fromState: formatBulkState(prevDestQty, unitSymbol, null), toState: formatBulkState(newDestQty, unitSymbol, null), location: canonicalDest, actor, notes: `Received ${quantity} from ${currentLocation}`, createdAt: timestamp });
         this.enqueueLotUpdate({ table: "bulk_stocks", rowId: existingDest.id, column: "partdb_lot_id" }, correlationId, { amount: newDestQty });
+        this.syncEntityFromBulk(bulkId);
+        this.syncEntityFromBulk(existingDest.id);
         return { source: { id: bulkId, quantity: newSourceQty }, destination: { id: existingDest.id, quantity: newDestQty } };
       }
 
@@ -736,6 +807,8 @@ export class InventoryService {
         const partSyncDep = this.ensurePartTypeSync(partType, correlationId);
         this.enqueueCreateLot({ table: "bulk_stocks", rowId: newBulkId, column: "partdb_lot_id" }, correlationId, partType, canonicalDest, newQrCode, `Split from ${currentLocation}`, quantity, partSyncDep);
       }
+      this.syncEntityFromBulk(bulkId);
+      this.syncEntityFromBulk(newBulkId);
       return { source: { id: bulkId, quantity: newSourceQty }, destination: { id: newBulkId, quantity } };
     });
   }
@@ -787,6 +860,8 @@ export class InventoryService {
         correlationId,
         { amount: newQuantity },
       );
+
+      this.syncEntityFromBulk(bulkId);
     });
 
     return { newQuantity };
@@ -889,6 +964,7 @@ export class InventoryService {
           notes: input.notes ?? null,
           createdAt: timestamp,
         });
+        this.syncEntityFromInstance(id);
       } else {
         const initialQuantity = requireFinitePositiveQuantity(input.initialQuantity, "initialQuantity");
         const minimumQuantity =
@@ -937,6 +1013,7 @@ export class InventoryService {
           notes: input.notes ?? null,
           createdAt: timestamp,
         });
+        this.syncEntityFromBulk(id);
       }
 
       const assignedQr = this.db
@@ -1070,6 +1147,8 @@ export class InventoryService {
             },
           );
         }
+
+        this.syncEntityFromInstance(current.id);
       });
 
       return this.latestEvent("instance", current.id);
@@ -1169,6 +1248,8 @@ export class InventoryService {
           },
         );
       }
+
+      this.syncEntityFromBulk(current.id);
     });
 
     return this.latestEvent("bulk", current.id);
@@ -1232,6 +1313,9 @@ export class InventoryService {
         .run(destination.id, source.id);
       this.db
         .prepare(`UPDATE bulk_stocks SET part_type_id = ? WHERE part_type_id = ?`)
+        .run(destination.id, source.id);
+      this.db
+        .prepare(`UPDATE entities SET part_type_id = ? WHERE part_type_id = ?`)
         .run(destination.id, source.id);
       this.db
         .prepare(
@@ -1303,6 +1387,7 @@ export class InventoryService {
               },
               correlationId,
             );
+            this.syncEntityFromInstance(instance.id);
           }
         } else {
           const row = this.db
@@ -1332,6 +1417,7 @@ export class InventoryService {
               },
               correlationId,
             );
+            this.syncEntityFromBulk(bulk.id);
           }
         }
       }
@@ -1474,6 +1560,12 @@ export class InventoryService {
           target.targetType === "instance" ? 1 : (target.quantity ?? 0),
           partDependencyId,
         );
+      }
+
+      if (target.targetType === "instance") {
+        this.syncEntityFromInstance(target.id);
+      } else {
+        this.syncEntityFromBulk(target.id);
       }
     });
 
@@ -1691,6 +1783,7 @@ export class InventoryService {
       }
 
       this.db.prepare(`DELETE FROM ${target.table} WHERE id = ?`).run(target.id);
+      this.removeEntity(target.id);
       this.db
         .prepare(`
           UPDATE qrcodes

@@ -1,6 +1,10 @@
 import jsQR from "jsqr";
 import { sanitizeScannedCode, scanLookupCompactKey } from "@smart-db/contracts";
 
+type HTMLVideoElementWithFocusHandler = HTMLVideoElement & {
+  __smartDbFocusClickHandler?: ((event: Event) => void) | undefined;
+};
+
 export type CameraScannerPermissionState = "unknown" | "granted" | "denied";
 
 export type CameraScannerPhase =
@@ -164,10 +168,21 @@ interface CameraScannerCanvasLike {
 
 const DEFAULT_SCAN_INTERVAL_MS = 120;
 const DEFAULT_DUPLICATE_WINDOW_MS = 3000;
+const FOCUS_MODE_PRIORITY = ["continuous", "auto", "single-shot", "manual"] as const;
+type FocusMode = (typeof FOCUS_MODE_PRIORITY)[number];
+
 const DEFAULT_VIDEO_CONSTRAINTS: MediaStreamConstraints = {
   video: {
-    facingMode: "environment",
-  },
+    facingMode: { ideal: "environment" },
+    width: { ideal: 1280 },
+    height: { ideal: 720 },
+    // Advanced blocks are best-effort on every browser: each is tried independently
+    // and any that the driver can't honour is silently dropped rather than the
+    // whole stream being rejected. This front-loads focus hints at
+    // getUserMedia time, which Android Chromium honours more reliably than
+    // a post-hoc applyConstraints.
+    advanced: FOCUS_MODE_PRIORITY.map((focusMode) => ({ focusMode })),
+  } as MediaTrackConstraints,
 };
 
 let defaultDetectorClassPromise: Promise<BarcodeDetectorConstructor> | null = null;
@@ -535,21 +550,9 @@ export class CameraScannerService {
     try {
       stream = await this.mediaDevices.getUserMedia(this.videoConstraints);
 
-      // Request continuous autofocus on the video track if the device supports it.
-      // Many phones default to fixed focus unless explicitly told otherwise.
       const videoTrack = stream.getVideoTracks()[0];
       if (videoTrack) {
-        try {
-          const capabilities = videoTrack.getCapabilities?.() as Record<string, unknown> | undefined;
-          const focusModes = capabilities?.focusMode as string[] | undefined;
-          if (focusModes?.includes("continuous")) {
-            await videoTrack.applyConstraints({
-              advanced: [{ focusMode: "continuous" } as MediaTrackConstraintSet],
-            });
-          }
-        } catch {
-          // Not all browsers/devices support focusMode — ignore silently.
-        }
+        await this.engageContinuousAutoTuning(videoTrack);
       }
     } catch (error) {
       const failure = classifyStartFailure(error);
@@ -639,6 +642,7 @@ export class CameraScannerService {
     }
 
     this.videoElement = video;
+    this.bindFocusTapHandler(video);
 
     if (this.stream && this.videoElement === video && video.srcObject === this.stream && this.snapshot.phase === "scanning") {
       return { ok: true };
@@ -702,6 +706,7 @@ export class CameraScannerService {
     }
 
     this.videoElement = video;
+    this.bindFocusTapHandler(video);
     this.setSnapshot({
       phase: "scanning",
       supported: true,
@@ -921,9 +926,169 @@ export class CameraScannerService {
         video.srcObject = null;
       }
       video.pause();
+      const handler = (video as HTMLVideoElementWithFocusHandler).__smartDbFocusClickHandler;
+      if (handler) {
+        video.removeEventListener("click", handler);
+        (video as HTMLVideoElementWithFocusHandler).__smartDbFocusClickHandler = undefined;
+      }
     } catch (error) {
       this.logger.warn("CameraScannerService failed to detach the video element cleanly.", error);
     }
+  }
+
+  /**
+   * Ask the active camera track to refocus at the given (optional) point, or
+   * to re-engage continuous autofocus if no point is supplied. Safe to call
+   * repeatedly; if the device exposes no focus control at all, this is a no-op
+   * (and any underlying rejection is logged rather than thrown).
+   */
+  async refocus(point?: { x: number; y: number }): Promise<void> {
+    const track = this.stream?.getVideoTracks()[0] ?? null;
+    if (!track || track.readyState !== "live") {
+      return;
+    }
+
+    try {
+      if (point) {
+        await this.applySingleShotFocusAtPoint(track, point);
+        return;
+      }
+      await this.engageContinuousAutoTuning(track);
+    } catch (error) {
+      this.logger.warn("CameraScannerService refocus failed.", error);
+    }
+  }
+
+  private getTrackFocusCapabilities(track: MediaStreamTrack): {
+    readonly focusModes: readonly string[];
+    readonly exposureModes: readonly string[];
+    readonly whiteBalanceModes: readonly string[];
+    readonly hasPointsOfInterest: boolean;
+  } {
+    const capabilities = (typeof track.getCapabilities === "function"
+      ? track.getCapabilities()
+      : undefined) as Record<string, unknown> | undefined;
+    const focusModes = Array.isArray(capabilities?.focusMode)
+      ? (capabilities!.focusMode as string[])
+      : [];
+    const exposureModes = Array.isArray(capabilities?.exposureMode)
+      ? (capabilities!.exposureMode as string[])
+      : [];
+    const whiteBalanceModes = Array.isArray(capabilities?.whiteBalanceMode)
+      ? (capabilities!.whiteBalanceMode as string[])
+      : [];
+    const hasPointsOfInterest =
+      capabilities !== undefined && "pointsOfInterest" in capabilities;
+    return { focusModes, exposureModes, whiteBalanceModes, hasPointsOfInterest };
+  }
+
+  private async engageContinuousAutoTuning(track: MediaStreamTrack): Promise<void> {
+    const { focusModes, exposureModes, whiteBalanceModes } =
+      this.getTrackFocusCapabilities(track);
+
+    // Focus: walk continuous → auto → manual → single-shot, apply the first
+    // supported mode. Report the full capability set to the logger so diagnosis
+    // of "no autofocus" on an unfamiliar device no longer requires reading
+    // source.
+    const preferredFocus = FOCUS_MODE_PRIORITY.find((mode) => focusModes.includes(mode));
+    if (preferredFocus) {
+      try {
+        await track.applyConstraints({
+          advanced: [{ focusMode: preferredFocus } as MediaTrackConstraintSet],
+        });
+      } catch (error) {
+        this.logger.warn(
+          `CameraScannerService could not apply focusMode='${preferredFocus}'; supported=${focusModes.join(",") || "(none)"}`,
+          error,
+        );
+      }
+    } else if (focusModes.length === 0) {
+      this.logger.warn(
+        "CameraScannerService: track reports no focusMode capability. Device will use its default (often fixed) focus; tap-to-focus on the viewfinder may still engage native AF on iOS.",
+      );
+    }
+
+    // Exposure and white-balance are best-effort; they dramatically improve
+    // decode reliability under changing light when available, but missing
+    // support is silent (not all drivers report these capabilities even when
+    // they engage the underlying modes automatically).
+    if (exposureModes.includes("continuous")) {
+      try {
+        await track.applyConstraints({
+          advanced: [{ exposureMode: "continuous" } as MediaTrackConstraintSet],
+        });
+      } catch (error) {
+        this.logger.warn("CameraScannerService: exposureMode=continuous rejected.", error);
+      }
+    }
+    if (whiteBalanceModes.includes("continuous")) {
+      try {
+        await track.applyConstraints({
+          advanced: [{ whiteBalanceMode: "continuous" } as MediaTrackConstraintSet],
+        });
+      } catch (error) {
+        this.logger.warn("CameraScannerService: whiteBalanceMode=continuous rejected.", error);
+      }
+    }
+  }
+
+  private async applySingleShotFocusAtPoint(
+    track: MediaStreamTrack,
+    point: { x: number; y: number },
+  ): Promise<void> {
+    const clampedX = Math.min(Math.max(point.x, 0), 1);
+    const clampedY = Math.min(Math.max(point.y, 0), 1);
+    const { focusModes, hasPointsOfInterest } = this.getTrackFocusCapabilities(track);
+
+    // Chromium exposes a `single-shot` focus mode plus a `pointsOfInterest`
+    // constraint — applying both in one call is the supported recipe. If the
+    // device lacks single-shot, fall back to re-engaging continuous so a move
+    // of the camera still triggers a hunt.
+    const preferred = focusModes.includes("single-shot")
+      ? "single-shot"
+      : FOCUS_MODE_PRIORITY.find((mode) => focusModes.includes(mode));
+    if (!preferred) {
+      return;
+    }
+
+    const base: Record<string, unknown> = { focusMode: preferred };
+    if (hasPointsOfInterest) {
+      base.pointsOfInterest = [{ x: clampedX, y: clampedY }];
+    }
+    try {
+      await track.applyConstraints({
+        advanced: [base as MediaTrackConstraintSet],
+      });
+    } catch (error) {
+      this.logger.warn(
+        `CameraScannerService tap-to-focus failed (mode=${preferred}, point=${clampedX.toFixed(2)}x${clampedY.toFixed(2)}).`,
+        error,
+      );
+    }
+  }
+
+  private bindFocusTapHandler(video: HTMLVideoElement): void {
+    const element = video as HTMLVideoElementWithFocusHandler;
+    if (element.__smartDbFocusClickHandler) {
+      return;
+    }
+    const handler = (event: Event) => {
+      const mouse = event as MouseEvent;
+      const target = event.currentTarget;
+      if (!(target instanceof HTMLVideoElement)) {
+        return;
+      }
+      const rect = target.getBoundingClientRect();
+      if (rect.width === 0 || rect.height === 0) {
+        void this.refocus();
+        return;
+      }
+      const x = (mouse.clientX - rect.left) / rect.width;
+      const y = (mouse.clientY - rect.top) / rect.height;
+      void this.refocus({ x, y });
+    };
+    video.addEventListener("click", handler);
+    element.__smartDbFocusClickHandler = handler;
   }
 
   private setSnapshot(snapshot: CameraScannerSnapshot): void {

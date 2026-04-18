@@ -380,6 +380,7 @@ function renderScanner(state: RewriteUiState, isLookingUp: boolean, blockedReaso
       <div class="viewfinder"${state.camera.activeStream ? "" : " hidden"}>
         <video id="rewrite-camera-video" playsinline muted autoplay></video>
         <div class="viewfinder-guide"></div>
+        ${state.camera.activeStream ? `<div class="viewfinder-hint" aria-hidden="true">Tap the preview to refocus</div>` : ""}
         ${state.camera.lastResult && state.camera.activeStream ? `<div class="scan-flash"></div>` : ""}
       </div>
       ${state.camera.activeStream ? `<button type="button" data-action="camera-stop">Switch to manual input</button>` : ""}
@@ -1177,7 +1178,7 @@ function renderScanEditSharedForm(
     <form class="form-grid" data-form="scan-edit-shared">
       <p class="banner error wide">
         This renames the shared catalog type itself, not just the scanned item.
-        ${usage ? escapeHtml(` It is currently linked to ${usage.instanceCount} tracked items and ${usage.bins} bulk bins.`) : ""}
+        ${usage ? escapeHtml(` It is currently linked to ${usage.entityCount ?? usage.instanceCount + usage.bins} QR${(usage.entityCount ?? usage.instanceCount + usage.bins) === 1 ? "" : "s"} across locations.`) : ""}
       </p>
       <label class="wide">
         Shared canonical name
@@ -1569,7 +1570,7 @@ function emptyBulkQueueCopy(action: "label" | "move" | "delete"): string {
     case "label":
       return "Scan printed Smart DB labels to build a homogeneous bulk labeling queue.";
     case "move":
-      return "Scan assigned Smart DB labels to move several tracked items or bulk bins at once.";
+      return "Scan assigned Smart DB labels to move several entities at once.";
     case "delete":
       return "Scan fresh ingests whose history is still just the original labeled event to reverse them in bulk.";
   }
