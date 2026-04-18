@@ -93,14 +93,22 @@ async function request<TSchema extends z.ZodTypeAny>(
   const combinedSignal = init?.signal
     ? AbortSignal.any([init.signal, timeoutSignal])
     : timeoutSignal;
-  const { headers: initHeaders, signal: _ignoredSignal, ...restInit } = init ?? {};
+  const { headers: initHeaders, signal: _ignoredSignal, body: initBody, ...restInit } = init ?? {};
+  // Only declare the JSON content-type when we actually have a JSON body to
+  // send. Fastify's default JSON parser rejects body-less requests that carry
+  // a Content-Type: application/json header with FST_ERR_CTP_EMPTY_JSON_BODY
+  // (status 400) before the route handler runs, which made every body-less
+  // POST (logout, sync-drain, etc.) fail with an opaque invariant 500.
+  const hasBody = initBody !== undefined && initBody !== null;
+  const headers: HeadersInit = {
+    ...(hasBody ? { "Content-Type": "application/json" } : {}),
+    ...(initHeaders ?? {}),
+  };
   const response = await fetch(apiUrl(path), {
     ...restInit,
+    ...(hasBody ? { body: initBody } : {}),
     credentials: "include",
-    headers: {
-      "Content-Type": "application/json",
-      ...(initHeaders ?? {}),
-    },
+    headers,
     signal: combinedSignal,
   });
 

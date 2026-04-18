@@ -278,6 +278,20 @@ describe("buildServer", () => {
     expect(logout.statusCode).toBe(200);
     expect(logout.json()).toEqual({ ok: true, redirectUrl: null });
 
+    // Regression: the browser's logout POST historically carried
+    // Content-Type: application/json with no body. Fastify's default JSON
+    // parser rejects that with FST_ERR_CTP_EMPTY_JSON_BODY (status 400)
+    // before the route runs. A faithful server response is a 400 with the
+    // original fastify code, not a 500 "invariant / Unhandled middleware
+    // failure" envelope.
+    const empty = await app.inject({
+      method: "POST",
+      url: "/api/auth/logout",
+      headers: { ...sessionHeaders, "content-type": "application/json" },
+    });
+    expect(empty.statusCode).toBe(400);
+    expect(empty.json().error.code).toBe("FST_ERR_CTP_EMPTY_JSON_BODY");
+
     expect(authService.startLogin).toHaveBeenCalledTimes(1);
     expect(authService.completeLogin).toHaveBeenCalledTimes(1);
     expect(authService.logout).toHaveBeenCalledTimes(1);
