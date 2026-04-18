@@ -172,17 +172,16 @@ const FOCUS_MODE_PRIORITY = ["continuous", "auto", "single-shot", "manual"] as c
 type FocusMode = (typeof FOCUS_MODE_PRIORITY)[number];
 
 const DEFAULT_VIDEO_CONSTRAINTS: MediaStreamConstraints = {
+  // Keep initial constraints minimal - just the facing preference. Driver-
+  // specific knobs (focus/exposure/white-balance/resolution) are handled via
+  // applyConstraints AFTER the track is live, because some Android camera
+  // HALs reject advanced constraints at getUserMedia time with
+  // OverConstrainedError, which fails the entire stream acquisition. The
+  // post-start path in engageContinuousAutoTuning is always safe because each
+  // applyConstraints call there is individually caught and logged.
   video: {
-    facingMode: { ideal: "environment" },
-    width: { ideal: 1280 },
-    height: { ideal: 720 },
-    // Advanced blocks are best-effort on every browser: each is tried independently
-    // and any that the driver can't honour is silently dropped rather than the
-    // whole stream being rejected. This front-loads focus hints at
-    // getUserMedia time, which Android Chromium honours more reliably than
-    // a post-hoc applyConstraints.
-    advanced: FOCUS_MODE_PRIORITY.map((focusMode) => ({ focusMode })),
-  } as MediaTrackConstraints,
+    facingMode: "environment",
+  },
 };
 
 let defaultDetectorClassPromise: Promise<BarcodeDetectorConstructor> | null = null;
@@ -552,7 +551,12 @@ export class CameraScannerService {
 
       const videoTrack = stream.getVideoTracks()[0];
       if (videoTrack) {
-        await this.engageContinuousAutoTuning(videoTrack);
+        // Fire-and-forget. applyConstraints against real camera hardware can
+        // take hundreds of milliseconds on some Android devices and must never
+        // hold up stream binding. If it resolves, great. If it rejects, the
+        // helper logs the diagnosis and the scanner keeps working with
+        // whatever focus state the driver started with.
+        void this.engageContinuousAutoTuning(videoTrack);
       }
     } catch (error) {
       const failure = classifyStartFailure(error);
