@@ -32,7 +32,11 @@ jobs:
     name: Deploy to server
     needs: check
     if: github.ref == 'refs/heads/main' && github.event_name == 'push'
-    runs-on: self-hosted
+    # Pin to the production runner explicitly. `runs-on: self-hosted` alone
+    # matches any self-hosted runner registered to the repo, including the
+    # smartdb-staging-lxc preview runner, which lacks production env files
+    # and fails the pre-flight every time it picks up the job at random.
+    runs-on: [self-hosted, smartdb-server]
     steps:
       - name: Pull latest code
         run: |
