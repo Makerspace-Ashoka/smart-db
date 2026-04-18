@@ -166,6 +166,7 @@ export class RewriteAppController {
   };
   private scanLocationsAbortController: AbortController | null = null;
   private scanLocationsRequestId = 0;
+  private inventoryQueryRenderTimer: number | null = null;
   private renderSuppressed = false;
   private readonly cameraService = new CameraScannerService({
     onScan: (code) => {
@@ -237,6 +238,10 @@ export class RewriteAppController {
     this.searchControllers.bulkLabel?.abort();
     this.searchControllers.edit?.abort();
     this.scanLocationsAbortController?.abort();
+    if (this.inventoryQueryRenderTimer !== null) {
+      window.clearTimeout(this.inventoryQueryRenderTimer);
+      this.inventoryQueryRenderTimer = null;
+    }
     this.scanAbortController?.abort();
     this.authActor.stop();
     this.scanActor.stop();
@@ -742,14 +747,32 @@ export class RewriteAppController {
         });
         void this.performSearch("merge", String(rawValue));
         return;
-      case "inventory.query":
-        this.patch({
-          inventoryUi: {
-            ...this.state.inventoryUi,
-            query: String(rawValue),
-          },
-        });
+      case "inventory.query": {
+        // Typing the inventory filter on a catalogue with 200+ part types
+        // used to rebuild the whole list DOM each keystroke. Update the state
+        // immediately (input stays responsive because focus is restored after
+        // render), but defer the actual re-render until typing settles so the
+        // expensive filter loop runs once per burst instead of per keypress.
+        this.renderSuppressed = true;
+        try {
+          this.patch({
+            inventoryUi: {
+              ...this.state.inventoryUi,
+              query: String(rawValue),
+            },
+          });
+        } finally {
+          this.renderSuppressed = false;
+        }
+        if (this.inventoryQueryRenderTimer !== null) {
+          window.clearTimeout(this.inventoryQueryRenderTimer);
+        }
+        this.inventoryQueryRenderTimer = window.setTimeout(() => {
+          this.inventoryQueryRenderTimer = null;
+          this.render();
+        }, 150);
         return;
+      }
       case "inventory.showEmpty":
         this.patch({
           inventoryUi: {

@@ -1316,7 +1316,7 @@ function renderInventoryTab(state: RewriteUiState): string {
                               state.inventoryReverseSelection.targets.some((t) => `${t.kind}:${t.id}` === key);
                             return `
                               <li class="inventory-detail-item${selected ? " selected" : ""}">
-                                ${bulk.canReverseIngest ? `<input type="checkbox"${selected ? " checked" : ""} data-action="inventory-reverse-toggle" data-part-type-id="${attr(row.id)}" data-kind="bulk" data-id="${attr(bulk.id)}" data-qr-code="${attr(bulk.qrCode)}" aria-label="Select ${attr(bulk.qrCode)} for reverse" />` : `<span style="width:1rem;display:inline-block" aria-hidden="true"></span>`}
+                                ${bulk.canReverseIngest ? `<input type="checkbox"${selected ? " checked" : ""} data-action="inventory-reverse-toggle" data-part-type-id="${attr(row.id)}" data-kind="bulk" data-id="${attr(bulk.id)}" data-qr-code="${attr(bulk.qrCode)}" aria-label="Select ${attr(bulk.qrCode)} for reverse" />` : `<span class="inventory-checkbox-spacer" aria-hidden="true"></span>`}
                                 <code>${escapeHtml(bulk.qrCode)}</code>
                                 <span>${escapeHtml(bulk.location)}</span>
                                 <strong>${escapeHtml(formatQuantity(bulk.quantity))} ${escapeHtml(row.unit.symbol)}</strong>
@@ -1330,7 +1330,7 @@ function renderInventoryTab(state: RewriteUiState): string {
                               state.inventoryReverseSelection.targets.some((t) => `${t.kind}:${t.id}` === key);
                             return `
                               <li class="inventory-detail-item${selected ? " selected" : ""}">
-                                ${instance.canReverseIngest ? `<input type="checkbox"${selected ? " checked" : ""} data-action="inventory-reverse-toggle" data-part-type-id="${attr(row.id)}" data-kind="instance" data-id="${attr(instance.id)}" data-qr-code="${attr(instance.qrCode)}" aria-label="Select ${attr(instance.qrCode)} for reverse" />` : `<span style="width:1rem;display:inline-block" aria-hidden="true"></span>`}
+                                ${instance.canReverseIngest ? `<input type="checkbox"${selected ? " checked" : ""} data-action="inventory-reverse-toggle" data-part-type-id="${attr(row.id)}" data-kind="instance" data-id="${attr(instance.id)}" data-qr-code="${attr(instance.qrCode)}" aria-label="Select ${attr(instance.qrCode)} for reverse" />` : `<span class="inventory-checkbox-spacer" aria-hidden="true"></span>`}
                                 <code>${escapeHtml(instance.qrCode)}</code>
                                 <span>${escapeHtml(instance.location)}</span>
                                 <strong>${escapeHtml(instance.status)}</strong>
@@ -1483,7 +1483,7 @@ function renderAdminTab(state: RewriteUiState): string {
       </section>
 
       <section class="panel">
-        ${renderPanelTitle("Canonicalize provisional types", "Merge cleanup uses its own predictive search state and request ordering.")}
+        ${renderPanelTitle("Canonicalize provisional types", "A provisional type is one a scanner created on the fly because the catalog didn't have it yet. This tool is where you merge near-duplicates into the canonical row or approve a provisional as canonical.")}
         <div class="stack">
           <label>
             Provisional source
