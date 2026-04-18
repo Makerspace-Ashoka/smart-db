@@ -780,7 +780,13 @@ export class CameraScannerService {
 
       try {
         const imageData = context.getImageData(0, 0, width, height);
-        const result = this.jsqr(imageData.data, width, height, { inversionAttempts: "dontInvert" });
+        // attemptBoth is jsQR's default and the only sensible production setting:
+        // many printed QRs and any code captured under changing light land in the
+        // inverted orientation from jsQR's perspective, and skipping the second
+        // pass means the decoder quietly refuses valid codes. The "dontInvert"
+        // CPU optimisation this replaces was the root cause of scans failing
+        // on laptop webcams.
+        const result = this.jsqr(imageData.data, width, height, { inversionAttempts: "attemptBoth" });
         if (result?.data) {
           this.acceptCode(result.data);
           return;
