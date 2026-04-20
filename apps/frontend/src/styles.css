@@ -31,8 +31,9 @@
   --red: #dc2626;   --red-bg: #fef2f2;
   --amber: #d97706; --amber-bg: #fffbeb;
 
-  --r: 8px;
-  --r-sm: 4px;
+  --r: 10px;
+  --r-sm: 6px;
+  --r-lg: 14px;
   --r-pill: 9999px;
 
   --ring: rgba(37, 99, 235, 0.45);
@@ -416,7 +417,7 @@ button:disabled { opacity: 0.4; cursor: not-allowed; }
 /* ── toasts ─ ─ ─ ─ ─ ─ */
 
 .toast-container { position: fixed; bottom: calc(4.5rem + env(safe-area-inset-bottom)); left: 50%; transform: translateX(-50%); z-index: 200; display: flex; flex-direction: column-reverse; gap: 0.375rem; width: min(400px, calc(100vw - 1rem)); pointer-events: none; }
-.toast { pointer-events: auto; display: grid; grid-template-columns: auto 1fr auto; align-items: center; gap: 0.625rem; padding: 0.625rem 0.75rem; background: var(--surface); border: 1px solid var(--border); border-radius: var(--r); box-shadow: 0 4px 12px rgba(0,0,0,0.08); font-size: 0.875rem; animation: toast-in 0.2s cubic-bezier(0.16, 1, 0.3, 1); border-left-width: 3px; }
+.toast { pointer-events: auto; display: grid; grid-template-columns: auto 1fr auto; align-items: center; gap: 0.625rem; padding: 0.625rem 0.75rem; background: var(--surface); border: 1px solid var(--border); border-radius: var(--r); box-shadow: 0 4px 12px rgba(0,0,0,0.08); font-size: 0.875rem; border-left-width: 3px; }
 .toast-success { border-left-color: var(--green); }
 .toast-error { border-left-color: var(--red); }
 .toast-info { border-left-color: var(--blue); }
@@ -427,7 +428,6 @@ button:disabled { opacity: 0.4; cursor: not-allowed; }
 .toast-message { min-width: 0; word-wrap: break-word; }
 .toast-close { background: transparent; border: none; color: var(--ink-3); font-size: 1.125rem; padding: 0.25rem; min-height: 44px; min-width: 44px; display: inline-flex; align-items: center; justify-content: center; cursor: pointer; border-radius: var(--r); }
 .toast-close:hover { background: var(--dim); color: var(--ink); }
-@keyframes toast-in { from { opacity: 0; transform: translateY(4px); } to { opacity: 1; transform: translateY(0); } }
 
 /* ── inventory ─ ─ ─ ─ ─ */
 
@@ -487,7 +487,6 @@ button:disabled { opacity: 0.4; cursor: not-allowed; }
 
 /* ── functional ──────── */
 .viewfinder { animation: fade-in 0.2s ease-out; }
-.inventory-row-detail { animation: fade-in 0.15s ease-out; }
 @keyframes fade-in { from { opacity: 0; } to { opacity: 1; } }
 
 @media (max-width: 640px) { .hero { grid-template-columns: 1fr; } .header-bar { flex-wrap: wrap; } }
@@ -1134,7 +1133,13 @@ button.secondary:hover:not(:disabled) {
   color: var(--ink-strong);
 }
 
-/* ── polished primitives ─ ─ ─ ─ ─ ─ ─ */
+/* ── polished primitives ─ ─ ─ ─ ─ ─ ─
+
+   The app re-renders via full innerHTML replacement on every state change,
+   so we avoid @keyframes for structural elements — they would re-fire on
+   each redraw and make the UI feel like it "flashes." Motion lives in CSS
+   transitions instead, which only fire for actual property changes (hover,
+   focus, active class toggle) and survive DOM re-rendering gracefully. */
 
 :focus-visible {
   outline: none;
@@ -1142,7 +1147,22 @@ button.secondary:hover:not(:disabled) {
   border-radius: inherit;
 }
 
-/* buttons: smooth transitions, subtle lift, crisp active state */
+/* rounded corners across surfaces */
+input, select, textarea { border-radius: var(--r); }
+button { border-radius: var(--r); }
+.picker button { border-radius: var(--r-sm); }
+.picker button:first-child { border-top-left-radius: var(--r); border-top-right-radius: var(--r); }
+.picker button:last-child { border-bottom-left-radius: var(--r); border-bottom-right-radius: var(--r); }
+.result-card, .status-card, .latest-batch-card,
+.path-picker-panel, .path-create-panel,
+.inventory-row-detail, .tree-list, .toast { border-radius: var(--r); }
+.banner { border-radius: var(--r-sm); }
+.tree-row { border-radius: 0; }
+.tree-row:first-child { border-top-left-radius: var(--r-sm); border-top-right-radius: var(--r-sm); }
+.tree-row:last-child { border-bottom-left-radius: var(--r-sm); border-bottom-right-radius: var(--r-sm); }
+.tree-chevron, .tree-label { border-radius: var(--r-sm); }
+
+/* buttons — smooth transitions, subtle lift + press */
 button,
 .button-link {
   transition:
@@ -1166,7 +1186,7 @@ button:disabled {
   transform: none;
 }
 
-/* tertiary / ghost button treatments keep no shadow */
+/* ghost / tertiary treatments keep no shadow */
 .disclosure,
 .tab-bar button,
 .toast-close,
@@ -1177,7 +1197,8 @@ button:disabled {
 .mode-toggle button,
 .entity-switch-option,
 .header-bar > button,
-.theme-toggle {
+.theme-toggle,
+.picker button {
   box-shadow: none;
 }
 .disclosure:hover,
@@ -1190,11 +1211,12 @@ button:disabled {
 .mode-toggle button:hover,
 .entity-switch-option:hover,
 .header-bar > button:hover,
-.theme-toggle:hover {
+.theme-toggle:hover,
+.picker button:hover {
   box-shadow: none;
 }
 
-/* inputs: smoother focus ring matching the primary one */
+/* inputs — smoother focus ring matching the primary one */
 input,
 select,
 textarea {
@@ -1210,32 +1232,30 @@ textarea:focus {
   box-shadow: 0 0 0 2px var(--ring-offset), 0 0 0 4px var(--ring);
 }
 
-/* picker cards: lift on hover, smooth border transitions */
+/* picker cards — selection ring via inset shadow */
 .picker button {
   transition:
     background-color var(--t) var(--ease-in-out),
     border-color var(--t) var(--ease-in-out),
     color var(--t) var(--ease-in-out),
-    transform var(--t-fast) var(--ease-in-out),
-    box-shadow var(--t) var(--ease-in-out);
-}
-.picker button:hover:not(:disabled) {
-  box-shadow: var(--shadow-xs);
+    transform var(--t-fast) var(--ease-in-out);
 }
 .picker button.selected {
-  box-shadow: 0 0 0 1px var(--blue) inset;
+  box-shadow: 0 0 0 1.5px var(--blue) inset;
 }
 
-/* result-card / status-card: subtle hover lift */
+/* surfaces — layered shadow stack */
 .result-card,
 .status-card,
 .latest-batch-card {
-  transition: box-shadow var(--t) var(--ease-in-out), transform var(--t) var(--ease-in-out);
+  transition: box-shadow var(--t) var(--ease-in-out);
 }
 .result-card { box-shadow: var(--shadow-xs); }
 .result-card:hover { box-shadow: var(--shadow-sm); }
+.path-picker-panel { box-shadow: var(--shadow-md); }
+.toast { box-shadow: var(--shadow-lg); }
 
-/* tab underline slides in */
+/* tab underline — transitions between tabs, does not re-fire on re-render */
 .tab-bar button { transition: color var(--t) var(--ease-in-out); }
 .tab-bar button::after {
   transition: transform var(--t-slow) var(--ease-out), opacity var(--t) var(--ease-in-out);
@@ -1248,8 +1268,9 @@ textarea:focus {
   opacity: 1;
 }
 
-/* entity-switch thumb glides between options */
-.entity-switch-option {
+/* entity-switch + mode-toggle thumbs */
+.entity-switch-option,
+.mode-toggle button {
   transition:
     background-color var(--t) var(--ease-in-out),
     color var(--t) var(--ease-in-out),
@@ -1257,81 +1278,24 @@ textarea:focus {
 }
 .entity-switch-option.active { box-shadow: var(--shadow-xs); }
 
-/* mode-toggle thumb */
-.mode-toggle button {
+/* tree rows — hover/selection transitions only, no mount animation */
+.tree-row,
+.tree-chevron,
+.tree-label {
   transition:
-    background-color var(--t) var(--ease-in-out),
-    color var(--t) var(--ease-in-out),
-    box-shadow var(--t) var(--ease-in-out);
+    background-color var(--t-fast) var(--ease-in-out),
+    color var(--t-fast) var(--ease-in-out);
 }
 
-/* path picker panel: slide-down + fade on mount */
-.path-picker-panel {
-  animation: popover-in var(--t-slow) var(--ease-out);
-  box-shadow: var(--shadow-md);
-  transform-origin: top;
-}
-@keyframes popover-in {
-  from { opacity: 0; transform: translateY(-4px) scale(0.98); }
-  to   { opacity: 1; transform: translateY(0)    scale(1); }
-}
+/* links */
+a { transition: color var(--t) var(--ease-in-out); }
 
-.tree-row {
-  animation: tree-row-in var(--t) var(--ease-out) backwards;
-}
-.tree-row:nth-child(1) { animation-delay: 0ms; }
-.tree-row:nth-child(2) { animation-delay: 20ms; }
-.tree-row:nth-child(3) { animation-delay: 40ms; }
-.tree-row:nth-child(4) { animation-delay: 60ms; }
-.tree-row:nth-child(5) { animation-delay: 80ms; }
-.tree-row:nth-child(n+6) { animation-delay: 100ms; }
-@keyframes tree-row-in {
-  from { opacity: 0; transform: translateY(-2px); }
-  to   { opacity: 1; transform: translateY(0); }
-}
-
-/* create-panel expand */
-.path-create-panel {
-  animation: accordion-down var(--t-slow) var(--ease-out);
-  transform-origin: top;
-  overflow: hidden;
-}
-@keyframes accordion-down {
-  from { opacity: 0; transform: scaleY(0.96); max-height: 0; }
-  to   { opacity: 1; transform: scaleY(1);    max-height: 1000px; }
-}
-
-/* inventory row expand */
-.inventory-row-detail { animation: accordion-down var(--t-slow) var(--ease-out); transform-origin: top; }
-
-/* toast: refined spring slide + scale */
-.toast {
-  animation: toast-in var(--t-slow) var(--ease-out);
-  box-shadow: var(--shadow-lg);
-}
-@keyframes toast-in {
-  0%   { opacity: 0; transform: translateY(8px) scale(0.96); }
-  60%  { opacity: 1; }
-  100% { opacity: 1; transform: translateY(0)   scale(1); }
-}
-
-/* banner slide-in */
-.banner { animation: banner-in var(--t-slow) var(--ease-out); }
-@keyframes banner-in {
-  from { opacity: 0; transform: translateY(-4px); }
-  to   { opacity: 1; transform: translateY(0); }
-}
-
-/* respect reduced motion for the newly added animations too */
-@media (prefers-reduced-motion: reduce) {
-  .path-picker-panel,
-  .path-create-panel,
-  .inventory-row-detail,
-  .tree-row,
-  .toast,
-  .banner {
-    animation: none !important;
-  }
-  button:active:not(:disabled) { transform: none !important; }
+/* chevron rotates when its row is expanded
+   (requires the row's aria-expanded to reflect state) */
+.tree-chevron {
+  transition:
+    transform var(--t) var(--ease-in-out),
+    background-color var(--t-fast) var(--ease-in-out),
+    color var(--t-fast) var(--ease-in-out);
 }
 
