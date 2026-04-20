@@ -107,14 +107,6 @@ export function renderApp(state: RewriteUiState): string {
       ${state.sessionExpiringSoon ? `<p class="banner error">Session expires soon.</p>` : ""}
       ${state.refreshError ? `<p class="banner error">${escapeHtml(state.refreshError)}</p>` : ""}
 
-      <section class="metrics">
-        ${renderMetric("Part types", state.dashboard?.partTypeCount ?? 0)}
-        ${renderMetric("Instances", state.dashboard?.instanceCount ?? 0)}
-        ${renderMetric("Bulk bins", state.dashboard?.bulkStockCount ?? 0)}
-        ${renderMetric("Provisional", state.dashboard?.provisionalCount ?? 0)}
-        ${renderMetric("Unassigned QRs", state.dashboard?.unassignedQrCount ?? 0)}
-      </section>
-
       <main class="layout">
         ${state.activeTab === "scan" ? renderScanTab(state) : ""}
         ${state.activeTab === "inventory" ? renderInventoryTab(state) : ""}
@@ -166,7 +158,7 @@ function renderToasts(toasts: readonly ToastRecord[]): string {
 function renderTabBar(activeTab: TabId, tabs: readonly TabId[]): string {
   const labels: Record<TabId, string> = {
     scan: "Scan",
-    inventory: "Stock",
+    inventory: "Assets",
     activity: "Activity",
     admin: "Admin",
   };
@@ -709,6 +701,13 @@ function renderInventoryTab(state: RewriteUiState): string {
 
   return `
     <section id="panel-inventory" role="tabpanel" aria-labelledby="tab-inventory" class="panel">
+      <section class="metrics">
+        ${renderMetric("Part types", state.dashboard?.partTypeCount ?? 0)}
+        ${renderMetric("Instances", state.dashboard?.instanceCount ?? 0)}
+        ${renderMetric("Bulk bins", state.dashboard?.bulkStockCount ?? 0)}
+        ${renderMetric("Provisional", state.dashboard?.provisionalCount ?? 0)}
+        ${renderMetric("Unassigned QRs", state.dashboard?.unassignedQrCount ?? 0)}
+      </section>
       <div class="stock-controls">
         <input type="search" aria-label="Filter inventory" name="inventory.query" value="${attr(state.inventoryUi.query)}" placeholder="Search..." />
         <label class="inventory-toggle">
