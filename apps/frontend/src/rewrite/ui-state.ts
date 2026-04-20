@@ -75,6 +75,15 @@ export interface InventoryUiState {
   readonly expandedErrors: ReadonlyMap<string, string>;
 }
 
+export interface PathPickerUiState {
+  readonly open: boolean;
+  readonly query: string;
+  readonly expanded: readonly string[];
+  readonly createOpen: boolean;
+  readonly createParent: string;
+  readonly createName: string;
+}
+
 export type CorrectionAction = "reassign" | "editShared" | "reverseIngest" | null;
 
 export interface CorrectionUiState {
@@ -128,6 +137,8 @@ export interface RewriteUiState {
   readonly isOnline: boolean;
   readonly sessionExpiringSoon: boolean;
   readonly refreshError: string | null;
+  readonly categoryPicker: PathPickerUiState;
+  readonly locationPicker: PathPickerUiState;
 }
 
 export const defaultBatchForm: RegisterQrBatchRequest = {
@@ -178,6 +189,15 @@ export const defaultInventoryUiState: InventoryUiState = {
   expandedId: null,
   expandedItems: new Map(),
   expandedErrors: new Map(),
+};
+
+export const defaultPathPickerState: PathPickerUiState = {
+  open: false,
+  query: "",
+  expanded: [],
+  createOpen: false,
+  createParent: "",
+  createName: "",
 };
 
 export const defaultCorrectionUiState: CorrectionUiState = {

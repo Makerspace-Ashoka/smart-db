@@ -449,21 +449,8 @@ function renderNewPartTypeForm(
       <input name="assign.canonicalName" value="${attr(state.assignForm.canonicalName)}" placeholder="Arduino Uno R3" />
       ${assignIssues.canonicalName ? `<span class="field-error">${escapeHtml(assignIssues.canonicalName)}</span>` : ""}
     </label>
-    <div class="wide">
-      ${renderPathTree({
-        value: state.assignForm.category,
-        known: state.knownCategories,
-        ariaLabel: "Category tree",
-        pickAction: "pick-known-category",
-        pickDataKey: "category",
-      })}
-    </div>
-    <label class="wide">
-      Category path
-      <input name="assign.category" value="${attr(state.assignForm.category)}" placeholder="Electronics / Resistors / SMD 0603" />
-      <small style="margin-top:0.3rem;text-transform:none;letter-spacing:0;font-family:var(--font-sans)">Pick a parent above, then type the new child's name at the end. Each level is created in Part-DB.</small>
-      ${assignIssues.category ? `<span class="field-error">${escapeHtml(assignIssues.category)}</span>` : ""}
-    </label>
+    ${renderPathPickerField(state, "category")}
+    ${assignIssues.category ? `<span class="field-error wide">${escapeHtml(assignIssues.category)}</span>` : ""}
     <div class="wide mode-toggle" role="radiogroup" aria-label="Tracking mode">
       <button type="button" role="radio" aria-checked="${String(state.assignForm.entityKind === "instance")}" class="${state.assignForm.entityKind === "instance" ? "selected" : ""}" data-action="set-entity-kind" data-entity-kind="instance">Tracked unit</button>
       <button type="button" role="radio" aria-checked="${String(state.assignForm.entityKind === "bulk")}" class="${state.assignForm.entityKind === "bulk" ? "selected" : ""}" data-action="set-entity-kind" data-entity-kind="bulk">Bulk pool</button>
@@ -498,21 +485,8 @@ function renderSharedAssignFields(
     measurementUnitCatalog.find((unit) => unit.symbol === state.assignForm.unitSymbol) ??
     measurementUnitCatalog[0];
   return `
-    <div class="wide">
-      ${renderPathTree({
-        value: state.assignForm.location,
-        known: state.knownLocations,
-        ariaLabel: "Location tree",
-        pickAction: "pick-known-location",
-        pickDataKey: "location",
-      })}
-    </div>
-    <label class="wide">
-      Location
-      <input name="assign.location" value="${attr(state.assignForm.location)}" placeholder="Lab A / Shelf 3 / Bin 12" autocomplete="off" />
-      <small style="margin-top:0.3rem;text-transform:none;letter-spacing:0;font-family:var(--font-sans)">Pick a parent above or type a new path. Use <code>/</code> to nest sub-locations.</small>
-      ${assignIssues.location ? `<span class="field-error">${escapeHtml(assignIssues.location)}</span>` : ""}
-    </label>
+    ${renderPathPickerField(state, "location")}
+    ${assignIssues.location ? `<span class="field-error wide">${escapeHtml(assignIssues.location)}</span>` : ""}
     ${state.assignForm.entityKind === "instance" ? `
       <label>
         Initial status
@@ -901,31 +875,121 @@ function joinPathSegments(segments: readonly string[]): string {
   return segments.join(" / ");
 }
 
-function renderPathTree(opts: {
-  readonly value: string;
-  readonly known: readonly string[];
-  readonly ariaLabel: string;
-  readonly pickAction: "pick-known-category" | "pick-known-location";
-  readonly pickDataKey: "category" | "location";
-}): string {
-  const currentSegs = parsePathSegments(opts.value);
-  const currentPath = joinPathSegments(currentSegs);
+interface PathNode {
+  readonly segment: string;
+  readonly path: string;
+  readonly children: Map<string, PathNode>;
+}
 
-  const crumbButton = (label: string, path: string, isCurrent: boolean): string =>
-    `<button type="button" class="crumb ${isCurrent ? "current" : ""}"
-       data-action="${opts.pickAction}" data-${opts.pickDataKey}="${attr(path)}">${escapeHtml(label)}</button>`;
+function buildPathTree(paths: readonly string[]): PathNode {
+  const root: PathNode = { segment: "", path: "", children: new Map() };
+  for (const p of paths) {
+    const segs = parsePathSegments(p);
+    let cursor = root;
+    const builtSegs: string[] = [];
+    for (const seg of segs) {
+      builtSegs.push(seg);
+      const key = foldSearchText(seg);
+      let child = cursor.children.get(key);
+      if (!child) {
+        child = { segment: seg, path: joinPathSegments(builtSegs), children: new Map() };
+        cursor.children.set(key, child);
+      }
+      cursor = child;
+    }
+  }
+  return root;
+}
 
+function collectVisiblePaths(
+  root: PathNode,
+  tokens: readonly string[],
+): ReadonlySet<string> | null {
+  if (tokens.length === 0) return null;
+  const visible = new Set<string>();
+  function visit(node: PathNode, ancestorChain: string[]): boolean {
+    let any = false;
+    for (const child of node.children.values()) {
+      const selfMatches = matchesAllTokens(child.segment, tokens) || matchesAllTokens(child.path, tokens);
+      const childMatches = visit(child, [...ancestorChain, child.path]);
+      if (selfMatches || childMatches) {
+        visible.add(child.path);
+        for (const anc of ancestorChain) visible.add(anc);
+        any = true;
+      }
+    }
+    return any;
+  }
+  visit(root, []);
+  return visible;
+}
+
+function renderTreeNodes(
+  node: PathNode,
+  depth: number,
+  kind: "category" | "location",
+  expanded: ReadonlySet<string>,
+  autoExpand: ReadonlySet<string> | null,
+  visible: ReadonlySet<string> | null,
+  currentValue: string,
+): string {
+  const currentFolded = foldSearchText(currentValue);
+  const out: string[] = [];
+  const sorted = [...node.children.values()].sort((a, b) => a.segment.localeCompare(b.segment));
+  for (const child of sorted) {
+    if (visible && !visible.has(child.path)) continue;
+    const hasChildren = child.children.size > 0;
+    const isExpanded =
+      expanded.has(child.path) ||
+      (autoExpand !== null && autoExpand.has(child.path));
+    const isSelected = foldSearchText(child.path) === currentFolded && currentFolded !== "";
+    const indent = `padding-left: ${0.5 + depth * 1.25}rem`;
+    out.push(`
+      <div class="tree-row ${isSelected ? "selected" : ""}" style="${indent}">
+        ${hasChildren
+          ? `<button type="button" class="tree-chevron" data-action="toggle-path-expand" data-kind="${kind}" data-path="${attr(child.path)}" aria-expanded="${String(isExpanded)}" aria-label="${isExpanded ? "Collapse" : "Expand"} ${attr(child.segment)}">${isExpanded ? "▾" : "▸"}</button>`
+          : `<span class="tree-chevron placeholder" aria-hidden="true"></span>`}
+        <button type="button" class="tree-label" data-action="pick-path-node" data-kind="${kind}" data-path="${attr(child.path)}">
+          <strong>${escapeHtml(child.segment)}</strong>
+          ${hasChildren ? `<span class="tree-count">${child.children.size}</span>` : ""}
+        </button>
+      </div>
+    `);
+    if (hasChildren && isExpanded) {
+      out.push(renderTreeNodes(child, depth + 1, kind, expanded, autoExpand, visible, currentValue));
+    }
+  }
+  return out.join("");
+}
+
+function renderCreateParentPicker(
+  kind: "category" | "location",
+  parent: string,
+  known: readonly string[],
+): string {
+  const currentSegs = parsePathSegments(parent);
   const crumbs = [
-    crumbButton("Root", "", currentSegs.length === 0),
-    ...currentSegs.map((seg, i) => {
-      const prefix = joinPathSegments(currentSegs.slice(0, i + 1));
-      return crumbButton(seg, prefix, i === currentSegs.length - 1);
-    }),
-  ].join(`<span class="crumb-sep" aria-hidden="true">›</span>`);
+    {
+      label: "Root",
+      path: "",
+      isCurrent: currentSegs.length === 0,
+    },
+    ...currentSegs.map((seg, i) => ({
+      label: seg,
+      path: joinPathSegments(currentSegs.slice(0, i + 1)),
+      isCurrent: i === currentSegs.length - 1,
+    })),
+  ];
+  const crumbHtml = crumbs
+    .map(
+      (c) =>
+        `<button type="button" class="crumb ${c.isCurrent ? "current" : ""}" data-action="set-path-create-parent" data-kind="${kind}" data-path="${attr(c.path)}">${escapeHtml(c.label)}</button>`,
+    )
+    .join(`<span class="crumb-sep" aria-hidden="true">›</span>`);
 
   const children = new Set<string>();
-  for (const known of opts.known) {
-    const segs = parsePathSegments(known);
+  for (const known_ of known) {
+    const segs = parsePathSegments(known_);
     if (segs.length <= currentSegs.length) continue;
     let prefixMatches = true;
     for (let i = 0; i < currentSegs.length; i++) {
@@ -941,27 +1005,126 @@ function renderPathTree(opts: {
     if (next) children.add(next);
   }
   const sortedChildren = Array.from(children).sort((a, b) => a.localeCompare(b));
-
-  const childButtons = sortedChildren.map((child) => {
-    const nextPath = joinPathSegments([...currentSegs, child]);
-    return `
-      <button type="button" class="path-child"
-        data-action="${opts.pickAction}" data-${opts.pickDataKey}="${attr(nextPath)}">
-        <strong>${escapeHtml(child)}</strong>
-      </button>
-    `;
-  }).join("");
-
-  const parentLabel = currentPath === "" ? "Root" : currentPath;
+  const childButtons = sortedChildren
+    .map((child) => {
+      const nextPath = joinPathSegments([...currentSegs, child]);
+      return `
+        <button type="button" class="path-child" data-action="set-path-create-parent" data-kind="${kind}" data-path="${attr(nextPath)}">
+          <strong>${escapeHtml(child)}</strong>
+        </button>
+      `;
+    })
+    .join("");
 
   return `
-    <div class="path-tree" aria-label="${attr(opts.ariaLabel)}">
-      <div class="crumbs" role="navigation" aria-label="Current path">${crumbs}</div>
-      ${sortedChildren.length > 0 ? `
-        <div class="path-children" role="listbox" aria-label="Existing children">${childButtons}</div>
-      ` : `
-        <p class="path-empty muted-copy">No existing items under <strong>${escapeHtml(parentLabel)}</strong> — type a name below to create one.</p>
-      `}
+    <div class="path-tree" aria-label="Pick a parent">
+      <div class="crumbs" role="navigation" aria-label="Selected parent">${crumbHtml}</div>
+      ${
+        sortedChildren.length > 0
+          ? `<div class="path-children" role="listbox" aria-label="Navigate into a child">${childButtons}</div>`
+          : `<p class="path-empty muted-copy">No sub-items here. This will be a new leaf under <strong>${escapeHtml(parent === "" ? "Root" : parent)}</strong>.</p>`
+      }
+    </div>
+  `;
+}
+
+function renderPathPickerField(
+  state: RewriteUiState,
+  kind: "category" | "location",
+): string {
+  const pickerState = kind === "category" ? state.categoryPicker : state.locationPicker;
+  const currentValue = kind === "category" ? state.assignForm.category : state.assignForm.location;
+  const known = kind === "category" ? state.knownCategories : state.knownLocations;
+  const label = kind === "category" ? "Category" : "Location";
+  const placeholder = kind === "category"
+    ? "Pick a category…"
+    : "Pick a location…";
+  const createButtonLabel = kind === "category" ? "+ New category" : "+ New location";
+
+  const triggerLabel = currentValue || placeholder;
+  const isEmpty = currentValue === "";
+
+  const tree = buildPathTree(known);
+  const expandedSet = new Set(pickerState.expanded);
+  const tokens = tokenizeQuery(pickerState.query);
+  const visible = collectVisiblePaths(tree, tokens);
+
+  const currentSegs = parsePathSegments(currentValue);
+  const autoExpand = new Set<string>();
+  if (currentSegs.length > 1) {
+    for (let i = 1; i < currentSegs.length; i++) {
+      autoExpand.add(joinPathSegments(currentSegs.slice(0, i)));
+    }
+  }
+  if (visible) for (const p of visible) autoExpand.add(p);
+
+  const treeBody = renderTreeNodes(tree, 0, kind, expandedSet, autoExpand, visible, currentValue);
+  const hasAnyKnown = known.length > 0;
+
+  const createPanel = pickerState.createOpen
+    ? `
+      <div class="path-create-panel" role="dialog" aria-label="Create new ${label.toLowerCase()}">
+        <p class="path-create-title">New ${escapeHtml(label.toLowerCase())} under <strong>${escapeHtml(pickerState.createParent === "" ? "Root" : pickerState.createParent)}</strong></p>
+        ${renderCreateParentPicker(kind, pickerState.createParent, known)}
+        <label class="wide">
+          New ${escapeHtml(label.toLowerCase())} name
+          <input
+            name="pathPicker.${kind}.createName"
+            value="${attr(pickerState.createName)}"
+            placeholder="${escapeHtml(kind === "category" ? "e.g. SMD 0603" : "e.g. Bin 12")}"
+            autocomplete="off"
+          />
+        </label>
+        <div class="path-create-actions">
+          <button type="button" class="secondary" data-action="close-path-create" data-kind="${kind}">Cancel</button>
+          <button type="button" data-action="commit-path-create" data-kind="${kind}" ${pickerState.createName.trim() === "" ? "disabled" : ""}>Create</button>
+        </div>
+      </div>
+    `
+    : "";
+
+  const pickerPanel = pickerState.open
+    ? `
+      <div class="path-picker-panel" role="dialog" aria-label="Browse ${label.toLowerCase()}s">
+        <div class="path-search">
+          <input
+            type="search"
+            name="pathPicker.${kind}.query"
+            value="${attr(pickerState.query)}"
+            placeholder="Search ${escapeHtml(label.toLowerCase())}s…"
+            aria-label="Search ${escapeHtml(label.toLowerCase())}s"
+            autocomplete="off"
+          />
+        </div>
+        ${
+          hasAnyKnown
+            ? treeBody.trim() !== ""
+              ? `<div class="tree-list" role="tree">${treeBody}</div>`
+              : `<p class="muted-copy tree-empty">No matches for "${escapeHtml(pickerState.query)}".</p>`
+            : `<p class="muted-copy tree-empty">No ${escapeHtml(label.toLowerCase())}s yet. Create the first one below.</p>`
+        }
+      </div>
+    `
+    : "";
+
+  return `
+    <div class="path-field wide ${pickerState.open ? "open" : ""}" data-picker-kind="${kind}">
+      <label class="path-field-label">${escapeHtml(label)}</label>
+      <button
+        type="button"
+        class="path-trigger ${isEmpty ? "empty" : ""}"
+        data-action="toggle-path-picker"
+        data-kind="${kind}"
+        aria-expanded="${String(pickerState.open)}"
+      >
+        <span class="path-trigger-value">${escapeHtml(triggerLabel)}</span>
+        <span class="chevron" aria-hidden="true">${pickerState.open ? "▴" : "▾"}</span>
+      </button>
+      ${pickerPanel}
+      <button type="button" class="path-create-toggle" data-action="open-path-create" data-kind="${kind}">
+        ${escapeHtml(createButtonLabel)}
+      </button>
+      ${createPanel}
     </div>
   `;
 }
