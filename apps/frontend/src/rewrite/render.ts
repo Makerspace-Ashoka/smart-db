@@ -82,7 +82,7 @@ export function renderApp(state: RewriteUiState): string {
         <strong class="header-brand">Smart DB</strong>
         <div class="header-status">
           <span class="header-user">${escapeHtml(state.authState.session.username)}</span>
-          <div class="pill ${partDbHealth.tone}">${escapeHtml(partDbHealth.label)}</div>
+          ${partDbHealth ? `<div class="pill ${partDbHealth.tone}">${escapeHtml(partDbHealth.label)}</div>` : ""}
           ${partDbSync ? `<div class="pill ${partDbSync.tone}">${escapeHtml(partDbSync.label)}</div>` : ""}
         </div>
         <button
