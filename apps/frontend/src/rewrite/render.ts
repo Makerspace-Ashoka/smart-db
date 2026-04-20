@@ -627,20 +627,19 @@ function renderInteractCard(
 }
 
 function renderInventoryTab(state: RewriteUiState): string {
+  const tokens = tokenizeQuery(state.inventoryUi.query);
   const rows = state.inventorySummary.filter((row) => {
     if (!state.inventoryUi.showEmpty && row.bins === 0 && row.instanceCount === 0) {
       return false;
     }
-    const query = state.inventoryUi.query.trim().toLowerCase();
-    if (!query) {
-      return true;
-    }
+    if (tokens.length === 0) return true;
     const blob = [
       row.canonicalName,
       row.categoryPath.join(" / "),
       row.unit.symbol,
-    ].join(" ").toLowerCase();
-    return blob.includes(query);
+      row.unit.name,
+    ].join(" ");
+    return matchesAllTokens(blob, tokens);
   });
 
   const groups = new Map<string, typeof rows>();
@@ -865,12 +864,28 @@ function renderAdminTab(state: RewriteUiState): string {
   `;
 }
 
+function foldSearchText(value: string): string {
+  return value
+    .normalize("NFD")
+    .replace(/[\u0300-\u036f]/g, "")
+    .toLowerCase();
+}
+
+function tokenizeQuery(query: string): string[] {
+  const folded = foldSearchText(query);
+  return folded.split(/[\s/|,.·]+/).filter((token) => token.length > 0);
+}
+
+function matchesAllTokens(haystack: string, tokens: readonly string[]): boolean {
+  if (tokens.length === 0) return true;
+  const folded = foldSearchText(haystack);
+  return tokens.every((token) => folded.includes(token));
+}
+
 function filterKnownValues(values: readonly string[], query: string): string[] {
-  const normalized = query.trim().toLowerCase();
-  const matches = normalized
-    ? values.filter((value) => value.toLowerCase().includes(normalized))
-    : [...values];
-  return matches.slice(0, 6);
+  const tokens = tokenizeQuery(query);
+  if (tokens.length === 0) return values.slice(0, 12);
+  return values.filter((value) => matchesAllTokens(value, tokens)).slice(0, 12);
 }
 
 function buildActivityDetail(event: {
