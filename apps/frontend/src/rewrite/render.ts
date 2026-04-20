@@ -238,27 +238,6 @@ function renderScanTab(state: RewriteUiState): string {
         </button>
       </form>
 
-      <div class="scan-mode-bar">
-        <button
-          type="button"
-          class="scan-mode-btn ${state.scanMode === "inspect" ? "active" : ""}"
-          data-action="set-scan-mode"
-          data-scan-mode="inspect"
-        >
-          <span class="scan-mode-icon">◇</span>
-          View only
-        </button>
-        <button
-          type="button"
-          class="scan-mode-btn ${state.scanMode === "increment" ? "active" : ""}"
-          data-action="set-scan-mode"
-          data-scan-mode="increment"
-        >
-          <span class="scan-mode-icon">+1</span>
-          Auto-count
-        </button>
-      </div>
-
       <div aria-live="polite">
         ${state.scanResult?.mode === "unknown" ? `
           <div class="result-card">
@@ -333,13 +312,45 @@ function renderScanner(state: RewriteUiState, isLookingUp: boolean, blockedReaso
   `;
 }
 
+function renderEntityKindSwitch(state: RewriteUiState, locked: boolean): string {
+  const isBulk = state.assignForm.entityKind === "bulk";
+  return `
+    <div class="entity-switch ${locked ? "locked" : ""}" role="radiogroup" aria-label="Inventory entry type">
+      <button
+        type="button"
+        role="radio"
+        aria-checked="${String(!isBulk)}"
+        class="entity-switch-option ${!isBulk ? "active" : ""}"
+        data-action="set-entity-kind"
+        data-entity-kind="instance"
+        ${locked ? "disabled" : ""}
+      >Add Item</button>
+      <button
+        type="button"
+        role="radio"
+        aria-checked="${String(isBulk)}"
+        class="entity-switch-option ${isBulk ? "active" : ""}"
+        data-action="set-entity-kind"
+        data-entity-kind="bulk"
+      >Bulk Item</button>
+    </div>
+  `;
+}
+
 function renderLabelCard(
   state: RewriteUiState,
   labelOptions: readonly PartType[],
   assignIssues: ReturnType<typeof getAssignFormIssues>,
 ): string {
+  const existingSelected =
+    state.assignForm.partTypeMode === "existing"
+      ? (labelOptions.find((pt) => pt.id === state.assignForm.existingPartTypeId) ??
+         state.catalogSuggestions.find((pt) => pt.id === state.assignForm.existingPartTypeId))
+      : null;
+  const entityLocked = existingSelected !== null && existingSelected !== undefined && !existingSelected.countable;
   return `
-    <div class="result-card">
+    <div class="result-card has-corner-switch">
+      ${renderEntityKindSwitch(state, entityLocked)}
       <h3>Assign ${escapeHtml(state.scanResult?.mode === "label" ? state.scanResult.qrCode.code : "")}</h3>
       ${state.lastAssignment ? `
         <div class="assign-same-bar">
@@ -349,11 +360,7 @@ function renderLabelCard(
         </div>
       ` : ""}
       <form class="form-grid" data-form="assign">
-        <div class="wide mode-toggle" role="radiogroup" aria-label="Part type mode">
-          <button type="button" role="radio" class="${state.assignForm.partTypeMode === "existing" ? "selected" : ""}" aria-checked="${String(state.assignForm.partTypeMode === "existing")}" data-action="set-assign-mode" data-assign-mode="existing">Use existing type</button>
-          <button type="button" role="radio" class="${state.assignForm.partTypeMode === "new" ? "selected" : ""}" aria-checked="${String(state.assignForm.partTypeMode === "new")}" data-action="set-assign-mode" data-assign-mode="new">Create new type</button>
-        </div>
-        ${state.assignForm.partTypeMode === "existing" ? renderExistingPartTypePicker(state, labelOptions, assignIssues) : renderNewPartTypeForm(state, assignIssues)}
+        ${renderPartTypeField(state, labelOptions, assignIssues)}
         ${renderSharedAssignFields(state, assignIssues)}
         <button type="submit" ${disabled(state.pendingAction !== null || Object.keys(assignIssues).length > 0)}>
           ${state.pendingAction === "assign" ? "Assigning..." : "Assign QR"}
@@ -363,117 +370,188 @@ function renderLabelCard(
   `;
 }
 
-function renderExistingPartTypePicker(
+function rankPartTypeMatches(
+  candidates: readonly PartType[],
+  query: string,
+): PartType[] {
+  const tokens = tokenizeQuery(query);
+  if (tokens.length === 0) {
+    return [...candidates].sort((a, b) => a.canonicalName.localeCompare(b.canonicalName));
+  }
+  const scored: Array<{ partType: PartType; score: number }> = [];
+  for (const partType of candidates) {
+    const name = foldSearchText(partType.canonicalName);
+    const aliases = partType.aliases.map(foldSearchText);
+    const categoryText = foldSearchText(partType.categoryPath.join(" "));
+    let score = 0;
+    let matchedAll = true;
+    for (const token of tokens) {
+      if (name.includes(token)) {
+        score += name.startsWith(token) ? 100 : 60;
+      } else if (aliases.some((alias) => alias.includes(token))) {
+        score += 30;
+      } else if (categoryText.includes(token)) {
+        score += 15;
+      } else {
+        matchedAll = false;
+        break;
+      }
+    }
+    if (matchedAll) scored.push({ partType, score });
+  }
+  return scored
+    .sort((a, b) => b.score - a.score || a.partType.canonicalName.localeCompare(b.partType.canonicalName))
+    .map((entry) => entry.partType);
+}
+
+function collectPartTypeCandidates(
+  state: RewriteUiState,
+  labelOptions: readonly PartType[],
+): PartType[] {
+  const seen = new Map<string, PartType>();
+  const sources: ReadonlyArray<readonly PartType[]> = [
+    labelOptions,
+    state.labelSearch.results,
+    state.catalogSuggestions,
+    state.scanResult?.mode === "label" ? state.scanResult.suggestions : [],
+  ];
+  for (const list of sources) {
+    for (const partType of list) {
+      if (!seen.has(partType.id)) seen.set(partType.id, partType);
+    }
+  }
+  return [...seen.values()];
+}
+
+function renderPartTypeField(
   state: RewriteUiState,
   labelOptions: readonly PartType[],
   assignIssues: ReturnType<typeof getAssignFormIssues>,
 ): string {
-  const selected =
-    labelOptions.find((partType) => partType.id === state.assignForm.existingPartTypeId) ??
-    state.catalogSuggestions.find((partType) => partType.id === state.assignForm.existingPartTypeId);
+  const candidates = collectPartTypeCandidates(state, labelOptions);
+  const ranked = rankPartTypeMatches(candidates, state.labelSearch.query);
+  const shown = ranked.slice(0, 48);
+
+  const selected = candidates.find((pt) => pt.id === state.assignForm.existingPartTypeId) ?? null;
+  const isCreating = state.assignForm.partTypeMode === "new";
+  const createToggleLabel = isCreating ? "− Cancel new part type" : "+ New part type";
+  const createToggleAction = isCreating ? "existing" : "new";
+  const trimmedQuery = state.labelSearch.query.trim();
 
   return `
     <label class="wide">
-      Search existing part types
-      <input name="labelSearch.query" value="${attr(state.labelSearch.query)}" placeholder="Arduino, JST, PLA, cotton..." />
+      Part type
+      <input
+        name="labelSearch.query"
+        value="${attr(state.labelSearch.query)}"
+        placeholder="Search by name, alias, or category…"
+        autocomplete="off"
+      />
     </label>
     ${state.labelSearch.error ? `<p class="banner error wide">${escapeHtml(state.labelSearch.error)}</p>` : ""}
-    ${assignIssues.existingPartTypeId ? `<p class="field-error wide">${escapeHtml(assignIssues.existingPartTypeId)}</p>` : ""}
-    <div class="wide picker" role="radiogroup" aria-label="Existing part types">
-      ${labelOptions.length > 0 ? labelOptions.map((partType) => `
-        <button
-          key="${attr(partType.id)}"
-          type="button"
-          role="radio"
-          aria-checked="${String(state.assignForm.existingPartTypeId === partType.id)}"
-          class="${state.assignForm.existingPartTypeId === partType.id ? "selected" : ""}"
-          data-action="select-existing-part"
-          data-part-id="${attr(partType.id)}"
-        >
-          <strong>${escapeHtml(partType.canonicalName)}</strong>
-          <span>${escapeHtml(formatCategoryPath(partType.categoryPath))}</span>
-        </button>
-      `).join("") : `<p class="muted-copy">No matching part types yet.</p>`}
-    </div>
-    ${selected?.countable ? `
-      <div class="wide mode-toggle" role="radiogroup" aria-label="Inventory entry">
-        <button type="button" role="radio" aria-checked="${String(state.assignForm.entityKind === "instance")}" class="${state.assignForm.entityKind === "instance" ? "selected" : ""}" data-action="set-entity-kind" data-entity-kind="instance">Tracked unit</button>
-        <button type="button" role="radio" aria-checked="${String(state.assignForm.entityKind === "bulk")}" class="${state.assignForm.entityKind === "bulk" ? "selected" : ""}" data-action="set-entity-kind" data-entity-kind="bulk">Bulk pool</button>
+    ${!isCreating && assignIssues.existingPartTypeId ? `<p class="field-error wide">${escapeHtml(assignIssues.existingPartTypeId)}</p>` : ""}
+
+    ${!isCreating ? `
+      <div class="wide picker" role="radiogroup" aria-label="Existing part types">
+        ${shown.length > 0 ? shown.map((partType) => `
+          <button
+            type="button"
+            role="radio"
+            aria-checked="${String(state.assignForm.existingPartTypeId === partType.id)}"
+            class="${state.assignForm.existingPartTypeId === partType.id ? "selected" : ""}"
+            data-action="select-existing-part"
+            data-part-id="${attr(partType.id)}"
+          >
+            <strong>${escapeHtml(partType.canonicalName)}</strong>
+            <span>${escapeHtml(formatCategoryPath(partType.categoryPath))}</span>
+          </button>
+        `).join("") : `<p class="muted-copy">${trimmedQuery ? `No matches for "${escapeHtml(trimmedQuery)}".` : "No part types yet."} Use the button below to add one.</p>`}
       </div>
-    ` : selected ? `
-      <p class="muted-copy">Measured part types always use a bulk pool.</p>
+      ${ranked.length > shown.length ? `<p class="muted-copy wide" style="font-size:0.75rem">Showing ${shown.length} of ${ranked.length} matches — refine your search to narrow down.</p>` : ""}
+      ${selected && !selected.countable ? `
+        <p class="muted-copy wide">Measured part types are always bulk items.</p>
+      ` : ""}
+      ${selected ? `
+        <button type="button" class="disclosure wide" data-action="create-variant" data-part-id="${attr(selected.id)}">
+          Create a variant of "${escapeHtml(selected.canonicalName)}"
+        </button>
+      ` : ""}
+      ${selected && state.assignForm.entityKind === "bulk" ? `
+        <label class="wide">
+          Starting quantity (${escapeHtml(selected.unit.symbol)})
+          <input
+            type="number"
+            min="${selected.unit.isInteger ? "1" : "0.000001"}"
+            inputmode="decimal"
+            name="assign.initialQuantity"
+            value="${attr(state.assignForm.initialQuantity)}"
+            step="${quantityInputStep(selected.unit.isInteger)}"
+            placeholder="${selected.unit.isInteger ? "1" : "0.1"}"
+          />
+          ${assignIssues.initialQuantity ? `<span class="field-error">${escapeHtml(assignIssues.initialQuantity)}</span>` : ""}
+        </label>
+        <label class="wide">
+          Low-stock threshold (${escapeHtml(selected.unit.symbol)})
+          <input
+            type="number"
+            min="0"
+            inputmode="decimal"
+            name="assign.minimumQuantity"
+            value="${attr(state.assignForm.minimumQuantity)}"
+            step="${quantityInputStep(selected.unit.isInteger)}"
+            placeholder="Optional"
+          />
+          ${assignIssues.minimumQuantity ? `<span class="field-error">${escapeHtml(assignIssues.minimumQuantity)}</span>` : ""}
+        </label>
+      ` : ""}
     ` : ""}
-    ${selected ? `
-      <button type="button" class="disclosure wide" data-action="create-variant" data-part-id="${attr(selected.id)}">
-        Create a variant of "${escapeHtml(selected.canonicalName)}"
-      </button>
-    ` : ""}
-    ${selected && state.assignForm.entityKind === "bulk" ? `
-      <label class="wide">
-        Starting quantity (${escapeHtml(selected.unit.symbol)})
-        <input
-          type="number"
-          min="${selected.unit.isInteger ? "1" : "0.000001"}"
-          inputmode="decimal"
-          name="assign.initialQuantity"
-          value="${attr(state.assignForm.initialQuantity)}"
-          step="${quantityInputStep(selected.unit.isInteger)}"
-          placeholder="${selected.unit.isInteger ? "1" : "0.1"}"
-        />
-        ${assignIssues.initialQuantity ? `<span class="field-error">${escapeHtml(assignIssues.initialQuantity)}</span>` : ""}
-      </label>
-      <label class="wide">
-        Low-stock threshold (${escapeHtml(selected.unit.symbol)})
-        <input
-          type="number"
-          min="0"
-          inputmode="decimal"
-          name="assign.minimumQuantity"
-          value="${attr(state.assignForm.minimumQuantity)}"
-          step="${quantityInputStep(selected.unit.isInteger)}"
-          placeholder="Optional"
-        />
-        ${assignIssues.minimumQuantity ? `<span class="field-error">${escapeHtml(assignIssues.minimumQuantity)}</span>` : ""}
-      </label>
-    ` : ""}
+
+    <button
+      type="button"
+      class="path-create-toggle wide"
+      data-action="set-assign-mode"
+      data-assign-mode="${createToggleAction}"
+    >${escapeHtml(createToggleLabel)}</button>
+
+    ${isCreating ? renderNewPartTypePanel(state, assignIssues) : ""}
   `;
 }
 
-function renderNewPartTypeForm(
+function renderNewPartTypePanel(
   state: RewriteUiState,
   assignIssues: ReturnType<typeof getAssignFormIssues>,
 ): string {
+  const unit = measurementUnitCatalog.find((u) => u.symbol === state.assignForm.unitSymbol) ?? measurementUnitCatalog[0];
   return `
-    <label class="wide">
-      New canonical name
-      <input name="assign.canonicalName" value="${attr(state.assignForm.canonicalName)}" placeholder="Arduino Uno R3" />
-      ${assignIssues.canonicalName ? `<span class="field-error">${escapeHtml(assignIssues.canonicalName)}</span>` : ""}
-    </label>
-    ${renderPathPickerField(state, "category")}
-    ${assignIssues.category ? `<span class="field-error wide">${escapeHtml(assignIssues.category)}</span>` : ""}
-    <div class="wide mode-toggle" role="radiogroup" aria-label="Tracking mode">
-      <button type="button" role="radio" aria-checked="${String(state.assignForm.entityKind === "instance")}" class="${state.assignForm.entityKind === "instance" ? "selected" : ""}" data-action="set-entity-kind" data-entity-kind="instance">Tracked unit</button>
-      <button type="button" role="radio" aria-checked="${String(state.assignForm.entityKind === "bulk")}" class="${state.assignForm.entityKind === "bulk" ? "selected" : ""}" data-action="set-entity-kind" data-entity-kind="bulk">Bulk pool</button>
+    <div class="path-create-panel wide" role="region" aria-label="New part type">
+      <p class="path-create-title">New part type</p>
+      <label class="wide">
+        Canonical name
+        <input name="assign.canonicalName" value="${attr(state.assignForm.canonicalName)}" placeholder="Arduino Uno R3" autocomplete="off" />
+        ${assignIssues.canonicalName ? `<span class="field-error">${escapeHtml(assignIssues.canonicalName)}</span>` : ""}
+      </label>
+      ${renderPathPickerField(state, "category")}
+      ${assignIssues.category ? `<span class="field-error wide">${escapeHtml(assignIssues.category)}</span>` : ""}
+      ${state.assignForm.entityKind === "bulk" ? `
+        <div class="wide mode-toggle" role="radiogroup" aria-label="Part type kind">
+          <button type="button" role="radio" aria-checked="${String(state.assignForm.countable)}" class="${state.assignForm.countable ? "selected" : ""}" data-action="set-bulk-countability" data-countable="true">Piece-counted</button>
+          <button type="button" role="radio" aria-checked="${String(!state.assignForm.countable)}" class="${!state.assignForm.countable ? "selected" : ""}" data-action="set-bulk-countability" data-countable="false">Measured</button>
+        </div>
+        <label class="wide">
+          Unit of measure
+          <select name="assign.unitSymbol">
+            ${measurementUnitCatalog.filter((u) => (state.assignForm.countable ? u.isInteger : true)).map((u) => `
+              <option value="${attr(u.symbol)}"${selected(u.symbol === state.assignForm.unitSymbol)}>${escapeHtml(u.name)} (${escapeHtml(u.symbol)})</option>
+            `).join("")}
+          </select>
+        </label>
+        <label class="wide">
+          Starting quantity
+          <input type="number" min="${unit.isInteger ? "1" : "0.000001"}" inputmode="decimal" name="assign.initialQuantity" value="${attr(state.assignForm.initialQuantity)}" step="${quantityInputStep(unit.isInteger)}" placeholder="${unit.isInteger ? "1" : "0.1"}" />
+          ${assignIssues.initialQuantity ? `<span class="field-error">${escapeHtml(assignIssues.initialQuantity)}</span>` : ""}
+        </label>
+      ` : ""}
     </div>
-    ${state.assignForm.entityKind === "bulk" ? `
-      <div class="wide mode-toggle" role="radiogroup" aria-label="Part type kind">
-        <button type="button" role="radio" aria-checked="${String(state.assignForm.countable)}" class="${state.assignForm.countable ? "selected" : ""}" data-action="set-bulk-countability" data-countable="true">Piece-counted</button>
-        <button type="button" role="radio" aria-checked="${String(!state.assignForm.countable)}" class="${!state.assignForm.countable ? "selected" : ""}" data-action="set-bulk-countability" data-countable="false">Measured</button>
-      </div>
-      <label>
-        Unit of measure
-        <select name="assign.unitSymbol">
-          ${measurementUnitCatalog.filter((unit) => (state.assignForm.countable ? unit.isInteger : true)).map((unit) => `
-            <option value="${attr(unit.symbol)}"${selected(unit.symbol === state.assignForm.unitSymbol)}>${escapeHtml(unit.name)} (${escapeHtml(unit.symbol)})</option>
-          `).join("")}
-        </select>
-      </label>
-      <label>
-        Starting quantity
-        <input type="number" min="${(measurementUnitCatalog.find((unit) => unit.symbol === state.assignForm.unitSymbol) ?? measurementUnitCatalog[0]).isInteger ? "1" : "0.000001"}" inputmode="decimal" name="assign.initialQuantity" value="${attr(state.assignForm.initialQuantity)}" step="${quantityInputStep((measurementUnitCatalog.find((unit) => unit.symbol === state.assignForm.unitSymbol) ?? measurementUnitCatalog[0]).isInteger)}" placeholder="${(measurementUnitCatalog.find((unit) => unit.symbol === state.assignForm.unitSymbol) ?? measurementUnitCatalog[0]).isInteger ? "1" : "0.1"}" />
-        ${assignIssues.initialQuantity ? `<span class="field-error">${escapeHtml(assignIssues.initialQuantity)}</span>` : ""}
-      </label>
-    ` : ""}
   `;
 }
 
