@@ -233,6 +233,15 @@ CREATE TABLE IF NOT EXISTS known_categories (
 );
     `,
   },
+  {
+    version: 10,
+    description: "standalone known_locations table",
+    sql: `
+CREATE TABLE IF NOT EXISTS known_locations (
+  path TEXT PRIMARY KEY
+);
+    `,
+  },
 ];
 
 export function applyMigrations(

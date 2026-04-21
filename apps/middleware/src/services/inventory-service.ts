@@ -309,13 +309,15 @@ export class InventoryService {
   }
 
   getKnownLocations(): string[] {
-    // Distinct location strings across instances and bulk stocks, ordered by recency.
     const instanceRows = this.db
       .prepare(`SELECT location, updated_at FROM physical_instances WHERE location IS NOT NULL AND TRIM(location) <> ''`)
       .all() as Array<{ location: string; updated_at: string }>;
     const bulkRows = this.db
       .prepare(`SELECT location, updated_at FROM bulk_stocks WHERE location IS NOT NULL AND TRIM(location) <> ''`)
       .all() as Array<{ location: string; updated_at: string }>;
+    const standaloneRows = this.db
+      .prepare(`SELECT path FROM known_locations`)
+      .all() as Array<{ path: string }>;
     const latest = new Map<string, string>();
     for (const row of [...instanceRows, ...bulkRows]) {
       const existing = latest.get(row.location);
@@ -323,10 +325,21 @@ export class InventoryService {
         latest.set(row.location, row.updated_at);
       }
     }
+    for (const row of standaloneRows) {
+      if (!latest.has(row.path)) {
+        latest.set(row.path, "");
+      }
+    }
     return Array.from(latest.entries())
       .sort((a, b) => (a[1] < b[1] ? 1 : a[1] > b[1] ? -1 : a[0].localeCompare(b[0])))
       .slice(0, 200)
       .map(([loc]) => loc);
+  }
+
+  createKnownLocation(path: string): void {
+    this.db
+      .prepare(`INSERT OR IGNORE INTO known_locations (path) VALUES (?)`)
+      .run(path);
   }
 
   getProvisionalPartTypes(): PartType[] {

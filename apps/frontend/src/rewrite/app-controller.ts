@@ -412,6 +412,8 @@ export class RewriteAppController {
           } as Partial<RewriteUiState>);
           if (kind === "category") {
             void api.createCategory(full);
+          } else {
+            void api.createLocation(full);
           }
         }
         break;
