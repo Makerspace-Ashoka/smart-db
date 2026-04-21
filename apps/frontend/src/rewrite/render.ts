@@ -8,6 +8,7 @@ import {
 import {
   actionLabel,
   describePartDbSyncFailure,
+  eventIconInfo,
   formatCategoryPath,
   formatQuantity,
   formatTimestamp,
@@ -115,7 +116,7 @@ export function renderApp(state: RewriteUiState): string {
         ${state.activeTab === "admin" && isAdmin ? renderAdminTab(state) : ""}
       </main>
 
-      ${renderTabBar(state.activeTab, isAdmin ? ["scan", "inventory", "activity", "dashboard", "admin"] : ["scan", "inventory", "activity", "dashboard"])}
+      ${renderTabBar(state.activeTab, isAdmin ? ["dashboard", "scan", "inventory", "activity", "admin"] : ["dashboard", "scan", "inventory", "activity"])}
     </div>
   `;
 }
@@ -678,6 +679,10 @@ function renderInteractCard(
 }
 
 function renderInventoryTab(state: RewriteUiState): string {
+  if (state.inventoryUi.detailPartTypeId) {
+    return renderPartTypeDetail(state, state.inventoryUi.detailPartTypeId);
+  }
+
   const tokens = tokenizeQuery(state.inventoryUi.query);
   const rows = state.inventorySummary.filter((row) => {
     if (!state.inventoryUi.showEmpty && row.bins === 0 && row.instanceCount === 0) {
@@ -721,19 +726,19 @@ function renderInventoryTab(state: RewriteUiState): string {
               const expandedItems = isExpanded ? state.inventoryUi.expandedItems.get(row.id) ?? null : null;
               const expandedError = isExpanded ? state.inventoryUi.expandedErrors.get(row.id) ?? null : null;
               return `
-                <li>
-                  <button type="button" class="inventory-row ${isStocked ? "stocked" : "empty"} ${isExpanded ? "expanded" : ""}" data-action="toggle-inventory-expand" data-part-type-id="${attr(row.id)}" aria-expanded="${String(isExpanded)}">
+                <li class="inventory-row-wrap ${isStocked ? "stocked" : "empty"} ${isExpanded ? "expanded" : ""}">
+                  <button type="button" class="inventory-row" data-action="toggle-inventory-expand" data-part-type-id="${attr(row.id)}" aria-expanded="${String(isExpanded)}">
                     <div class="inventory-row-name">
                       <strong>${escapeHtml(row.canonicalName)}</strong>
                       ${subPath ? `<span>${escapeHtml(subPath)}</span>` : ""}
                     </div>
                     <div class="inventory-row-quantity">
-                      ${row.countable
-                        ? row.onHand > 0
-                          ? `<span class="qty-value">${row.instanceCount}</span><span class="qty-unit">tracked · ${escapeHtml(formatQuantity(row.onHand))} ${escapeHtml(row.unit.symbol)} pooled</span>`
-                          : `<span class="qty-value">${row.instanceCount}</span><span class="qty-unit">tracked</span>`
-                        : `<span class="qty-value">${escapeHtml(formatQuantity(row.onHand))}</span><span class="qty-unit">${escapeHtml(row.unit.symbol)}</span>`}
+                      <span class="qty-value">${row.countable ? row.instanceCount : escapeHtml(formatQuantity(row.onHand))}</span>
+                      <span class="qty-unit">${escapeHtml(row.unit.symbol)}</span>
                     </div>
+                  </button>
+                  <button type="button" class="inventory-row-arrow" data-action="open-part-detail" data-part-type-id="${attr(row.id)}" aria-label="Open ${attr(row.canonicalName)} details">
+                    <span aria-hidden="true">›</span>
                   </button>
                   ${isExpanded ? `
                     <div class="inventory-row-detail">
@@ -768,6 +773,101 @@ function renderInventoryTab(state: RewriteUiState): string {
   `;
 }
 
+function renderPartTypeDetail(state: RewriteUiState, partTypeId: string): string {
+  const row = state.inventorySummary.find((r) => r.id === partTypeId) ?? null;
+  const items = state.inventoryUi.expandedItems.get(partTypeId) ?? null;
+  const error = state.inventoryUi.expandedErrors.get(partTypeId) ?? null;
+
+  if (!row) {
+    return `
+      <section id="panel-inventory" role="tabpanel" aria-labelledby="tab-inventory" class="panel">
+        <div class="part-detail">
+          <button type="button" class="part-detail-back" data-action="close-part-detail">
+            <span aria-hidden="true">‹</span> Back to Assets
+          </button>
+          <p class="muted-copy">Part type not found in current summary.</p>
+        </div>
+      </section>
+    `;
+  }
+
+  const subPath = row.categoryPath.slice(1).join(" / ");
+  const categoryTop = row.categoryPath[0] ?? "Uncategorized";
+
+  const byLocation = new Map<string, { bulks: NonNullable<typeof items>["bulkStocks"][number][]; instances: NonNullable<typeof items>["instances"][number][] }>();
+  if (items) {
+    for (const bulk of items.bulkStocks) {
+      const entry = byLocation.get(bulk.location) ?? { bulks: [], instances: [] };
+      entry.bulks.push(bulk);
+      byLocation.set(bulk.location, entry);
+    }
+    for (const inst of items.instances) {
+      const entry = byLocation.get(inst.location) ?? { bulks: [], instances: [] };
+      entry.instances.push(inst);
+      byLocation.set(inst.location, entry);
+    }
+  }
+  const locations = Array.from(byLocation.entries()).sort((a, b) => a[0].localeCompare(b[0]));
+
+  return `
+    <section id="panel-inventory" role="tabpanel" aria-labelledby="tab-inventory" class="panel">
+      <div class="part-detail">
+        <button type="button" class="part-detail-back" data-action="close-part-detail">
+          <span aria-hidden="true">‹</span> Back to Assets
+        </button>
+
+        <header class="part-detail-header">
+          <p class="eyebrow">${escapeHtml(categoryTop)}${subPath ? ` / ${escapeHtml(subPath)}` : ""}</p>
+          <h2 class="part-detail-name">${escapeHtml(row.canonicalName)}</h2>
+          <dl class="part-detail-stats">
+            <div><dt>Unit</dt><dd>${escapeHtml(row.unit.symbol)} <span class="muted-copy">(${escapeHtml(row.unit.name)})</span></dd></div>
+            <div><dt>Tracking</dt><dd>${row.countable ? "Countable" : "Bulk"}</dd></div>
+            ${row.countable
+              ? `<div><dt>Instances</dt><dd>${row.instanceCount}</dd></div>`
+              : `<div><dt>Bins</dt><dd>${row.bins}</dd></div>`}
+            <div><dt>On hand</dt><dd>${escapeHtml(formatQuantity(row.onHand))} ${escapeHtml(row.unit.symbol)}</dd></div>
+          </dl>
+        </header>
+
+        <section class="part-detail-locations">
+          <h3>Locations</h3>
+          ${error ? `<p class="banner error">${escapeHtml(error)}</p>` : ""}
+          ${!items && !error ? `<p class="muted-copy">Loading locations…</p>` : ""}
+          ${items && locations.length === 0 ? `<p class="muted-copy">No items assigned to this part type yet.</p>` : ""}
+          ${locations.length > 0 ? `
+            <ul class="location-list">
+              ${locations.map(([location, entry]) => `
+                <li class="location-group">
+                  <div class="location-group-head">
+                    <strong>${escapeHtml(location)}</strong>
+                    <span class="muted-copy">${entry.bulks.length + entry.instances.length} item${entry.bulks.length + entry.instances.length === 1 ? "" : "s"}</span>
+                  </div>
+                  <ul class="location-item-list">
+                    ${entry.bulks.map((bulk) => `
+                      <li class="location-item">
+                        <code>${escapeHtml(bulk.qrCode)}</code>
+                        <span class="location-item-kind">bulk</span>
+                        <strong>${escapeHtml(formatQuantity(bulk.quantity))} ${escapeHtml(row.unit.symbol)}</strong>
+                      </li>
+                    `).join("")}
+                    ${entry.instances.map((inst) => `
+                      <li class="location-item">
+                        <code>${escapeHtml(inst.qrCode)}</code>
+                        <span class="location-item-kind">${escapeHtml(inst.status)}</span>
+                        ${inst.assignee ? `<span class="muted-copy">${escapeHtml(inst.assignee)}</span>` : ""}
+                      </li>
+                    `).join("")}
+                  </ul>
+                </li>
+              `).join("")}
+            </ul>
+          ` : ""}
+        </section>
+      </div>
+    </section>
+  `;
+}
+
 function renderDashboardTab(state: RewriteUiState): string {
   return `
     <section id="panel-dashboard" role="tabpanel" aria-labelledby="tab-dashboard" class="panel">
@@ -793,16 +893,22 @@ function renderActivityTab(state: RewriteUiState): string {
       ${events.length === 0 && state.scanHistory.length === 0 ? `<p class="activity-empty">No activity yet. Events appear here as you scan and update inventory.</p>` : ""}
       ${events.length > 0 ? `
         <ul class="activity-list">
-          ${events.map((event) => `
+          ${events.map((event) => {
+            const icon = eventIconInfo(event.event);
+            return `
             <li class="activity-item">
-              <div class="activity-item-header">
-                <span class="activity-action">${escapeHtml(`${actionLabel(event.event)} by ${event.actor ?? "system"}`)}</span>
-                <span class="activity-time">${escapeHtml(formatTimestamp(event.createdAt))}</span>
+              <span class="activity-icon tone-${icon.tone}" aria-hidden="true">${escapeHtml(icon.glyph)}</span>
+              <div class="activity-item-body">
+                <div class="activity-item-header">
+                  <span class="activity-action">${escapeHtml(`${actionLabel(event.event)} by ${event.actor ?? "system"}`)}</span>
+                  <span class="activity-time">${escapeHtml(formatTimestamp(event.createdAt))}</span>
+                </div>
+                ${event.partName ? `<span class="activity-item-name">${escapeHtml(event.partName)}</span>` : ""}
+                <span class="activity-detail">${escapeHtml(buildActivityDetail(event))}</span>
               </div>
-              ${event.partName ? `<span class="activity-item-name">${escapeHtml(event.partName)}</span>` : ""}
-              <span class="activity-detail">${escapeHtml(buildActivityDetail(event))}</span>
             </li>
-          `).join("")}
+          `;
+          }).join("")}
         </ul>
       ` : ""}
       ${state.scanHistory.length > 0 ? `
@@ -810,11 +916,14 @@ function renderActivityTab(state: RewriteUiState): string {
         <ul class="activity-list">
           ${state.scanHistory.map((entry, index) => `
             <li class="activity-item">
-              <div class="activity-item-header">
-                <code class="activity-code">${escapeHtml(entry.code)}</code>
-                <span class="activity-time">${escapeHtml(formatTimestamp(entry.timestamp))}</span>
+              <span class="activity-icon tone-info" aria-hidden="true">◎</span>
+              <div class="activity-item-body">
+                <div class="activity-item-header">
+                  <code class="activity-code">${escapeHtml(entry.code)}</code>
+                  <span class="activity-time">${escapeHtml(formatTimestamp(entry.timestamp))}</span>
+                </div>
+                <span class="activity-detail">${escapeHtml(scanModeLabel(entry.mode))}</span>
               </div>
-              <span class="activity-detail">${escapeHtml(scanModeLabel(entry.mode))}</span>
             </li>
           `).join("")}
         </ul>
