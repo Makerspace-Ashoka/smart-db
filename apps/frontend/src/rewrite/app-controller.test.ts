@@ -18,6 +18,8 @@ const apiMock = vi.hoisted(() => ({
   getProvisionalPartTypes: vi.fn(),
   searchPartTypes: vi.fn(),
   getKnownLocations: vi.fn(),
+  getKnownCategories: vi.fn(),
+  createCategory: vi.fn(),
   getInventorySummary: vi.fn(),
   registerQrBatch: vi.fn(),
   scan: vi.fn(),
@@ -171,6 +173,8 @@ describe("RewriteAppController", () => {
     apiMock.getProvisionalPartTypes.mockResolvedValue([]);
     apiMock.searchPartTypes.mockResolvedValue([partType]);
     apiMock.getKnownLocations.mockResolvedValue(["Shelf A"]);
+    apiMock.getKnownCategories.mockResolvedValue([]);
+    apiMock.createCategory.mockResolvedValue({ path: "" });
     apiMock.getInventorySummary.mockResolvedValue([]);
     apiMock.getCorrectionHistory.mockResolvedValue([]);
     apiMock.reassignEntityPartType.mockResolvedValue({

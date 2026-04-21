@@ -81,8 +81,8 @@ export class RewriteAppController {
     partDbSyncFailures: [],
     latestBatch: null,
     catalogSuggestions: [],
-    knownLocations: this.loadProvisionalPaths("location"),
-    knownCategories: this.loadProvisionalPaths("category"),
+    knownLocations: [],
+    knownCategories: [],
     inventorySummary: [],
     inventoryUi: defaultInventoryUiState,
     correctionUi: defaultCorrectionUiState,
@@ -401,7 +401,6 @@ export class RewriteAppController {
           if (!leaf) break;
           const parent = cur.createParent.trim();
           const full = parent === "" ? leaf : `${parent} / ${leaf}`;
-          this.saveProvisionalPath(kind, full);
           const existingKnown = this.state[knownKey];
           const nextKnown = existingKnown.includes(full)
             ? existingKnown
@@ -411,6 +410,9 @@ export class RewriteAppController {
             [pickerKey]: { ...cur, open: false, createOpen: false, createParent: "", createName: "", query: "" },
             [knownKey]: nextKnown,
           } as Partial<RewriteUiState>);
+          if (kind === "category") {
+            void api.createCategory(full);
+          }
         }
         break;
       }
@@ -934,6 +936,7 @@ export class RewriteAppController {
       partTypesResult,
       latestBatchResult,
       locationsResult,
+      categoriesResult,
       inventoryResult,
     ] = await Promise.allSettled([
       api.getDashboard(),
@@ -944,6 +947,7 @@ export class RewriteAppController {
       api.searchPartTypes(""),
       canAccessAdmin ? api.getLatestQrBatch() : Promise.resolve(null),
       api.getKnownLocations(),
+      api.getKnownCategories(),
       api.getInventorySummary(),
     ]);
 
@@ -956,6 +960,7 @@ export class RewriteAppController {
       partTypesResult,
       latestBatchResult,
       locationsResult,
+      categoriesResult,
       inventoryResult,
     ]) {
       if (result.status === "rejected" && this.handleApiFailure(result.reason)) {
@@ -972,6 +977,7 @@ export class RewriteAppController {
       partTypesResult,
       latestBatchResult,
       locationsResult,
+      categoriesResult,
       inventoryResult,
     ].filter((result): result is PromiseRejectedResult => result.status === "rejected");
 
@@ -981,17 +987,13 @@ export class RewriteAppController {
       patch.dashboard = dashboardResult.value;
     }
     if (locationsResult.status === "fulfilled") {
-      const fromServer = locationsResult.value;
-      this.pruneProvisionalPaths("location", fromServer);
-      const provisional = this.loadProvisionalPaths("location");
-      patch.knownLocations = Array.from(new Set([...fromServer, ...provisional])).sort();
+      patch.knownLocations = locationsResult.value;
+    }
+    if (categoriesResult.status === "fulfilled") {
+      patch.knownCategories = categoriesResult.value;
     }
     if (inventoryResult.status === "fulfilled") {
       patch.inventorySummary = inventoryResult.value;
-      const categoriesFromServer = inventoryResult.value.map((row) => row.categoryPath.join(" / "));
-      this.pruneProvisionalPaths("category", categoriesFromServer);
-      const provisional = this.loadProvisionalPaths("category");
-      patch.knownCategories = Array.from(new Set([...categoriesFromServer, ...provisional])).sort();
     }
     if (partDbResult.status === "fulfilled") {
       patch.partDbStatus = partDbResult.value;
@@ -2166,39 +2168,6 @@ export class RewriteAppController {
     return "inspect";
   }
 
-  private loadProvisionalPaths(kind: "category" | "location"): string[] {
-    try {
-      const raw = localStorage.getItem(`smartdb:provisional:${kind}`);
-      if (!raw) return [];
-      const parsed: unknown = JSON.parse(raw);
-      if (!Array.isArray(parsed)) return [];
-      return parsed.filter((v): v is string => typeof v === "string");
-    } catch {
-      return [];
-    }
-  }
-
-  private saveProvisionalPath(kind: "category" | "location", path: string): void {
-    try {
-      const existing = this.loadProvisionalPaths(kind);
-      if (!existing.includes(path)) {
-        localStorage.setItem(`smartdb:provisional:${kind}`, JSON.stringify([...existing, path]));
-      }
-    } catch {}
-  }
-
-  private pruneProvisionalPaths(kind: "category" | "location", serverPaths: readonly string[]): void {
-    try {
-      const provisional = this.loadProvisionalPaths(kind);
-      const remaining = provisional.filter((p) => !serverPaths.includes(p));
-      if (remaining.length === provisional.length) return;
-      if (remaining.length === 0) {
-        localStorage.removeItem(`smartdb:provisional:${kind}`);
-      } else {
-        localStorage.setItem(`smartdb:provisional:${kind}`, JSON.stringify(remaining));
-      }
-    } catch {}
-  }
 
   private applyThemeToDOM(theme: "light" | "dark", animated = false): void {
     if (animated) {

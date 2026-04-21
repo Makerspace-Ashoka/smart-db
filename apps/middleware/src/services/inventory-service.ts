@@ -172,19 +172,31 @@ export class InventoryService {
   }
 
   getKnownCategories(): string[] {
-    const rows = this.db
+    const partTypeRows = this.db
       .prepare(`SELECT DISTINCT category_path_json FROM part_types WHERE category_path_json IS NOT NULL AND category_path_json != '[]'`)
       .all() as Array<{ category_path_json: string }>;
-    const paths: string[] = [];
-    for (const row of rows) {
+    const standaloneRows = this.db
+      .prepare(`SELECT path FROM known_categories`)
+      .all() as Array<{ path: string }>;
+    const paths = new Set<string>();
+    for (const row of partTypeRows) {
       try {
         const parsed = JSON.parse(row.category_path_json);
         if (Array.isArray(parsed) && parsed.length > 0) {
-          paths.push(parsed.join(" / "));
+          paths.add(parsed.join(" / "));
         }
       } catch {}
     }
-    return paths.sort((a, b) => a.localeCompare(b));
+    for (const row of standaloneRows) {
+      paths.add(row.path);
+    }
+    return Array.from(paths).sort((a, b) => a.localeCompare(b));
+  }
+
+  createKnownCategory(path: string): void {
+    this.db
+      .prepare(`INSERT OR IGNORE INTO known_categories (path) VALUES (?)`)
+      .run(path);
   }
 
   getPartTypeItems(partTypeId: string): {
