@@ -8,29 +8,31 @@
 :root {
   --font: "IBM Plex Sans", system-ui, sans-serif;
   --mono: "IBM Plex Mono", ui-monospace, monospace;
+  --display: "Fraunces Variable", "Fraunces", ui-serif, Georgia, serif;
   --parts-pattern-url: url("/art/parts-pattern-light.svg");
 
-  --bg: #f4f7fb;
-  --surface: #fcfdff;
-  --dim: #edf2f8;
-  --border: #d7dfea;
-  --border-2: #bcc8d8;
+  --bg: #f3ecdc;
+  --bg-ink: #e9dfc8;
+  --surface: #fbf6ea;
+  --dim: #ece4d1;
+  --border: #d8ccb1;
+  --border-2: #b9a98a;
 
-  --ink: #162033;
-  --ink-strong: #0f1727;
-  --ink-2: #55637b;
-  --ink-3: #8d98ab;
+  --ink: #1b2130;
+  --ink-strong: #0f1524;
+  --ink-2: #5a5f6c;
+  --ink-3: #8b8472;
 
-  --blue: #244f9e;
-  --blue-hover: #1e437f;
-  --blue-bg: rgba(36, 79, 158, 0.08);
+  --blue: #1e3a8a;
+  --blue-hover: #152a66;
+  --blue-bg: rgba(30, 58, 138, 0.08);
 
-  --orange: #8e6535;
-  --orange-bg: rgba(142, 101, 53, 0.08);
+  --orange: #a35a16;
+  --orange-bg: rgba(163, 90, 22, 0.1);
 
-  --green: #1f8f5f; --green-bg: rgba(31, 143, 95, 0.09);
-  --red: #b24f47;   --red-bg: rgba(178, 79, 71, 0.09);
-  --amber: #a97021; --amber-bg: rgba(169, 112, 33, 0.1);
+  --green: #2a7a4c; --green-bg: rgba(42, 122, 76, 0.1);
+  --red: #b6392f;   --red-bg: rgba(182, 57, 47, 0.1);
+  --amber: #a06516; --amber-bg: rgba(160, 101, 22, 0.1);
 
   --r: 10px;
   --r-sm: 6px;
@@ -65,10 +67,11 @@ body {
   margin: 0;
   min-height: 100dvh;
   padding-bottom: env(safe-area-inset-bottom);
+  background-color: var(--bg);
   background-image:
-    /* grid layer — 24px solid lines */
-    repeating-linear-gradient(0deg, transparent, transparent 23px, rgba(180, 191, 209, 0.07) 23px, rgba(180, 191, 209, 0.07) 24px),
-    repeating-linear-gradient(90deg, transparent, transparent 23px, rgba(180, 191, 209, 0.07) 23px, rgba(180, 191, 209, 0.07) 24px),
+    /* warm paper grain — 24px grid, very faint */
+    repeating-linear-gradient(0deg, transparent, transparent 23px, rgba(150, 127, 86, 0.06) 23px, rgba(150, 127, 86, 0.06) 24px),
+    repeating-linear-gradient(90deg, transparent, transparent 23px, rgba(150, 127, 86, 0.06) 23px, rgba(150, 127, 86, 0.06) 24px),
     /* parts doodle layer */
     var(--parts-pattern-url);
   background-repeat: repeat;
@@ -1475,39 +1478,157 @@ a { transition: color var(--t) var(--ease-in-out); }
 }
 
 .shell-auth {
+  position: relative;
   min-height: 100dvh;
   display: grid;
   align-content: center;
+  justify-items: center;
   gap: 1rem;
+  padding: 2.5rem 1.25rem;
 }
 
-.auth-wait,
-.auth-card {
+.auth-wait {
   background: var(--surface);
   border: 1px solid var(--border);
   border-radius: 20px;
   box-shadow: var(--shadow-xs);
-}
-
-.auth-wait {
   padding: 2rem;
   max-width: 680px;
 }
 
-.auth-card {
-  padding: 1.5rem;
-}
-
-.auth-hero {
+.auth-masthead {
+  max-width: 360px;
+  width: 100%;
   display: grid;
-  gap: 1rem;
+  justify-items: center;
+  text-align: center;
+  gap: 1.25rem;
+  padding: 2.25rem 1.25rem 1.75rem;
 }
 
-.auth-divider {
-  height: 1px;
-  margin: 1.5rem 0;
-  background: linear-gradient(90deg, transparent, var(--border), transparent);
+.display-title {
+  font-family: var(--display);
+  font-weight: 520;
+  font-size: clamp(2.8rem, 11vw, 3.75rem);
+  line-height: 0.95;
+  letter-spacing: 0.01em;
+  color: var(--ink-strong);
+  margin: 0;
 }
+
+.display-sub {
+  font-family: var(--font);
+  font-size: 0.7rem;
+  font-weight: 500;
+  letter-spacing: 0.32em;
+  text-transform: uppercase;
+  color: var(--ink-2);
+  margin: 0.1rem 0 0;
+}
+
+.auth-meta {
+  display: grid;
+  gap: 0.15rem;
+  margin-top: 0.4rem;
+}
+
+.auth-meta-label {
+  font-family: var(--mono);
+  font-size: 0.7rem;
+  letter-spacing: 0.18em;
+  text-transform: uppercase;
+  color: var(--ink-3);
+  margin: 0;
+}
+
+.auth-meta-org {
+  font-family: var(--font);
+  font-size: 0.95rem;
+  font-weight: 500;
+  color: var(--ink);
+  margin: 0;
+}
+
+.auth-sso {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 0.6rem;
+  width: 100%;
+  padding: 0.85rem 1rem;
+  background: var(--surface);
+  border: 1px solid var(--border-2);
+  border-radius: 12px;
+  color: var(--ink);
+  font-family: var(--font);
+  font-size: 0.95rem;
+  font-weight: 500;
+  text-decoration: none;
+  box-shadow: 0 1px 0 rgba(19, 15, 10, 0.04), 0 1px 2px rgba(19, 15, 10, 0.04);
+  transition: border-color var(--t) var(--ease-out), background var(--t) var(--ease-out);
+  margin-top: 0.15rem;
+}
+
+.auth-sso:hover {
+  background: var(--dim);
+  border-color: var(--ink-3);
+  text-decoration: none;
+}
+
+.auth-sso-mark {
+  width: 0.9rem;
+  height: 0.9rem;
+  border-radius: 50%;
+  border: 1.5px solid var(--blue);
+  background: radial-gradient(circle at center, var(--blue) 0 40%, transparent 42%);
+  flex-shrink: 0;
+}
+
+.auth-footnote {
+  font-family: var(--mono);
+  font-size: 0.66rem;
+  letter-spacing: 0.12em;
+  text-transform: uppercase;
+  color: var(--ink-3);
+  margin: 0.5rem 0 0;
+}
+
+.auth-banner {
+  max-width: 360px;
+  width: 100%;
+}
+
+.auth-corner {
+  position: absolute;
+  width: 42px;
+  height: 42px;
+  pointer-events: none;
+  opacity: 0.35;
+  color: var(--ink-3);
+}
+
+.auth-corner::before,
+.auth-corner::after {
+  content: "";
+  position: absolute;
+  background: currentColor;
+}
+
+.auth-corner-tl { top: 22px; left: 22px; }
+.auth-corner-tl::before { top: 0; left: 0; width: 18px; height: 1px; }
+.auth-corner-tl::after  { top: 0; left: 0; width: 1px; height: 18px; }
+
+.auth-corner-tr { top: 22px; right: 22px; }
+.auth-corner-tr::before { top: 0; right: 0; width: 18px; height: 1px; }
+.auth-corner-tr::after  { top: 0; right: 0; width: 1px; height: 18px; }
+
+.auth-corner-bl { bottom: 22px; left: 22px; }
+.auth-corner-bl::before { bottom: 0; left: 0; width: 18px; height: 1px; }
+.auth-corner-bl::after  { bottom: 0; left: 0; width: 1px; height: 18px; }
+
+.auth-corner-br { bottom: 22px; right: 22px; }
+.auth-corner-br::before { bottom: 0; right: 0; width: 18px; height: 1px; }
+.auth-corner-br::after  { bottom: 0; right: 0; width: 1px; height: 18px; }
 
 .app-shell {
   display: grid;
@@ -1534,11 +1655,12 @@ a { transition: color var(--t) var(--ease-in-out); }
 }
 
 .header-brand {
-  font-family: "FrauncesVariable", "Fraunces", serif;
+  font-family: var(--display);
   font-size: clamp(1.7rem, 2.5vw, 2.2rem);
   line-height: 0.96;
-  letter-spacing: -0.03em;
-  font-weight: 560;
+  letter-spacing: -0.01em;
+  font-weight: 520;
+  color: var(--ink-strong);
 }
 
 .app-brand-tag {

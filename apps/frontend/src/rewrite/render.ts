@@ -37,40 +37,24 @@ export function renderApp(state: RewriteUiState): string {
   if (state.authState.status !== "authenticated") {
     return `
       <div class="shell shell-auth">
-        <section class="auth-card">
-          <header class="auth-hero">
-            <div>
-              <p class="eyebrow">Smart DB</p>
-              <h1>Sign In With Makerspace SSO</h1>
-              <p class="lede">
-                Smart DB authenticates through your Makerspace identity provider
-                and keeps inventory credentials out of the browser.
-              </p>
-            </div>
-            <div class="status-card">
-              <div class="pill warn">Authentication Required</div>
-              <p>
-                You will be redirected to Zitadel and returned here with a secure
-                session.
-              </p>
-            </div>
-          </header>
-          <div class="auth-divider"></div>
-          ${renderPanelTitle(
-            "Makerspace Login",
-            "Use your Makerspace SSO account. Smart DB uses a server-side session cookie instead of storing bearer tokens in the browser.",
-          )}
-          <div class="stack">
-            <a
-              class="button-link"
-              data-action="login"
-              href="#"
-            >
-              Continue With SSO
-            </a>
+        <div class="auth-corner auth-corner-tl" aria-hidden="true"></div>
+        <div class="auth-corner auth-corner-tr" aria-hidden="true"></div>
+        <div class="auth-corner auth-corner-bl" aria-hidden="true"></div>
+        <div class="auth-corner auth-corner-br" aria-hidden="true"></div>
+        <section class="auth-masthead">
+          <h1 class="display-title">SMART DB</h1>
+          <p class="display-sub">MAKERSPACE&nbsp;·&nbsp;INVENTORY</p>
+          <div class="auth-meta">
+            <p class="auth-meta-label">Sign in with SSO</p>
+            <p class="auth-meta-org">Ashoka University</p>
           </div>
+          <a class="auth-sso" data-action="login" href="#">
+            <span class="auth-sso-mark" aria-hidden="true"></span>
+            <span class="auth-sso-label">Continue with Ashoka SSO</span>
+          </a>
+          <p class="auth-footnote">Secure · Session cookie only · No bearer tokens</p>
         </section>
-        ${state.authState.error ? `<p class="banner error">${escapeHtml(state.authState.error)}</p>` : ""}
+        ${state.authState.error ? `<p class="banner error auth-banner">${escapeHtml(state.authState.error)}</p>` : ""}
         ${renderToasts(state.toasts)}
       </div>
     `;
