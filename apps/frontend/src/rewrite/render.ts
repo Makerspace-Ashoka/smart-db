@@ -1128,9 +1128,10 @@ function renderTreeNodes(
       expanded.has(child.path) ||
       (autoExpand !== null && autoExpand.has(child.path));
     const isSelected = foldSearchText(child.path) === currentFolded && currentFolded !== "";
+    const guides = Array.from({ length: depth }, () => `<span class="tree-indent" aria-hidden="true"></span>`).join("");
     out.push(`
       <div class="tree-row ${isSelected ? "selected" : ""}">
-        ${depth > 0 ? `<span class="tree-indent" style="width:${depth * 1.5}rem;min-width:${depth * 1.5}rem" aria-hidden="true"></span>` : ""}
+        ${guides}
         ${hasChildren
           ? `<button type="button" class="tree-chevron" data-action="toggle-path-expand" data-kind="${kind}" data-path="${attr(child.path)}" aria-expanded="${String(isExpanded)}" aria-label="${isExpanded ? "Collapse" : "Expand"} ${attr(child.segment)}">${isExpanded ? "▾" : "▸"}</button>`
           : `<span class="tree-chevron placeholder" aria-hidden="true"></span>`}
