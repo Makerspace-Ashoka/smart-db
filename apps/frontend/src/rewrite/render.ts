@@ -113,8 +113,6 @@ export function renderApp(state: RewriteUiState): string {
         </div>
       </header>
 
-      ${renderShellSummary(state)}
-
       ${renderToasts(state.toasts)}
 
       <div class="global-banners">
@@ -157,6 +155,37 @@ function renderWorkspaceHeader(title: string, copy: string, kicker: string): str
   `;
 }
 
+function renderIconPaths(iconId: string): string {
+  switch (iconId) {
+    case "scan":
+      return `<path d="M7 4H5a1 1 0 0 0-1 1v2M17 4h2a1 1 0 0 1 1 1v2M7 20H5a1 1 0 0 1-1-1v-2M17 20h2a1 1 0 0 0 1-1v-2M7 12h10"/>`;
+    case "inventory":
+      return `<rect x="4" y="6" width="16" height="12" rx="2"/><path d="M4 10h16M8 6v12"/>`;
+    case "activity":
+      return `<path d="M4 14h4l2-5 4 9 2-4h4"/>`;
+    case "batch":
+      return `<rect x="4" y="5" width="8" height="6" rx="1"/><rect x="12" y="13" width="8" height="6" rx="1"/><path d="M12 8h3a2 2 0 0 1 2 2v3"/>`;
+    case "chip":
+      return `<rect x="7" y="7" width="10" height="10" rx="1.5"/><path d="M7 9H4M7 12H4M7 15H4M20 9h-3M20 12h-3M20 15h-3M9 7V4M12 7V4M15 7V4M9 20v-3M12 20v-3M15 20v-3"/>`;
+    case "resistor":
+      return `<path d="M3 12h4l2-4 3 8 3-8 2 4h4"/>`;
+    case "bearing":
+      return `<circle cx="12" cy="12" r="7"/><circle cx="12" cy="12" r="2.5"/><path d="M7 7 17 17"/>`;
+    case "spool":
+      return `<rect x="7" y="4" width="10" height="16"/><ellipse cx="12" cy="12" rx="3.5" ry="8"/>`;
+    case "connector":
+      return `<path d="M8 7h6a4 4 0 1 1 0 8H8"/><path d="M8 10H4M8 14H4"/>`;
+    case "capacitor":
+      return `<path d="M12 4v16M16 4v16M8 12h12"/>`;
+    case "pcb":
+      return `<rect x="5" y="6" width="14" height="12" rx="2"/><circle cx="9" cy="10" r="1.5"/><path d="M11 10h4M11 14h6M9 18v2M13 18v2M17 18v2M9 4v2M13 4v2M17 4v2"/>`;
+    case "actuator":
+      return `<circle cx="6" cy="12" r="2"/><path d="M8 12h4l2-3h4M14 12h4l2 3"/><rect x="10" y="10.5" width="4" height="3" rx="0.5"/>`;
+    default:
+      return `<rect x="4" y="6" width="16" height="12" rx="2"/><path d="M4 10h16M8 6v12"/>`;
+  }
+}
+
 function iconIdForPart(name: string, categoryPath: readonly string[]): string {
   const blob = foldSearchText(`${name} ${categoryPath.join(" ")}`);
   if (blob.includes("camera")) return "scan";
@@ -176,7 +205,7 @@ function renderIconSlot(iconId: string, label: string): string {
   return `
     <span class="ui-icon-slot" aria-hidden="true" title="${attr(label)}">
       <svg class="ui-icon" viewBox="0 0 24 24" fill="none">
-        <use href="/art/parts-icon-pack.svg#icon-${attr(iconId)}"></use>
+        ${renderIconPaths(iconId)}
       </svg>
     </span>
   `;
@@ -271,11 +300,7 @@ function renderTabBar(activeTab: TabId, tabs: readonly TabId[]): string {
           data-action="change-tab"
           data-tab="${tab}"
         >
-          <span class="tab-icon" aria-hidden="true">
-            <svg viewBox="0 0 24 24" fill="none">
-              <use href="/art/parts-icon-pack.svg#icon-${icons[tab]}"></use>
-            </svg>
-          </span>
+          <span class="tab-icon" aria-hidden="true"><svg viewBox="0 0 24 24" fill="none">${renderIconPaths(icons[tab])}</svg></span>
           <span class="tab-label">${labels[tab]}</span>
         </button>
       `).join("")}
