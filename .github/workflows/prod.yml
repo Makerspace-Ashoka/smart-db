@@ -28,6 +28,30 @@ jobs:
         env:
           PROJECT: ${{ env.PROJECT }}
 
+      # Pre-CI deploys defaulted COMPOSE_PROJECT_NAME to the working directory
+      # name ("deploy"), so the same compose.yaml could boot a sibling project
+      # that squats the host ports (80/443/8443/4000/8080) and blocks CI's
+      # ${PROJECT} containers from starting. Stop any running sibling project
+      # bound to this compose file before attempting the deploy.
+      - name: Stop stray compose projects using our compose file
+        run: |
+          COMPOSE_PATH=/opt/smart-db/deploy/compose.yaml
+          docker compose ls --all --format json \
+            | python3 -c "
+import json, sys
+for p in json.load(sys.stdin):
+    name = p.get('Name', '')
+    cfg = p.get('ConfigFiles', '')
+    status = p.get('Status', '')
+    if cfg == '$COMPOSE_PATH' and name != '$PROJECT' and 'running' in status:
+        print(name)
+" | while read -r stray; do
+            echo "Stopping stray project: $stray"
+            COMPOSE_PROJECT_NAME="$stray" docker compose -f "$COMPOSE_PATH" stop
+          done
+        env:
+          PROJECT: ${{ env.PROJECT }}
+
       - name: Sync workspace to server
         run: |
           rsync -a --delete \
