@@ -554,9 +554,9 @@ button:disabled { opacity: 0.4; cursor: not-allowed; }
   display: inline-flex;
   align-items: center;
   justify-content: center;
-  border: 1px solid var(--border);
+  border: 1px solid var(--blue);
   border-radius: 0.85rem;
-  background: linear-gradient(180deg, var(--surface), var(--dim));
+  background: linear-gradient(180deg, var(--blue-bg), var(--surface));
 }
 
 .ui-icon {
