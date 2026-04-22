@@ -56,8 +56,18 @@ export type ScanSessionEvent =
   | { readonly type: "SPLIT.SUBMIT_REQUESTED" }
   | { readonly type: "SPLIT.SUCCEEDED"; readonly qrCode: string; readonly targetId: string }
   | { readonly type: "SPLIT.FAILED"; readonly failure: RewriteFailure }
-  | { readonly type: "SCAN.CLEAR_REQUESTED" }
-  | { readonly type: "SCAN.NEXT_REQUESTED" };
+  | {
+      readonly type: "EDIT.OPEN";
+      readonly editKind: "reassign" | "editShared" | "reverseIngest";
+    }
+  | { readonly type: "EDIT.CLOSE" }
+  | { readonly type: "EDIT.SUBMIT_REQUESTED" }
+  | {
+      readonly type: "EDIT.SUCCEEDED";
+      readonly editKind: "reassign" | "editShared" | "reverseIngest";
+    }
+  | { readonly type: "EDIT.FAILED"; readonly failure: RewriteFailure }
+  | { readonly type: "SCAN.CLEAR_REQUESTED" };
 
 export const scanSessionMachine = setup({
   types: {
@@ -217,10 +227,6 @@ export const scanSessionMachine = setup({
           target: "idle",
           actions: "clearActiveScan",
         },
-        "SCAN.NEXT_REQUESTED": {
-          target: "idle",
-          actions: "clearActiveScan",
-        },
       },
     },
     labeling: {
@@ -234,10 +240,6 @@ export const scanSessionMachine = setup({
               actions: "captureLookupRequest",
             },
             "SCAN.CLEAR_REQUESTED": {
-              target: "#scanSession.idle",
-              actions: "clearActiveScan",
-            },
-            "SCAN.NEXT_REQUESTED": {
               target: "#scanSession.idle",
               actions: "clearActiveScan",
             },
@@ -284,6 +286,7 @@ export const scanSessionMachine = setup({
                 event.type === "EVENT.PARSE_REQUESTED" && event.targetType === "instance",
               target: "instanceSubmitting",
             },
+            "EDIT.OPEN": "instanceEditing",
             "LOOKUP.REQUESTED": {
               target: "#scanSession.lookingUp",
               actions: "captureLookupRequest",
@@ -292,9 +295,28 @@ export const scanSessionMachine = setup({
               target: "#scanSession.idle",
               actions: "clearActiveScan",
             },
-            "SCAN.NEXT_REQUESTED": {
+          },
+        },
+        instanceEditing: {
+          on: {
+            "EDIT.SUBMIT_REQUESTED": "instanceEditSubmitting",
+            "EDIT.CLOSE": "instanceReady",
+            "LOOKUP.REQUESTED": {
+              target: "#scanSession.lookingUp",
+              actions: "captureLookupRequest",
+            },
+            "SCAN.CLEAR_REQUESTED": {
               target: "#scanSession.idle",
               actions: "clearActiveScan",
+            },
+          },
+        },
+        instanceEditSubmitting: {
+          on: {
+            "EDIT.SUCCEEDED": "instanceReady",
+            "EDIT.FAILED": {
+              target: "#scanSession.failure.edit",
+              actions: "captureFailure",
             },
           },
         },
@@ -320,6 +342,7 @@ export const scanSessionMachine = setup({
               target: "bulkEventParsing",
             },
             "SPLIT.PARSE_REQUESTED": "bulkSplitParsing",
+            "EDIT.OPEN": "bulkEditing",
             "LOOKUP.REQUESTED": {
               target: "#scanSession.lookingUp",
               actions: "captureLookupRequest",
@@ -328,9 +351,28 @@ export const scanSessionMachine = setup({
               target: "#scanSession.idle",
               actions: "clearActiveScan",
             },
-            "SCAN.NEXT_REQUESTED": {
+          },
+        },
+        bulkEditing: {
+          on: {
+            "EDIT.SUBMIT_REQUESTED": "bulkEditSubmitting",
+            "EDIT.CLOSE": "bulkReady",
+            "LOOKUP.REQUESTED": {
+              target: "#scanSession.lookingUp",
+              actions: "captureLookupRequest",
+            },
+            "SCAN.CLEAR_REQUESTED": {
               target: "#scanSession.idle",
               actions: "clearActiveScan",
+            },
+          },
+        },
+        bulkEditSubmitting: {
+          on: {
+            "EDIT.SUCCEEDED": "bulkReady",
+            "EDIT.FAILED": {
+              target: "#scanSession.failure.edit",
+              actions: "captureFailure",
             },
           },
         },
@@ -391,10 +433,6 @@ export const scanSessionMachine = setup({
           target: "idle",
           actions: "clearActiveScan",
         },
-        "SCAN.NEXT_REQUESTED": {
-          target: "idle",
-          actions: "clearActiveScan",
-        },
         "LOOKUP.REQUESTED": {
           target: "lookingUp",
           actions: "captureLookupRequest",
@@ -405,6 +443,7 @@ export const scanSessionMachine = setup({
         assign: {},
         event: {},
         split: {},
+        edit: {},
       },
     },
   },

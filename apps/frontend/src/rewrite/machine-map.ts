@@ -120,7 +120,6 @@ export const rewriteMachineMap = {
       "SPLIT.SUCCEEDED",
       "SPLIT.FAILED",
       "SCAN.CLEAR_REQUESTED",
-      "SCAN.NEXT_REQUESTED",
     ],
     failureStates: [
       "failure.lookup",
@@ -128,6 +127,23 @@ export const rewriteMachineMap = {
       "failure.event",
       "failure.split",
     ],
+  },
+  bulkQueue: {
+    status: "implemented",
+    initial: "empty",
+    states: ["empty", "ready", "submitting", "failed"],
+    events: [
+      "QUEUE.ACTION_CHANGED",
+      "QUEUE.ROW_ACCEPTED",
+      "QUEUE.ROW_REJECTED",
+      "QUEUE.ROW_DECREMENT_REQUESTED",
+      "QUEUE.ROW_REMOVE_REQUESTED",
+      "QUEUE.CLEAR_REQUESTED",
+      "QUEUE.SUBMIT_REQUESTED",
+      "QUEUE.SUBMIT_SUCCEEDED",
+      "QUEUE.SUBMIT_FAILED",
+    ],
+    failureStates: ["failed"],
   },
   inventoryRoute: {
     status: "planned",
