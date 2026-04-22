@@ -536,7 +536,44 @@ button:disabled { opacity: 0.4; cursor: not-allowed; }
 .viewfinder { animation: fade-in 0.2s ease-out; }
 @keyframes fade-in { from { opacity: 0; } to { opacity: 1; } }
 
-@media (max-width: 640px) { .hero { grid-template-columns: 1fr; } .header-bar { flex-wrap: wrap; } }
+@media (max-width: 640px) {
+  .hero { grid-template-columns: 1fr; }
+
+  /* header: brand + buttons on row 1, status pills on row 2 */
+  .header-bar { flex-wrap: wrap; gap: 0.5rem 0.75rem; }
+  .header-brand { flex: 1; }
+  .header-status { order: 3; flex: 1 1 100%; justify-content: flex-start; }
+
+  /* sync grid: 2×2 instead of 3+1 */
+  .sync-status-grid { grid-template-columns: repeat(2, 1fr); row-gap: 0.75rem; }
+
+  /* latest batch card: stack info above download button */
+  .latest-batch-card { flex-direction: column; align-items: stretch; }
+  .latest-batch-card > button { width: 100%; }
+
+  /* 3-option correction toggle: stack vertically */
+  .mode-toggle:has(> button:nth-child(3)) {
+    flex-direction: column;
+    background: transparent;
+    padding: 0;
+    gap: 0.375rem;
+  }
+  .mode-toggle:has(> button:nth-child(3)) button {
+    border-radius: var(--r);
+    border: 1px solid var(--border);
+    background: var(--surface);
+    color: var(--ink-2);
+    flex: none;
+    min-height: 44px;
+    text-align: left;
+  }
+  .mode-toggle:has(> button:nth-child(3)) button.selected {
+    background: var(--blue-bg);
+    color: var(--blue);
+    border-color: var(--blue);
+    box-shadow: none;
+  }
+}
 @media (max-height: 700px) { .viewfinder, .viewfinder video { max-height: 45vh; } }
 @media (prefers-reduced-motion: reduce) { *, *::before, *::after { animation-duration: 0.01ms !important; animation-iteration-count: 1 !important; transition-duration: 0.01ms !important; } }
 
