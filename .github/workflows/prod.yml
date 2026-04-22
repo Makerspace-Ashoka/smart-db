@@ -36,19 +36,13 @@ jobs:
       - name: Stop stray compose projects using our compose file
         run: |
           COMPOSE_PATH=/opt/smart-db/deploy/compose.yaml
-          docker compose ls --all --format json \
-            | python3 -c "
-import json, sys
-for p in json.load(sys.stdin):
-    name = p.get('Name', '')
-    cfg = p.get('ConfigFiles', '')
-    status = p.get('Status', '')
-    if cfg == '$COMPOSE_PATH' and name != '$PROJECT' and 'running' in status:
-        print(name)
-" | while read -r stray; do
-            echo "Stopping stray project: $stray"
-            COMPOSE_PROJECT_NAME="$stray" docker compose -f "$COMPOSE_PATH" stop
-          done
+          docker compose ls --all \
+            | awk -v prj="$PROJECT" -v cfg="$COMPOSE_PATH" \
+                'NR > 1 && $NF == cfg && $1 != prj && $2 ~ /running/ { print $1 }' \
+            | while read -r stray; do
+                echo "Stopping stray project: $stray"
+                COMPOSE_PROJECT_NAME="$stray" docker compose -f "$COMPOSE_PATH" stop
+              done
         env:
           PROJECT: ${{ env.PROJECT }}
 
