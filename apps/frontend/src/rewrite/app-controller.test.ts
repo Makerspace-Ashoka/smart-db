@@ -666,8 +666,6 @@ describe("RewriteAppController", () => {
 
     (document.querySelector('[data-action="stock-toggle"][data-category-path="Electronics"]') as HTMLButtonElement).click();
     await flush();
-    (document.querySelector('[data-action="stock-toggle"][data-category-path="Electronics/Microcontrollers"]') as HTMLButtonElement).click();
-    await flush();
 
     const detailButton = document.querySelector<HTMLButtonElement>('[data-action="open-part-detail"]');
     expect(detailButton).not.toBeNull();

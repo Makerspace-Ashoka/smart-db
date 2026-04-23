@@ -1749,10 +1749,9 @@ function renderStockCategoryCard(
   `;
 }
 
-function renderStockAccordionLevel(
+function renderStockSubtreeContents(
   rows: readonly InventoryRow[],
   path: readonly string[],
-  browsePath: readonly string[],
 ): string {
   const groups = new Map<string, InventoryRow[]>();
   const directItems: InventoryRow[] = [];
@@ -1768,19 +1767,57 @@ function renderStockAccordionLevel(
   }
 
   const sorted = Array.from(groups.entries()).sort((a, b) => a[0].localeCompare(b[0]));
-  const withGlyph = path.length === 0;
-  const nextDepth = path.length;
 
-  const groupsHtml = sorted.map(([segment, groupRows]) => {
-    const thisPath = [...path, segment];
-    const isExpanded = browsePath.length > nextDepth && browsePath[nextDepth] === segment;
-    const childrenHtml = isExpanded
-      ? `<div class="stock-accordion-children">${renderStockAccordionLevel(groupRows, thisPath, browsePath)}</div>`
+  const directItemsHtml = directItems.length === 0 ? "" : `
+    <ul class="inventory-list stock-subtree-items">
+      ${directItems
+        .slice()
+        .sort((a, b) => a.canonicalName.localeCompare(b.canonicalName))
+        .map((row) => renderStockItemRow(row, []))
+        .join("")}
+    </ul>
+  `;
+
+  const groupsHtml = sorted.map(([segment, groupRows]) => `
+    <section class="stock-sub-group">
+      <h4 class="stock-sub-label">${escapeHtml(segment)} <span class="stock-sub-count">${groupRows.length}</span></h4>
+      ${renderStockSubtreeContents(groupRows, [...path, segment])}
+    </section>
+  `).join("");
+
+  return `${directItemsHtml}${groupsHtml}`;
+}
+
+function renderStockTopLevel(
+  rows: readonly InventoryRow[],
+  browsePath: readonly string[],
+  showAll: boolean,
+): string {
+  const groups = new Map<string, InventoryRow[]>();
+  const directItems: InventoryRow[] = [];
+  for (const row of rows) {
+    const next = row.categoryPath[0];
+    if (next === undefined || next === "") {
+      directItems.push(row);
+    } else {
+      const arr = groups.get(next) ?? [];
+      arr.push(row);
+      groups.set(next, arr);
+    }
+  }
+
+  const sorted = Array.from(groups.entries()).sort((a, b) => a[0].localeCompare(b[0]));
+  const openSegment = browsePath.length > 0 ? browsePath[0] : null;
+
+  const cardsHtml = sorted.map(([segment, groupRows]) => {
+    const isExpanded = showAll || segment === openSegment;
+    const subtreeHtml = isExpanded
+      ? `<div class="stock-accordion-children">${renderStockSubtreeContents(groupRows, [segment])}</div>`
       : "";
     return `
       <li class="stock-accordion-item${isExpanded ? " is-open" : ""}">
-        ${renderStockCategoryCard(segment, groupRows, thisPath, withGlyph, isExpanded)}
-        ${childrenHtml}
+        ${renderStockCategoryCard(segment, groupRows, [segment], true, isExpanded)}
+        ${subtreeHtml}
       </li>
     `;
   }).join("");
@@ -1798,8 +1835,8 @@ function renderStockAccordionLevel(
   `;
 
   return `
-    <ul class="stock-accordion stock-accordion-depth-${nextDepth}">
-      ${groupsHtml}
+    <ul class="stock-accordion stock-accordion-depth-0">
+      ${cardsHtml}
       ${directItemsHtml}
     </ul>
   `;
@@ -1834,7 +1871,7 @@ function renderInventoryTab(state: RewriteUiState): string {
   const totalEntities = filteredRows.reduce((sum, row) => sum + row.entityCount, 0);
 
   const accordionHtml = !isSearching
-    ? renderStockAccordionLevel(filteredRows, [], browsePath)
+    ? renderStockTopLevel(filteredRows, browsePath, state.inventoryUi.showAll)
     : "";
 
   const searchResultsHtml = !isSearching ? "" : `
@@ -1874,6 +1911,10 @@ function renderInventoryTab(state: RewriteUiState): string {
       </div>
       <div class="stock-controls">
         <input type="search" aria-label="Filter inventory" name="inventory.query" value="${attr(state.inventoryUi.query)}" placeholder="Search..." />
+        <label class="inventory-toggle">
+          <input type="checkbox" name="inventory.showAll"${checked(state.inventoryUi.showAll)} />
+          Show all
+        </label>
         <label class="inventory-toggle">
           <input type="checkbox" name="inventory.showEmpty"${checked(state.inventoryUi.showEmpty)} />
           Show empty

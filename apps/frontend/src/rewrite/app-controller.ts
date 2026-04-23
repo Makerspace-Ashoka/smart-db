@@ -975,7 +975,15 @@ export class RewriteAppController {
             showEmpty: Boolean(rawValue),
           },
         });
-        return;
+        break;
+      case "inventory.showAll":
+        this.patch({
+          inventoryUi: {
+            ...this.state.inventoryUi,
+            showAll: Boolean(rawValue),
+          },
+        });
+        break;
       case "pathPicker.category.query":
         this.patch({ categoryPicker: { ...this.state.categoryPicker, query: String(rawValue) } });
         return;
