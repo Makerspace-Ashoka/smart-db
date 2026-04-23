@@ -510,7 +510,7 @@ button:disabled { opacity: 0.4; cursor: not-allowed; }
   transition: background 140ms ease;
 }
 .inventory-row:hover:not(:disabled) {
-  background: transparent;
+  background: var(--dim);
   border-color: transparent;
   box-shadow: none;
 }
