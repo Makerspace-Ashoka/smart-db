@@ -3,6 +3,8 @@ dist
 .DS_Store
 .claude
 coverage
+mockup
+tmp
 *.tsbuildinfo
 data/*.db
 data/*.db-shm
