@@ -2694,7 +2694,7 @@ a { transition: color var(--t) var(--ease-in-out); }
   position: relative;
   width: 100%;
   aspect-ratio: 16 / 9;
-  max-height: 220px;
+  max-height: none;
   border-radius: 14px;
   overflow: hidden;
   background:
@@ -4225,8 +4225,26 @@ html.dark .location-group {
   gap: 1.05rem;
 }
 
+.panel-scan {
+  --scanner-height: clamp(15rem, 40dvh, 31rem);
+  --scanner-column: clamp(20rem, 38vw, 32rem);
+}
+
+.panel-scan[data-scan-mode="bulk"] {
+  --scanner-height: clamp(13.5rem, 32dvh, 24rem);
+  --scanner-column: clamp(19rem, 34vw, 28rem);
+}
+
+.panel-scan[data-scan-mode="result"] {
+  --scanner-height: clamp(12.5rem, 28dvh, 19rem);
+  --scanner-column: clamp(17rem, 28vw, 22rem);
+}
+
 .scan-viewfinder {
-  min-height: 210px;
+  height: var(--scanner-height);
+  min-height: 0;
+  max-height: min(54dvh, 34rem);
+  aspect-ratio: auto;
   border: 1px solid rgba(13, 20, 35, 0.2);
   transform-origin: 50% 58%;
   will-change: transform, filter;
@@ -4796,6 +4814,11 @@ html.dark .tab-bar {
     min-height: calc(100dvh - 9rem);
   }
 
+  .scan-layout {
+    grid-template-columns: minmax(0, var(--scanner-column)) minmax(0, 1fr);
+    gap: clamp(1.15rem, 2vw, 1.8rem);
+  }
+
   .part-detail-header {
     grid-template-columns: clamp(10rem, 18vw, 13.5rem) minmax(0, 1fr);
     align-items: start;
@@ -4829,9 +4852,19 @@ html.dark .tab-bar {
     min-height: min(78dvh, 560px);
   }
 
+  .panel-scan {
+    --scanner-height: clamp(17rem, 54dvh, 32rem);
+  }
+
+  .panel-scan[data-scan-mode="bulk"] {
+    --scanner-height: clamp(13rem, 36dvh, 20rem);
+  }
+
   .scan-viewfinder {
-    min-height: 218px;
-    aspect-ratio: 4 / 3;
+    height: var(--scanner-height);
+    min-height: 0;
+    max-height: none;
+    aspect-ratio: auto;
   }
 
   .scan-viewfinder-corner.tl { left: 12%; }
