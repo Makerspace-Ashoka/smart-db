@@ -1143,6 +1143,92 @@ describe("InventoryService", () => {
     expect(pooled.partType.id).toBe(tracked.partType.id);
   });
 
+  it("backfills part type art only for rows with matching asset files", () => {
+    const { service } = makeService();
+
+    service.registerQrBatch({ actor: "admin", prefix: "ART", startNumber: 1, count: 3 });
+
+    service.assignQr({
+      qrCode: "ART-1",
+      actor: "labeler",
+      entityKind: "instance",
+      location: "Shelf A",
+      notes: null,
+      partType: {
+        kind: "new",
+        canonicalName: "Arduino Uno R3",
+        category: "Microcontrollers",
+        aliases: [],
+        notes: null,
+        imageUrl: null,
+        countable: true,
+      },
+      initialStatus: "available",
+    });
+    service.assignQr({
+      qrCode: "ART-2",
+      actor: "labeler",
+      entityKind: "instance",
+      location: "Shelf B",
+      notes: null,
+      partType: {
+        kind: "new",
+        canonicalName: "M3x10mm Bolt",
+        category: "Fasteners",
+        aliases: [],
+        notes: null,
+        imageUrl: null,
+        countable: true,
+      },
+      initialStatus: "available",
+    });
+    service.assignQr({
+      qrCode: "ART-3",
+      actor: "labeler",
+      entityKind: "instance",
+      location: "Shelf C",
+      notes: null,
+      partType: {
+        kind: "new",
+        canonicalName: "Imageless Test Item",
+        category: "Misc",
+        aliases: [],
+        notes: null,
+        imageUrl: null,
+        countable: true,
+      },
+      initialStatus: "available",
+    });
+
+    expect(service.backfillPartTypeArt()).toEqual({
+      updated: 2,
+      unchanged: 0,
+      missingAssets: 1,
+    });
+    expect(service.backfillPartTypeArt()).toEqual({
+      updated: 0,
+      unchanged: 2,
+      missingAssets: 1,
+    });
+
+    expect(service.getInventorySummary()).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          canonicalName: "Arduino Uno R3",
+          imageUrl: "/art/part-types/microcontrollers--arduino-uno-r3.webp",
+        }),
+        expect.objectContaining({
+          canonicalName: "M3x10mm Bolt",
+          imageUrl: "/art/part-types/fasteners--m3x10mm-bolt.webp",
+        }),
+        expect.objectContaining({
+          canonicalName: "Imageless Test Item",
+          imageUrl: null,
+        }),
+      ]),
+    );
+  });
+
   it("keeps Smart DB labels exact while allowing fuzzy external barcode lookup", async () => {
     const { service } = makeService();
 

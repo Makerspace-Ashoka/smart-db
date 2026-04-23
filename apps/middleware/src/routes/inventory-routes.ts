@@ -9,6 +9,7 @@ import {
   editPartTypeDefinitionRequestSchema,
   mergePartTypesRequestSchema,
   parseWithSchema,
+  partTypeArtBackfillResponseSchema,
   partTypeSearchQuerySchema,
   reassignEntityPartTypeRequestSchema,
   recordEventRequestSchema,
@@ -214,6 +215,14 @@ export async function registerInventoryRoutes(
     const params = request.params as { id: string };
     return inventoryService.approvePartType(params.id);
   });
+
+  app.post("/api/part-types/art/backfill", adminMutation, async () =>
+    parseWithSchema(
+      partTypeArtBackfillResponseSchema,
+      inventoryService.backfillPartTypeArt(),
+      "part type art backfill response",
+    ),
+  );
 
   app.post("/api/corrections/reassign-part-type", adminMutation, async (request) => {
     const command = parseWithSchema(

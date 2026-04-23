@@ -24,6 +24,7 @@ import {
   partDbSyncBackfillResponseSchema,
   partDbSyncFailureSchema,
   partDbSyncStatusResponseSchema,
+  partTypeArtBackfillResponseSchema,
   partTypeSchema,
   qrCodeSchema,
   reassignEntityPartTypeRequestSchema,
@@ -56,6 +57,7 @@ import {
   type PartDbSyncBackfillResponse,
   type PartDbSyncFailure,
   type PartDbSyncStatusResponse,
+  type PartTypeArtBackfillResponse,
   type PartType,
   type ReassignEntityPartTypeRequest,
   type ReassignEntityPartTypeResponse,
@@ -219,6 +221,13 @@ export const api = {
   },
   backfillPartDbSync(): Promise<PartDbSyncBackfillResponse> {
     return request(partDbSyncBackfillResponseSchema, "/api/partdb/sync/backfill", {
+      method: "POST",
+      body: JSON.stringify({}),
+      headers: idempotencyHeaders(),
+    });
+  },
+  backfillPartTypeArt(): Promise<PartTypeArtBackfillResponse> {
+    return request(partTypeArtBackfillResponseSchema, "/api/part-types/art/backfill", {
       method: "POST",
       body: JSON.stringify({}),
       headers: idempotencyHeaders(),

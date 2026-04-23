@@ -1,6 +1,6 @@
 import { config } from "../config.js";
 import { createDatabase } from "../db/database.js";
-import { buildPartTypeArtUrl } from "./part-type-art.js";
+import { resolveExistingPartTypeArtUrl } from "./part-type-art.js";
 
 interface PartTypeRow {
   readonly id: string;
@@ -30,12 +30,17 @@ async function main(): Promise<void> {
 
   let updated = 0;
   let unchanged = 0;
+  let missingAssets = 0;
   const now = new Date().toISOString();
   const statement = db.prepare(`UPDATE part_types SET image_url = ?, updated_at = ? WHERE id = ?`);
 
   for (const row of rows) {
     const categoryPath = resolveCategoryPath(row);
-    const imageUrl = buildPartTypeArtUrl(categoryPath, row.canonical_name);
+    const imageUrl = resolveExistingPartTypeArtUrl(categoryPath, row.canonical_name);
+    if (!imageUrl) {
+      missingAssets += 1;
+      continue;
+    }
     if (row.image_url === imageUrl) {
       unchanged += 1;
       continue;
@@ -46,7 +51,7 @@ async function main(): Promise<void> {
   }
 
   db.close?.();
-  console.log(`Backfill complete. Updated ${updated}, unchanged ${unchanged}.`);
+  console.log(`Backfill complete. Updated ${updated}, unchanged ${unchanged}, missing assets ${missingAssets}.`);
 }
 
 void main().catch((error) => {

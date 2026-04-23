@@ -459,6 +459,18 @@ describe("buildServer", () => {
       skipped: 0,
     });
 
+    const artBackfill = await app.inject({
+      method: "POST",
+      url: "/api/part-types/art/backfill",
+      headers: sessionHeaders,
+    });
+    expect(artBackfill.statusCode).toBe(200);
+    expect(artBackfill.json()).toEqual({
+      updated: 0,
+      unchanged: 0,
+      missingAssets: 0,
+    });
+
     await app.close();
   });
 
@@ -520,6 +532,7 @@ describe("buildServer", () => {
       getPartDbStatus: vi.fn(async () => partDbStatus),
       voidQrCode: vi.fn(() => voidedQr),
       approvePartType: vi.fn(() => ({ ...partType, needsReview: false })),
+      backfillPartTypeArt: vi.fn(() => ({ updated: 1, unchanged: 2, missingAssets: 3 })),
     };
 
     const app = await buildServer({
@@ -682,6 +695,13 @@ describe("buildServer", () => {
     ).resolves.toMatchObject({ statusCode: 200 });
     await expect(
       app.inject({
+        method: "POST",
+        url: "/api/part-types/art/backfill",
+        headers: sessionHeaders,
+      }),
+    ).resolves.toMatchObject({ statusCode: 200 });
+    await expect(
+      app.inject({
         method: "GET",
         url: "/api/corrections/history?targetType=instance&targetId=instance-1",
         headers: sessionHeaders,
@@ -761,6 +781,7 @@ describe("buildServer", () => {
     expect(service.searchPartTypes).toHaveBeenCalledWith("arduino");
     expect(service.voidQrCode).toHaveBeenCalledWith("QR-1001", "labeler");
     expect(service.approvePartType).toHaveBeenCalledWith("part-1");
+    expect(service.backfillPartTypeArt).toHaveBeenCalled();
     expect(service.getCorrectionHistory).toHaveBeenCalledWith("instance", "instance-1");
     expect(service.bulkAssignQrs).toHaveBeenCalled();
     expect(service.bulkMoveEntities).toHaveBeenCalled();

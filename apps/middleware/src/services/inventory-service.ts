@@ -62,6 +62,7 @@ import {
 import { PartDbClient } from "../partdb/partdb-client.js";
 import type { PartDbOutbox } from "../outbox/partdb-outbox.js";
 import type { OutboxTarget } from "../outbox/outbox-types.js";
+import { resolveExistingPartTypeArtUrl } from "../scripts/part-type-art.js";
 
 type SqlRow = Record<string, unknown>;
 type LotOutboxTarget = {
@@ -94,6 +95,12 @@ interface PartDbBackfillResult {
   queuedPartTypes: number;
   queuedLots: number;
   skipped: number;
+}
+
+interface PartTypeArtBackfillResult {
+  updated: number;
+  unchanged: number;
+  missingAssets: number;
 }
 
 interface ResetInventoryStateResult {
@@ -2110,6 +2117,48 @@ export class InventoryService {
       queuedPartTypes,
       queuedLots,
       skipped,
+    };
+  }
+
+  backfillPartTypeArt(): PartTypeArtBackfillResult {
+    let updated = 0;
+    let unchanged = 0;
+    let missingAssets = 0;
+    const now = nowIso();
+
+    this.withTransaction(() => {
+      const rows = this.db.prepare(
+        `SELECT id, canonical_name, category, category_path_json, image_url FROM part_types ORDER BY canonical_name`,
+      ).all() as Array<{
+        id: string;
+        canonical_name: string;
+        category: string;
+        category_path_json: string;
+        image_url: string | null;
+      }>;
+
+      const statement = this.db.prepare(`UPDATE part_types SET image_url = ?, updated_at = ? WHERE id = ?`);
+
+      for (const row of rows) {
+        const categoryPath = parseCategoryPath(row.category_path_json, row.category).join("/");
+        const imageUrl = resolveExistingPartTypeArtUrl(categoryPath, row.canonical_name);
+        if (!imageUrl) {
+          missingAssets += 1;
+          continue;
+        }
+        if (stringOrNull(row.image_url) === imageUrl) {
+          unchanged += 1;
+          continue;
+        }
+        statement.run(imageUrl, now, row.id);
+        updated += 1;
+      }
+    });
+
+    return {
+      updated,
+      unchanged,
+      missingAssets,
     };
   }
 

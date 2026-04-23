@@ -1,3 +1,6 @@
+import { existsSync } from "node:fs";
+import { resolve } from "node:path";
+import { fileURLToPath } from "node:url";
 import type { FilamentSeedItem, ResinSeedItem, RobuSeedItem } from "./seed-data.js";
 
 type SeedLike = Pick<RobuSeedItem | FilamentSeedItem | ResinSeedItem, "name" | "category">;
@@ -48,6 +51,18 @@ export function buildPartTypeArtStem(category: string, canonicalName: string): s
 
 export function buildPartTypeArtUrl(category: string, canonicalName: string): string {
   return `/art/part-types/${buildPartTypeArtStem(category, canonicalName)}.webp`;
+}
+
+const partTypeArtRoot = fileURLToPath(new URL("../../../frontend/public/art/part-types/", import.meta.url));
+
+export function buildPartTypeArtFilePath(category: string, canonicalName: string): string {
+  return resolve(partTypeArtRoot, `${buildPartTypeArtStem(category, canonicalName)}.webp`);
+}
+
+export function resolveExistingPartTypeArtUrl(category: string, canonicalName: string): string | null {
+  return existsSync(buildPartTypeArtFilePath(category, canonicalName))
+    ? buildPartTypeArtUrl(category, canonicalName)
+    : null;
 }
 
 export function describePartTypeArtPrompt(item: SeedLike): {
