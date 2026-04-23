@@ -154,6 +154,7 @@ export const inventorySummaryRowSchema = z.object({
   id: z.string(),
   canonicalName: z.string(),
   categoryPath: z.array(z.string()),
+  imageUrl: z.string().nullable().default(null),
   unit: z.object({
     symbol: z.string(),
     name: z.string(),
