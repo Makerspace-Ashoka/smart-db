@@ -3579,6 +3579,22 @@ export class RewriteAppController {
     }
 
     this.restoreFocus(focusSnapshot);
+    this.autofocusScanInput(focusSnapshot);
+  }
+
+  private autofocusScanInput(previousFocus: FocusSnapshot | null): void {
+    if (previousFocus) {
+      return;
+    }
+    if (this.state.activeTab !== "scan") {
+      return;
+    }
+    const input = this.root.querySelector<HTMLInputElement>("#scan-code-input");
+    if (!input || document.activeElement === input) {
+      return;
+    }
+    input.focus();
+    input.select();
   }
 
   private captureFocus(): FocusSnapshot | null {

@@ -66,7 +66,10 @@ export function renderApp(state: RewriteUiState): string {
     <div class="shell app-shell">
       <header class="app-masthead">
         <div class="app-masthead-row">
-          <strong class="header-brand">SMART DB</strong>
+          <div class="app-masthead-brand">
+            <strong class="header-brand">SMART DB</strong>
+            <span class="header-eyebrow">Makerspace · Inventory</span>
+          </div>
           <div class="app-masthead-menu">
             <button
               type="button"
@@ -78,17 +81,18 @@ export function renderApp(state: RewriteUiState): string {
             >${state.theme === "dark" ? "☼" : "☾"}</button>
             <button
               type="button"
-              class="icon-btn"
+              class="logout-btn"
               data-action="logout"
               ${disabled(state.pendingAction === "logout")}
               aria-label="Log out"
               title="Log out"
             >
-              <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
-                <line x1="4" y1="6" x2="20" y2="6"/>
-                <line x1="4" y1="12" x2="20" y2="12"/>
-                <line x1="4" y1="18" x2="20" y2="18"/>
+              <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+                <path d="M15 17l5-5-5-5"/>
+                <line x1="20" y1="12" x2="9" y2="12"/>
+                <path d="M9 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h4"/>
               </svg>
+              <span>Log out</span>
             </button>
           </div>
         </div>
@@ -192,6 +196,36 @@ function renderIconSlot(iconId: string, label: string): string {
         ${renderIconPaths(iconId)}
       </svg>
     </span>
+  `;
+}
+
+type PartVisualData = Pick<PartType, "canonicalName" | "categoryPath" | "imageUrl">;
+
+function renderPartTileArt(part: PartVisualData, variant: "picker" | "inventory"): string {
+  if (!part.imageUrl) {
+    return renderIconSlot(iconIdForPart(part.canonicalName, part.categoryPath), part.canonicalName);
+  }
+
+  return `
+    <span class="part-art part-art-${variant}" aria-hidden="true">
+      <img src="${attr(part.imageUrl)}" alt="" loading="lazy" decoding="async" />
+    </span>
+  `;
+}
+
+function renderPartHero(part: PartVisualData, variant: "detail" | "scan"): string {
+  if (part.imageUrl) {
+    return `
+      <div class="part-hero part-hero-${variant}" aria-hidden="true">
+        <img src="${attr(part.imageUrl)}" alt="" decoding="async" />
+      </div>
+    `;
+  }
+
+  return `
+    <div class="part-hero part-hero-${variant} is-fallback" aria-hidden="true">
+      ${renderIconSlot(iconIdForPart(part.canonicalName, part.categoryPath), part.canonicalName)}
+    </div>
   `;
 }
 
@@ -379,28 +413,6 @@ function renderScanTab(state: RewriteUiState): string {
         <span class="scan-viewfinder-corner tr" aria-hidden="true"></span>
         <span class="scan-viewfinder-corner bl" aria-hidden="true"></span>
         <span class="scan-viewfinder-corner br" aria-hidden="true"></span>
-        <svg class="scan-viewfinder-glyph" viewBox="0 0 48 48" aria-hidden="true">
-          <rect x="3" y="3" width="14" height="14" rx="1.5" fill="none" stroke="currentColor" stroke-width="1.6"/>
-          <rect x="7" y="7" width="6" height="6" fill="currentColor"/>
-          <rect x="31" y="3" width="14" height="14" rx="1.5" fill="none" stroke="currentColor" stroke-width="1.6"/>
-          <rect x="35" y="7" width="6" height="6" fill="currentColor"/>
-          <rect x="3" y="31" width="14" height="14" rx="1.5" fill="none" stroke="currentColor" stroke-width="1.6"/>
-          <rect x="7" y="35" width="6" height="6" fill="currentColor"/>
-          <rect x="21" y="3" width="3" height="3" fill="currentColor"/>
-          <rect x="27" y="3" width="3" height="3" fill="currentColor"/>
-          <rect x="21" y="9" width="3" height="3" fill="currentColor"/>
-          <rect x="27" y="21" width="3" height="3" fill="currentColor"/>
-          <rect x="21" y="21" width="3" height="3" fill="currentColor"/>
-          <rect x="33" y="21" width="3" height="3" fill="currentColor"/>
-          <rect x="39" y="27" width="3" height="3" fill="currentColor"/>
-          <rect x="21" y="27" width="3" height="3" fill="currentColor"/>
-          <rect x="27" y="33" width="3" height="3" fill="currentColor"/>
-          <rect x="33" y="33" width="3" height="3" fill="currentColor"/>
-          <rect x="39" y="33" width="3" height="3" fill="currentColor"/>
-          <rect x="21" y="39" width="3" height="3" fill="currentColor"/>
-          <rect x="27" y="39" width="3" height="3" fill="currentColor"/>
-          <rect x="39" y="39" width="3" height="3" fill="currentColor"/>
-        </svg>
         <p class="scan-viewfinder-label">Aim at QR code to scan</p>
       ` : ""}
     </div>
@@ -417,9 +429,8 @@ function renderScanTab(state: RewriteUiState): string {
       />
       <button type="submit" class="scan-input-submit" aria-label="Submit code" ${disabled(state.pendingAction !== null)}>
         <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
-          <rect x="4" y="6" width="16" height="12" rx="2"/>
-          <path d="M8 6V5a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v1"/>
-          <circle cx="12" cy="12" r="2.5"/>
+          <polyline points="9 10 4 15 9 20"/>
+          <path d="M20 4v7a4 4 0 0 1-4 4H4"/>
         </svg>
       </button>
     </form>
@@ -604,7 +615,7 @@ function renderBulkQueueCard(
 function renderEntityKindSwitch(state: RewriteUiState, locked: boolean): string {
   const isBulk = state.assignForm.entityKind === "bulk";
   return `
-    <div class="entity-switch ${locked ? "locked" : ""}" role="radiogroup" aria-label="Inventory entry type">
+    <div class="entity-switch ${locked ? "locked" : ""}" role="radiogroup" aria-label="Inventory entry type" title="Countable items are tracked one piece at a time (e.g. an Arduino). Measured items are tracked by quantity (e.g. grams of PLA).">
       <button
         type="button"
         role="radio"
@@ -613,7 +624,7 @@ function renderEntityKindSwitch(state: RewriteUiState, locked: boolean): string 
         data-action="set-entity-kind"
         data-entity-kind="instance"
         ${locked ? "disabled" : ""}
-      >Add Item</button>
+      >Countable</button>
       <button
         type="button"
         role="radio"
@@ -621,7 +632,7 @@ function renderEntityKindSwitch(state: RewriteUiState, locked: boolean): string 
         class="entity-switch-option ${isBulk ? "active" : ""}"
         data-action="set-entity-kind"
         data-entity-kind="bulk"
-      >Bulk Item</button>
+      >Measured</button>
     </div>
   `;
 }
@@ -654,12 +665,12 @@ function renderBulkLabelForm(
             <button
               type="button"
               role="radio"
-              aria-checked="${String(form.existingPartTypeId === partType.id)}"
-              class="${form.existingPartTypeId === partType.id ? "selected" : ""}"
-              data-action="select-bulk-label-part"
-              data-part-id="${attr(partType.id)}"
-            >
-              ${renderIconSlot(iconIdForPart(partType.canonicalName, partType.categoryPath), partType.canonicalName)}
+            aria-checked="${String(form.existingPartTypeId === partType.id)}"
+            class="${form.existingPartTypeId === partType.id ? "selected" : ""}"
+            data-action="select-bulk-label-part"
+            data-part-id="${attr(partType.id)}"
+          >
+              ${renderPartTileArt(partType, "picker")}
               <span class="picker-copy">
                 <strong>${escapeHtml(partType.canonicalName)}</strong>
                 <span>${escapeHtml(formatCategoryPath(partType.categoryPath))}</span>
@@ -825,7 +836,7 @@ function renderLabelCard(
       <form class="form-grid" data-form="assign">
         ${renderPartTypeField(state, labelOptions, assignIssues)}
         ${renderSharedAssignFields(state, assignIssues)}
-        <button type="submit" ${disabled(state.pendingAction !== null || Object.keys(assignIssues).length > 0)}>
+        <button type="submit" class="primary-cta" ${disabled(state.pendingAction !== null || Object.keys(assignIssues).length > 0)}>
           ${state.pendingAction === "assign" ? "Assigning..." : "Assign item"}
         </button>
       </form>
@@ -902,17 +913,19 @@ function renderPartTypeField(
   const trimmedQuery = state.labelSearch.query.trim();
 
   return `
-    <label class="wide">
-      Part type
-      <input
-        name="labelSearch.query"
-        value="${attr(state.labelSearch.query)}"
-        placeholder="Search by name, alias, or category…"
-        autocomplete="off"
-      />
-    </label>
-    ${state.labelSearch.error ? `<p class="banner error wide">${escapeHtml(state.labelSearch.error)}</p>` : ""}
-    ${!isCreating && assignIssues.existingPartTypeId ? `<p class="field-error wide">${escapeHtml(assignIssues.existingPartTypeId)}</p>` : ""}
+    ${!isCreating ? `
+      <label class="wide">
+        Part type
+        <input
+          name="labelSearch.query"
+          value="${attr(state.labelSearch.query)}"
+          placeholder="Search by name, alias, or category…"
+          autocomplete="off"
+        />
+      </label>
+      ${state.labelSearch.error ? `<p class="banner error wide">${escapeHtml(state.labelSearch.error)}</p>` : ""}
+      ${assignIssues.existingPartTypeId ? `<p class="field-error wide">${escapeHtml(assignIssues.existingPartTypeId)}</p>` : ""}
+    ` : ""}
 
     ${!isCreating ? `
       <div class="wide picker" role="radiogroup" aria-label="Existing part types">
@@ -925,7 +938,7 @@ function renderPartTypeField(
             data-action="select-existing-part"
             data-part-id="${attr(partType.id)}"
           >
-            ${renderIconSlot(iconIdForPart(partType.canonicalName, partType.categoryPath), partType.canonicalName)}
+            ${renderPartTileArt(partType, "picker")}
             <span class="picker-copy">
               <strong>${escapeHtml(partType.canonicalName)}</strong>
               <span>${escapeHtml(formatCategoryPath(partType.categoryPath))}</span>
@@ -1086,6 +1099,7 @@ function renderInteractCard(
         <h3>${isBulkEntity ? "Bulk Bin" : "Item"}</h3>
         <span class="status-pill ${statusPillClass}">${escapeHtml(entity.state.replace(/_/g, " ").toUpperCase())}</span>
       </header>
+      ${renderPartHero(entity.partType, "scan")}
       <p class="result-title">${escapeHtml(entity.partType.canonicalName)}</p>
       <p class="result-code">${escapeHtml(entity.qrCode)}</p>
       <p class="meta-line">
@@ -1467,8 +1481,11 @@ function renderScanEditReassignForm(
       <div class="wide picker" role="radiogroup" aria-label="Replacement part type">
         ${compatibleReplacementTypes.map((partType) => `
           <button type="button" role="radio" aria-checked="${String(form.replacementPartTypeId === partType.id)}" class="${form.replacementPartTypeId === partType.id ? "selected" : ""}" data-action="select-scan-edit-part" data-part-id="${attr(partType.id)}">
-            <strong>${escapeHtml(partType.canonicalName)}</strong>
-            <span>${escapeHtml(formatCategoryPath(partType.categoryPath))}</span>
+            ${renderPartTileArt(partType, "picker")}
+            <span class="picker-copy">
+              <strong>${escapeHtml(partType.canonicalName)}</strong>
+              <span>${escapeHtml(formatCategoryPath(partType.categoryPath))}</span>
+            </span>
           </button>
         `).join("")}
       </div>
@@ -1641,7 +1658,7 @@ function renderInventoryTab(state: RewriteUiState): string {
                 <li class="inventory-row-wrap ${isStocked ? "stocked" : "empty"}">
                   <button type="button" class="inventory-row" data-action="open-part-detail" data-part-type-id="${attr(row.id)}" aria-label="Open ${attr(row.canonicalName)} details">
                     <div class="inventory-row-name">
-                      ${renderIconSlot(iconIdForPart(row.canonicalName, row.categoryPath), row.canonicalName)}
+                      ${renderPartTileArt(row, "inventory")}
                       <span class="inventory-row-copy">
                         <strong>${escapeHtml(row.canonicalName)}</strong>
                         ${subPath ? `<span>${escapeHtml(subPath)}</span>` : ""}
@@ -1707,6 +1724,7 @@ function renderPartTypeDetail(state: RewriteUiState, partTypeId: string): string
         </button>
 
         <header class="part-detail-header">
+          ${renderPartHero(row, "detail")}
           <p class="eyebrow">${escapeHtml(categoryTop)}${subPath ? ` / ${escapeHtml(subPath)}` : ""}</p>
           <h2 class="part-detail-name">${escapeHtml(row.canonicalName)}</h2>
           <dl class="part-detail-stats">
