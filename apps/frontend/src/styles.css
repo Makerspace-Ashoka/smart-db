@@ -4228,15 +4228,47 @@ html.dark .location-group {
 .scan-viewfinder {
   min-height: 210px;
   border: 1px solid rgba(13, 20, 35, 0.2);
+  transform-origin: 50% 58%;
+  will-change: transform, filter;
   background:
     linear-gradient(180deg, rgba(13,20,35,0.18), rgba(13,20,35,0.08)),
     var(--scan-plate-url) center / cover no-repeat;
-  box-shadow: var(--paper-shadow);
+  box-shadow:
+    0 18px 42px rgba(13, 20, 35, 0.13),
+    0 4px 12px rgba(13, 20, 35, 0.08),
+    inset 0 1px 0 rgba(255, 255, 255, 0.28);
+  transition:
+    border-color 180ms var(--ease-out),
+    box-shadow 220ms var(--ease-out),
+    filter 220ms var(--ease-out);
 }
 
 .scan-viewfinder.is-live {
   border-color: #000;
   background: #000;
+  box-shadow:
+    0 20px 48px rgba(13, 20, 35, 0.22),
+    0 0 0 1px rgba(255, 255, 255, 0.08) inset;
+}
+
+.scan-viewfinder::before {
+  content: "";
+  position: absolute;
+  inset: 0.7rem;
+  z-index: 2;
+  pointer-events: none;
+  border-radius: 10px;
+  background:
+    linear-gradient(90deg, transparent 0 8%, rgba(196,114,20,0.58) 8% 8.35%, transparent 8.35% 92%, rgba(196,114,20,0.48) 92% 92.35%, transparent 92.35%),
+    linear-gradient(180deg, transparent 0 13%, rgba(255,250,240,0.2) 13% 13.35%, transparent 13.35% 86%, rgba(255,250,240,0.18) 86% 86.35%, transparent 86.35%),
+    radial-gradient(circle at 18% 22%, rgba(255,250,240,0.72) 0 1.5px, transparent 2px),
+    radial-gradient(circle at 82% 76%, rgba(196,114,20,0.74) 0 1.5px, transparent 2px);
+  opacity: 0.55;
+  mix-blend-mode: screen;
+}
+
+.scan-viewfinder.is-live::before {
+  opacity: 0;
 }
 
 .scan-viewfinder::after {
@@ -4257,6 +4289,24 @@ html.dark .scan-viewfinder {
   background:
     linear-gradient(180deg, rgba(4,10,18,0.12), rgba(4,10,18,0.18)),
     var(--scan-plate-url) center / cover no-repeat;
+  box-shadow:
+    0 18px 44px rgba(0, 0, 0, 0.34),
+    0 0 0 1px rgba(145, 175, 234, 0.08) inset;
+}
+
+.scan-viewfinder:focus-within {
+  border-color: color-mix(in srgb, var(--orange) 72%, var(--blue) 28%);
+  box-shadow:
+    0 20px 46px rgba(13, 20, 35, 0.16),
+    0 0 0 2px color-mix(in srgb, var(--orange) 32%, transparent),
+    inset 0 1px 0 rgba(255, 255, 255, 0.3);
+}
+
+html.dark .scan-viewfinder:focus-within {
+  box-shadow:
+    0 20px 46px rgba(0, 0, 0, 0.38),
+    0 0 0 2px color-mix(in srgb, var(--orange) 38%, transparent),
+    inset 0 1px 0 rgba(145, 175, 234, 0.1);
 }
 
 .scan-viewfinder .qr-scanner,
@@ -4271,6 +4321,11 @@ html.dark .scan-viewfinder {
   height: 30px;
   border-color: rgba(255, 250, 240, 0.9);
   filter: drop-shadow(0 1px 1px rgba(0,0,0,0.24));
+  transition:
+    width 180ms var(--ease-out),
+    height 180ms var(--ease-out),
+    border-color 180ms var(--ease-out),
+    filter 180ms var(--ease-out);
 }
 
 .scan-viewfinder-corner.tl { top: 20%; left: 17%; }
@@ -4287,6 +4342,7 @@ html.dark .scan-viewfinder {
   transform-origin: center;
   background: linear-gradient(90deg, transparent, rgba(196,114,20,0.7), rgba(255,250,240,0.72), transparent);
   opacity: 0.52;
+  filter: drop-shadow(0 0 4px rgba(196,114,20,0.22));
 }
 
 .scan-trace-line.trace-a { top: 18%; }
@@ -4299,6 +4355,8 @@ html.dark .scan-viewfinder {
   font-size: 0.76rem;
   letter-spacing: 0.08em;
   text-transform: uppercase;
+  padding: 0 0.8rem;
+  text-wrap: balance;
 }
 
 .scan-input-row input,
@@ -4843,9 +4901,14 @@ html.dark .tab-bar {
 }
 
 @media (prefers-reduced-motion: reduce) {
+  .scan-viewfinder,
   .scan-trace-line,
   .scan-viewfinder-corner,
   .stock-card-glyph {
     transition: none !important;
+  }
+
+  .scan-viewfinder {
+    will-change: auto;
   }
 }

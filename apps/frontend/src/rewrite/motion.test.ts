@@ -26,11 +26,13 @@ import {
 
 const anime = vi.hoisted(() => ({
   animate: vi.fn(),
+  spring: vi.fn(() => "outBack(1.25)"),
   stagger: vi.fn(() => 0),
 }));
 
 vi.mock("animejs", () => ({
   animate: anime.animate,
+  spring: anime.spring,
   stagger: anime.stagger,
 }));
 
@@ -196,6 +198,7 @@ function assignedRow(count: number): BulkAssignedQueueRow {
 describe("motion", () => {
   beforeEach(() => {
     anime.animate.mockReset();
+    anime.spring.mockClear();
     anime.stagger.mockClear();
     setReducedMotion(false);
     document.body.innerHTML = "";
@@ -203,6 +206,7 @@ describe("motion", () => {
 
   it("builds stable motion keys for scan states", () => {
     expect(buildMotionSnapshot(makeState()).scanKey).toBe("oneByOne:idle");
+    expect(buildMotionSnapshot(makeState()).scannerKey).toBe("oneByOne:unknown:idle:oneByOne:idle");
     expect(buildMotionSnapshot(makeState({ scanResult: { mode: "unknown", code: "NOPE", partDb } })).scanKey).toBe("unknown:NOPE");
     expect(buildMotionSnapshot(makeState({ scanResult: labelScan() })).scanKey).toBe("label:QRX7-9A2B");
     expect(buildMotionSnapshot(makeState({ scanResult: interactScan("instance") })).scanKey).toBe("interact:instance:inst-1:available");
@@ -216,6 +220,14 @@ describe("motion", () => {
         summary: { uniqueLabelCount: 1, totalScanCount: 2, duplicateScanCount: 1 },
       },
     })).scanKey).toBe("bulk:move:1");
+    expect(buildMotionSnapshot(makeState({
+      camera: {
+        ...defaultCameraState,
+        phase: "scanning",
+        permissionState: "granted",
+        activeStream: true,
+      },
+    })).scannerKey).toBe("oneByOne:live:scanning:oneByOne:idle");
   });
 
   it("does not animate when reduced motion is requested", () => {
@@ -235,6 +247,10 @@ describe("motion", () => {
     root.innerHTML = `
       <div class="app-shell"></div>
       <section data-motion-surface="scan"></section>
+      <div class="scan-viewfinder"></div>
+      <form class="scan-input-row"></form>
+      <button class="scan-queue-btn"></button>
+      <div class="scan-mode-row"></div>
       <span class="scan-viewfinder-corner"></span>
       <span class="scan-trace-line"></span>
       <span class="queue-count"></span>
@@ -266,6 +282,7 @@ describe("motion", () => {
     expect(snapshot.scanKey).toBe("unknown:NOPE");
     expect(root.dataset.motionReduced).toBeUndefined();
     expect(anime.animate.mock.calls.length).toBeGreaterThanOrEqual(6);
+    expect(anime.spring).toHaveBeenCalled();
     expect(anime.stagger).toHaveBeenCalled();
   });
 

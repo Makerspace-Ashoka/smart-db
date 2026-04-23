@@ -1,10 +1,11 @@
-import { animate, stagger } from "animejs";
+import { animate, spring, stagger } from "animejs";
 import type { RewriteUiState } from "./ui-state";
 
 export interface MotionSnapshot {
   readonly activeTab: RewriteUiState["activeTab"];
   readonly theme: RewriteUiState["theme"];
   readonly scanKey: string;
+  readonly scannerKey: string;
   readonly bulkQueueCount: number;
   readonly bulkAction: string;
   readonly pendingAction: RewriteUiState["pendingAction"];
@@ -29,11 +30,22 @@ function scanKeyFor(state: RewriteUiState): string {
   return `interact:${result.entity.targetType}:${result.entity.id}:${result.entity.state}`;
 }
 
+function scannerKeyFor(state: RewriteUiState, scanKey: string): string {
+  const cameraState = state.camera.activeStream
+    ? "live"
+    : state.camera.lastResult
+      ? "detected"
+      : state.camera.permissionState;
+  return `${state.scanMode.kind}:${cameraState}:${state.camera.phase}:${scanKey}`;
+}
+
 export function buildMotionSnapshot(state: RewriteUiState): MotionSnapshot {
+  const scanKey = scanKeyFor(state);
   return {
     activeTab: state.activeTab,
     theme: state.theme,
-    scanKey: scanKeyFor(state),
+    scanKey,
+    scannerKey: scannerKeyFor(state, scanKey),
     bulkQueueCount: state.bulkQueue.summary.totalScanCount,
     bulkAction: state.bulkQueue.action,
     pendingAction: state.pendingAction,
@@ -84,6 +96,33 @@ function animateScanTrace(root: HTMLElement): void {
   });
 }
 
+function animateScannerCard(root: HTMLElement, previous: MotionSnapshot | null, current: MotionSnapshot): void {
+  const scanner = root.querySelector(".scan-viewfinder");
+  if (!scanner) return;
+  const isFirstRender = previous === null;
+  const scanChanged = previous?.scanKey !== current.scanKey;
+  const scannerChanged = previous?.scannerKey !== current.scannerKey;
+  const isLive = current.scannerKey.includes(":live:");
+
+  animateSafe(scanner, {
+    opacity: [isFirstRender ? 0.82 : 0.96, 1],
+    scale: isLive ? [0.975, 1.025, 1] : [0.965, 1.016, 1],
+    translateY: isLive ? [6, -2, 0] : [10, -2, 0],
+    rotate: scanChanged ? ["-0.25deg", "0.12deg", "0deg"] : ["0deg", "0.08deg", "0deg"],
+    filter: isLive ? ["saturate(0.92) brightness(0.92)", "saturate(1.06) brightness(1.02)", "saturate(1) brightness(1)"] : ["saturate(0.9)", "saturate(1.06)", "saturate(1)"],
+    duration: isLive || scannerChanged ? 620 : 460,
+    ease: spring({ stiffness: 185, damping: 15, mass: 0.8 }),
+  });
+
+  animateSafe(root.querySelectorAll(".scan-input-row, .scan-queue-btn, .scan-mode-row"), {
+    opacity: [0.84, 1],
+    translateY: [isLive ? 4 : 6, 0],
+    duration: 320,
+    delay: stagger(34),
+    ease: "outCubic",
+  });
+}
+
 function animateQueuePulse(root: HTMLElement): void {
   animateSafe(root.querySelectorAll(".queue-row-stepper .stepper-value, .queue-count"), {
     scale: [1, 1.08, 1],
@@ -129,6 +168,9 @@ export function runPostRenderMotion(
   const firstRender = previous === null;
   if (firstRender || previous.activeTab !== current.activeTab || previous.scanKey !== current.scanKey) {
     animateSurface(root);
+  }
+  if (firstRender || previous.activeTab !== current.activeTab || previous.scannerKey !== current.scannerKey) {
+    animateScannerCard(root, previous, current);
   }
   if (firstRender || previous.scanKey !== current.scanKey) {
     animateScanTrace(root);
