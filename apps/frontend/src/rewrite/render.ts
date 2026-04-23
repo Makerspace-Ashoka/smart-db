@@ -18,7 +18,7 @@ import {
 } from "./presentation-helpers";
 import { attr, checked, disabled, escapeHtml, joinHtml, selected } from "./html";
 import type { RewriteUiState, TabId, ToastRecord } from "./ui-state";
-import { findSharedTypeConflictCandidates, getPartDbHealthPill, getPartDbSyncPill } from "./view-helpers";
+import { findSharedTypeConflictCandidates } from "./view-helpers";
 import { buildTreePickerView } from "./tree-picker";
 
 export function renderApp(state: RewriteUiState): string {
@@ -61,8 +61,6 @@ export function renderApp(state: RewriteUiState): string {
   }
 
   const isAdmin = hasSmartDbRole(state.authState.session.roles, smartDbRoles.admin);
-  const partDbHealth = getPartDbHealthPill(state.partDbStatus);
-  const partDbSync = isAdmin ? getPartDbSyncPill(state.partDbSyncStatus) : null;
 
   return `
     <div class="shell app-shell">
@@ -93,10 +91,6 @@ export function renderApp(state: RewriteUiState): string {
               </svg>
             </button>
           </div>
-        </div>
-        <div class="app-masthead-status">
-          <span class="masthead-sync">Last sync · ${state.dashboard ? "live" : "—"}</span>
-          ${partDbHealth ? `<span class="pill ${partDbHealth.tone}">${escapeHtml(partDbHealth.label)}</span>` : ""}
         </div>
       </header>
 
@@ -311,13 +305,10 @@ function renderScanTab(state: RewriteUiState): string {
     qrCode: "__bulk__",
   });
   const eventIssues = getEventFormIssues(state.eventForm);
-  const isOneByOne = state.scanMode.kind === "oneByOne";
   const cameraBlockedReason =
     state.pendingAction !== null
       ? "Finish the current action before scanning another item."
-      : isOneByOne && state.scanResult
-        ? "Finish or clear the current scan form before scanning another item."
-        : null;
+      : null;
   const labelOptions =
     state.labelSearch.query.trim() || state.labelSearch.results.length > 0
       ? state.labelSearch.results
@@ -378,96 +369,133 @@ function renderScanTab(state: RewriteUiState): string {
   const queueCount = state.bulkQueue.rows.length;
   const hasCamera = state.camera.supported;
   const cameraLive = Boolean(state.camera.activeStream);
+  const hasResult = state.scanMode.kind === "oneByOne" && Boolean(state.scanResult);
+
+  const scannerBlock = `
+    <div class="scan-viewfinder ${cameraLive ? "is-live" : ""}">
+      ${hasCamera ? renderScanner(state, state.cameraLookupCode !== null, cameraBlockedReason) : ""}
+      ${!cameraLive ? `
+        <span class="scan-viewfinder-corner tl" aria-hidden="true"></span>
+        <span class="scan-viewfinder-corner tr" aria-hidden="true"></span>
+        <span class="scan-viewfinder-corner bl" aria-hidden="true"></span>
+        <span class="scan-viewfinder-corner br" aria-hidden="true"></span>
+        <svg class="scan-viewfinder-glyph" viewBox="0 0 48 48" aria-hidden="true">
+          <rect x="3" y="3" width="14" height="14" rx="1.5" fill="none" stroke="currentColor" stroke-width="1.6"/>
+          <rect x="7" y="7" width="6" height="6" fill="currentColor"/>
+          <rect x="31" y="3" width="14" height="14" rx="1.5" fill="none" stroke="currentColor" stroke-width="1.6"/>
+          <rect x="35" y="7" width="6" height="6" fill="currentColor"/>
+          <rect x="3" y="31" width="14" height="14" rx="1.5" fill="none" stroke="currentColor" stroke-width="1.6"/>
+          <rect x="7" y="35" width="6" height="6" fill="currentColor"/>
+          <rect x="21" y="3" width="3" height="3" fill="currentColor"/>
+          <rect x="27" y="3" width="3" height="3" fill="currentColor"/>
+          <rect x="21" y="9" width="3" height="3" fill="currentColor"/>
+          <rect x="27" y="21" width="3" height="3" fill="currentColor"/>
+          <rect x="21" y="21" width="3" height="3" fill="currentColor"/>
+          <rect x="33" y="21" width="3" height="3" fill="currentColor"/>
+          <rect x="39" y="27" width="3" height="3" fill="currentColor"/>
+          <rect x="21" y="27" width="3" height="3" fill="currentColor"/>
+          <rect x="27" y="33" width="3" height="3" fill="currentColor"/>
+          <rect x="33" y="33" width="3" height="3" fill="currentColor"/>
+          <rect x="39" y="33" width="3" height="3" fill="currentColor"/>
+          <rect x="21" y="39" width="3" height="3" fill="currentColor"/>
+          <rect x="27" y="39" width="3" height="3" fill="currentColor"/>
+          <rect x="39" y="39" width="3" height="3" fill="currentColor"/>
+        </svg>
+        <p class="scan-viewfinder-label">Aim at QR code to scan</p>
+      ` : ""}
+    </div>
+
+    <form class="scan-input-row" data-form="scan">
+      <label class="sr-only" for="scan-code-input">Scan or type a QR / barcode</label>
+      <input
+        id="scan-code-input"
+        name="scanCode"
+        aria-label="Scan or type a QR / barcode"
+        placeholder="Scan or type a QR / barcode"
+        value="${attr(state.scanCode)}"
+        autocomplete="off"
+      />
+      <button type="submit" class="scan-input-submit" aria-label="Submit code" ${disabled(state.pendingAction !== null)}>
+        <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+          <rect x="4" y="6" width="16" height="12" rx="2"/>
+          <path d="M8 6V5a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v1"/>
+          <circle cx="12" cy="12" r="2.5"/>
+        </svg>
+      </button>
+    </form>
+
+    <button
+      type="button"
+      class="scan-queue-btn ${isBulk ? "is-active" : ""}"
+      data-action="set-scan-mode-kind"
+      data-scan-mode-kind="${isBulk ? "oneByOne" : "bulk"}"
+    >
+      ${isBulk ? "CLOSE SCAN QUEUE" : "OPEN SCAN QUEUE"} (${queueCount})
+    </button>
+
+    ${!isBulk ? `
+      <div class="scan-mode-row" role="group" aria-label="Scan behavior">
+        <button
+          type="button"
+          class="scan-mode-pill ${!isAutoCount ? "is-on" : ""}"
+          data-action="set-scan-behavior"
+          data-scan-behavior="viewOnly"
+          aria-pressed="${String(!isAutoCount)}"
+        >View only</button>
+        <button
+          type="button"
+          class="scan-mode-pill ${isAutoCount ? "is-on" : ""}"
+          data-action="set-scan-behavior"
+          data-scan-behavior="increment"
+          aria-pressed="${String(isAutoCount)}"
+        >+1 Auto-count</button>
+      </div>
+    ` : ""}
+  `;
+
+  const processPane = hasResult || isBulk
+    ? `<div class="scan-detail" aria-live="polite">${detailMarkup}</div>`
+    : `
+      <div class="scan-detail scan-detail-idle" aria-live="polite">
+        <p class="scan-detail-hint">Scan or type a QR to see item details here.</p>
+      </div>
+    `;
+
+  const mobileMode = hasResult ? "result" : isBulk ? "bulk" : "idle";
 
   return `
-    <section id="panel-scan" role="tabpanel" aria-labelledby="tab-scan" class="panel panel-scan">
+    <section
+      id="panel-scan"
+      role="tabpanel"
+      aria-labelledby="tab-scan"
+      class="panel panel-scan"
+      data-scan-mode="${mobileMode}"
+    >
       <header class="scan-head">
         <h2>${isBulk ? "Bulk queue" : "Scan"}</h2>
-      </header>
-
-      <div class="scan-viewfinder ${cameraLive ? "is-live" : ""}">
-        ${hasCamera ? renderScanner(state, state.cameraLookupCode !== null, cameraBlockedReason) : ""}
-        ${!cameraLive ? `
-          <span class="scan-viewfinder-corner tl" aria-hidden="true"></span>
-          <span class="scan-viewfinder-corner tr" aria-hidden="true"></span>
-          <span class="scan-viewfinder-corner bl" aria-hidden="true"></span>
-          <span class="scan-viewfinder-corner br" aria-hidden="true"></span>
-          <p class="scan-viewfinder-label">Aim at QR code to scan</p>
-        ` : ""}
-      </div>
-
-      <form class="scan-input-row" data-form="scan">
-        <label class="sr-only" for="scan-code-input">Scan or type a QR / barcode</label>
-        <input
-          id="scan-code-input"
-          name="scanCode"
-          aria-label="Scan or type a QR / barcode"
-          placeholder="Scan or type a QR / barcode"
-          value="${attr(state.scanCode)}"
-          autocomplete="off"
-        />
-        <button type="submit" class="scan-input-submit" aria-label="Submit code" ${disabled(state.pendingAction !== null)}>
-          <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
-            <rect x="4" y="6" width="16" height="12" rx="2"/>
-            <path d="M8 6V5a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v1"/>
-            <circle cx="12" cy="12" r="2.5"/>
-          </svg>
-        </button>
-      </form>
-
-      <button
-        type="button"
-        class="scan-queue-btn ${isBulk ? "is-active" : ""}"
-        data-action="set-scan-mode-kind"
-        data-scan-mode-kind="${isBulk ? "oneByOne" : "bulk"}"
-      >
-        ${isBulk ? "CLOSE SCAN QUEUE" : "OPEN SCAN QUEUE"} (${queueCount})
-      </button>
-
-      <div class="scan-chip-row">
-        ${isAutoCount ? `
+        ${hasResult ? `
           <button
             type="button"
-            class="scan-chip is-on"
-            data-action="set-scan-behavior"
-            data-scan-behavior="viewOnly"
-            aria-pressed="true"
-          >+1 Auto-count</button>
-          <button
-            type="button"
-            class="scan-mode-link"
-            data-action="set-scan-behavior"
-            data-scan-behavior="viewOnly"
-          >View only</button>
-        ` : `
-          <button
-            type="button"
-            class="scan-chip"
-            data-action="set-scan-behavior"
-            data-scan-behavior="increment"
-            aria-pressed="false"
-          >View only</button>
-          <button
-            type="button"
-            class="scan-mode-link"
-            data-action="set-scan-behavior"
-            data-scan-behavior="increment"
-          >+1 Auto-count</button>
-        `}
-      </div>
-
-      <div class="scan-detail" aria-live="polite">
-        ${detailMarkup}
-        ${state.scanMode.kind === "oneByOne" && state.scanResult && state.scanResult.mode !== "unknown" && !state.cameraLookupCode ? `
-          <button
-            type="button"
-            class="scan-next-bottom"
+            class="scan-result-back"
             data-action="scan-next"
             ${disabled(state.pendingAction !== null)}
+            aria-label="Scan next item"
           >
-            Scan next item
+            <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+              <line x1="19" y1="12" x2="5" y2="12"/>
+              <polyline points="12 19 5 12 12 5"/>
+            </svg>
+            <span>Scan next</span>
           </button>
         ` : ""}
+      </header>
+      <div class="scan-layout">
+        <div class="scan-pane scan-pane-scanner">
+          ${scannerBlock}
+        </div>
+        <div class="scan-pane scan-pane-process">
+          ${processPane}
+        </div>
       </div>
     </section>
   `;
@@ -1609,12 +1637,9 @@ function renderInventoryTab(state: RewriteUiState): string {
             ${items.map((row) => {
               const subPath = row.categoryPath.slice(1).join(" / ");
               const isStocked = row.bins > 0 || row.instanceCount > 0;
-              const isExpanded = state.inventoryUi.expandedId === row.id;
-              const expandedItems = isExpanded ? state.inventoryUi.expandedItems.get(row.id) ?? null : null;
-              const expandedError = isExpanded ? state.inventoryUi.expandedErrors.get(row.id) ?? null : null;
               return `
-                <li class="inventory-row-wrap ${isStocked ? "stocked" : "empty"} ${isExpanded ? "expanded" : ""}">
-                  <button type="button" class="inventory-row" data-action="toggle-inventory-expand" data-part-type-id="${attr(row.id)}" aria-expanded="${String(isExpanded)}">
+                <li class="inventory-row-wrap ${isStocked ? "stocked" : "empty"}">
+                  <button type="button" class="inventory-row" data-action="open-part-detail" data-part-type-id="${attr(row.id)}" aria-label="Open ${attr(row.canonicalName)} details">
                     <div class="inventory-row-name">
                       ${renderIconSlot(iconIdForPart(row.canonicalName, row.categoryPath), row.canonicalName)}
                       <span class="inventory-row-copy">
@@ -1623,50 +1648,11 @@ function renderInventoryTab(state: RewriteUiState): string {
                       </span>
                     </div>
                     <div class="inventory-row-quantity">
-                      <span class="qty-value">${escapeHtml(formatQuantity(row.onHand))}</span><span class="qty-unit">${escapeHtml(row.unit.symbol)}${row.entityCount > 0 ? ` · ${row.entityCount} QR${row.entityCount === 1 ? "" : "s"}` : ""}</span>
+                      <span class="qty-value">${escapeHtml(formatQuantity(row.onHand))}</span>
+                      <span class="qty-unit">${escapeHtml(row.unit.symbol)}${row.entityCount > 0 ? ` · ${row.entityCount} QR${row.entityCount === 1 ? "" : "s"}` : ""}</span>
                     </div>
+                    <span class="inventory-row-chev" aria-hidden="true">›</span>
                   </button>
-                  <button type="button" class="inventory-row-arrow" data-action="open-part-detail" data-part-type-id="${attr(row.id)}" aria-label="Open ${attr(row.canonicalName)} details">
-                    <span aria-hidden="true">›</span>
-                  </button>
-                  ${isExpanded ? `
-                    <div class="inventory-row-detail">
-                      ${expandedError ? `<p class="banner error">${escapeHtml(expandedError)}</p>` : expandedItems && (expandedItems.bulkStocks.length > 0 || expandedItems.instances.length > 0) ? `
-                        <ul class="inventory-detail-list">
-                          ${expandedItems.bulkStocks.map((bulk) => {
-                            const key = `bulk:${bulk.id}`;
-                            const selected =
-                              state.inventoryReverseSelection.partTypeId === row.id &&
-                              state.inventoryReverseSelection.targets.some((t) => `${t.kind}:${t.id}` === key);
-                            return `
-                              <li class="inventory-detail-item${selected ? " selected" : ""}">
-                                ${bulk.canReverseIngest ? `<input type="checkbox"${selected ? " checked" : ""} data-action="inventory-reverse-toggle" data-part-type-id="${attr(row.id)}" data-kind="bulk" data-id="${attr(bulk.id)}" data-qr-code="${attr(bulk.qrCode)}" aria-label="Select ${attr(bulk.qrCode)} for reverse" />` : `<span class="inventory-checkbox-spacer" aria-hidden="true"></span>`}
-                                <code>${escapeHtml(bulk.qrCode)}</code>
-                                <span>${escapeHtml(bulk.location)}</span>
-                                <strong>${escapeHtml(formatQuantity(bulk.quantity))} ${escapeHtml(row.unit.symbol)}</strong>
-                              </li>
-                            `;
-                          }).join("")}
-                          ${expandedItems.instances.map((instance) => {
-                            const key = `instance:${instance.id}`;
-                            const selected =
-                              state.inventoryReverseSelection.partTypeId === row.id &&
-                              state.inventoryReverseSelection.targets.some((t) => `${t.kind}:${t.id}` === key);
-                            return `
-                              <li class="inventory-detail-item${selected ? " selected" : ""}">
-                                ${instance.canReverseIngest ? `<input type="checkbox"${selected ? " checked" : ""} data-action="inventory-reverse-toggle" data-part-type-id="${attr(row.id)}" data-kind="instance" data-id="${attr(instance.id)}" data-qr-code="${attr(instance.qrCode)}" aria-label="Select ${attr(instance.qrCode)} for reverse" />` : `<span class="inventory-checkbox-spacer" aria-hidden="true"></span>`}
-                                <code>${escapeHtml(instance.qrCode)}</code>
-                                <span>${escapeHtml(instance.location)}</span>
-                                <strong>${escapeHtml(instance.status)}</strong>
-                                ${instance.assignee ? `<span>${escapeHtml(instance.assignee)}</span>` : ""}
-                              </li>
-                            `;
-                          }).join("")}
-                        </ul>
-                        ${renderInventoryReverseToolbar(state, row.id)}
-                      ` : `<p class="muted-copy">No items assigned to this part type.</p>`}
-                    </div>
-                  ` : ""}
                 </li>
               `;
             }).join("")}

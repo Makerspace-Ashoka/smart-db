@@ -661,9 +661,9 @@ describe("RewriteAppController", () => {
     (document.querySelector('[data-tab="inventory"]') as HTMLButtonElement).click();
     await flush();
 
-    const expandButton = document.querySelector<HTMLButtonElement>('[data-action="toggle-inventory-expand"]');
-    expect(expandButton).not.toBeNull();
-    expandButton!.click();
+    const detailButton = document.querySelector<HTMLButtonElement>('[data-action="open-part-detail"]');
+    expect(detailButton).not.toBeNull();
+    detailButton!.click();
     await flush();
 
     expect(document.body.textContent).toContain("detail load failed");
