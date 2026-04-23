@@ -522,41 +522,42 @@ function renderBulkQueueCard(
 ): string {
   const summary = state.bulkQueue.summary;
 
+  const actionHeading = state.bulkQueue.action === "label"
+    ? "Label Queue"
+    : state.bulkQueue.action === "move"
+      ? "Move Queue"
+      : "Reverse Ingest";
+  const countSubtitle = `${summary.uniqueLabelCount} unique item${summary.uniqueLabelCount === 1 ? "" : "s"} · ${summary.totalScanCount} scan${summary.totalScanCount === 1 ? "" : "s"}`;
+
   return `
-    <div class="result-card">
-      <h3>${escapeHtml(bulkActionHeading(state.bulkQueue.action))}</h3>
-      <p class="muted-copy">
-        ${escapeHtml(`${summary.uniqueLabelCount} unique labels · ${summary.totalScanCount} scans${summary.duplicateScanCount > 0 ? ` · ${summary.duplicateScanCount} duplicates collapsed` : ""}`)}
-      </p>
+    <div class="result-card result-card-queue">
+      <header class="queue-head">
+        <h3>${escapeHtml(actionHeading)}</h3>
+        <button type="button" class="queue-clear" data-action="bulk-queue-clear" ${disabled(state.pendingAction !== null || state.bulkQueue.rows.length === 0)}>Clear</button>
+      </header>
+      <p class="queue-count">${escapeHtml(countSubtitle)}</p>
       ${state.bulkQueue.failure ? `<p class="banner error">${escapeHtml(state.bulkQueue.failure.message)}</p>` : ""}
       ${state.bulkQueue.rows.length === 0 ? `
         <p class="muted-copy">${escapeHtml(emptyBulkQueueCopy(state.bulkQueue.action))}</p>
       ` : `
-        <div class="event-list">
-          <ul class="activity-list">
-            ${state.bulkQueue.rows.map((row) => `
-              <li class="activity-row">
-                <div>
-                  <strong>${escapeHtml(row.code)}</strong>
-                  <div class="activity-detail">
-                    ${row.kind === "unlabeled"
-                      ? escapeHtml(`Printed label · batch ${row.batchId}`)
-                      : escapeHtml(`${row.partTypeName} · ${row.location} · ${row.targetType}`)}
-                  </div>
-                </div>
-                <div style="display:flex;gap:0.5rem;align-items:center">
-                  <span class="pill info">${escapeHtml(`×${row.count}`)}</span>
-                  <button type="button" data-action="bulk-queue-decrement" data-code="${attr(row.code)}">-1</button>
-                  <button type="button" data-action="bulk-queue-remove" data-code="${attr(row.code)}">Remove</button>
-                </div>
-              </li>
-            `).join("")}
-          </ul>
-        </div>
+        <ul class="queue-list">
+          ${state.bulkQueue.rows.map((row) => `
+            <li class="queue-row">
+              <div class="queue-row-main">
+                <span class="queue-row-code">${escapeHtml(row.code)}</span>
+                <span class="queue-row-meta">${row.kind === "unlabeled"
+                  ? escapeHtml(`Printed · batch ${row.batchId}`)
+                  : escapeHtml(`${row.partTypeName} · ${row.location}`)}</span>
+              </div>
+              <div class="queue-row-stepper">
+                <button type="button" class="stepper-minus" data-action="bulk-queue-decrement" data-code="${attr(row.code)}" aria-label="Decrement">−</button>
+                <span class="stepper-value">${escapeHtml(String(row.count))}</span>
+                <button type="button" class="stepper-remove" data-action="bulk-queue-remove" data-code="${attr(row.code)}" aria-label="Remove">×</button>
+              </div>
+            </li>
+          `).join("")}
+        </ul>
       `}
-      <button type="button" data-action="bulk-queue-clear" ${disabled(state.pendingAction !== null || state.bulkQueue.rows.length === 0)} style="margin-top:1rem">
-        Clear queue
-      </button>
       ${state.bulkQueue.action === "label" ? renderBulkLabelForm(state, labelOptions, assignIssues) : ""}
       ${state.bulkQueue.action === "move" ? renderBulkMoveForm(state) : ""}
       ${state.bulkQueue.action === "delete" ? renderBulkDeleteForm(state) : ""}
