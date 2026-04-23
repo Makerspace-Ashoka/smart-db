@@ -660,14 +660,14 @@ button:disabled { opacity: 0.4; cursor: not-allowed; }
   top: 50%;
   right: 2.5rem;
   transform: translateY(-50%);
-  width: 56px;
-  height: 56px;
+  width: 60px;
+  height: 60px;
   color: var(--ink);
-  opacity: 0.08;
+  opacity: 0.12;
   pointer-events: none;
   z-index: 0;
 }
-.stock-accordion-item:hover .stock-card-glyph { opacity: 0.14; }
+.stock-accordion-item:hover .stock-card-glyph { opacity: 0.18; }
 .stock-card-copy { position: relative; z-index: 1; }
 
 @media (min-width: 900px) {

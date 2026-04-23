@@ -1593,94 +1593,49 @@ function renderInventoryReverseToolbar(state: RewriteUiState, partTypeId: string
 type InventoryRow = RewriteUiState["inventorySummary"][number];
 
 function stockCategoryGlyph(segment: string): string {
-  const key = segment.toLowerCase();
-  const match = (...needles: string[]): boolean => needles.some((n) => key.includes(n));
-
-  if (match("board", "electron", "micro", "arduino", "raspberry")) {
-    return `
-      <svg class="stock-card-glyph" viewBox="0 0 64 64" aria-hidden="true">
-        <rect x="10" y="18" width="44" height="28" rx="1.5" fill="none" stroke="currentColor" stroke-width="1.5"/>
-        <rect x="22" y="26" width="12" height="12" fill="none" stroke="currentColor" stroke-width="1.2"/>
-        <line x1="14" y1="22" x2="14" y2="42" stroke="currentColor" stroke-width="0.8"/>
-        <line x1="18" y1="22" x2="18" y2="42" stroke="currentColor" stroke-width="0.8"/>
-        <line x1="44" y1="22" x2="44" y2="42" stroke="currentColor" stroke-width="0.8"/>
-        <line x1="48" y1="22" x2="48" y2="42" stroke="currentColor" stroke-width="0.8"/>
-        <circle cx="40" cy="30" r="1" fill="currentColor"/>
-        <circle cx="44" cy="30" r="1" fill="currentColor"/>
-        <circle cx="40" cy="34" r="1" fill="currentColor"/>
-      </svg>
-    `;
-  }
-  if (match("fasten", "bolt", "nut", "screw", "hex", "metric", "imperial")) {
-    return `
-      <svg class="stock-card-glyph" viewBox="0 0 64 64" aria-hidden="true">
-        <polygon points="32,12 48,22 48,42 32,52 16,42 16,22" fill="none" stroke="currentColor" stroke-width="1.5"/>
-        <circle cx="32" cy="32" r="6" fill="none" stroke="currentColor" stroke-width="1.2"/>
-        <line x1="20" y1="27" x2="44" y2="27" stroke="currentColor" stroke-width="0.6"/>
-        <line x1="20" y1="32" x2="44" y2="32" stroke="currentColor" stroke-width="0.6"/>
-        <line x1="20" y1="37" x2="44" y2="37" stroke="currentColor" stroke-width="0.6"/>
-      </svg>
-    `;
-  }
-  if (match("filament", "3d", "print", "pla", "petg", "abs", "resin", "sla")) {
-    return `
-      <svg class="stock-card-glyph" viewBox="0 0 64 64" aria-hidden="true">
-        <circle cx="32" cy="22" r="10" fill="none" stroke="currentColor" stroke-width="1.5"/>
-        <circle cx="32" cy="22" r="4" fill="none" stroke="currentColor" stroke-width="1"/>
-        <line x1="24" y1="22" x2="40" y2="22" stroke="currentColor" stroke-width="0.6"/>
-        <path d="M24 38 L40 38 L36 52 L28 52 Z" fill="none" stroke="currentColor" stroke-width="1.5"/>
-        <line x1="28" y1="42" x2="36" y2="42" stroke="currentColor" stroke-width="0.6"/>
-        <line x1="29" y1="46" x2="35" y2="46" stroke="currentColor" stroke-width="0.6"/>
-      </svg>
-    `;
-  }
-  if (match("tool", "drill", "saw", "wrench", "plier", "hand")) {
-    return `
-      <svg class="stock-card-glyph" viewBox="0 0 64 64" aria-hidden="true">
-        <path d="M14 14 L22 14 L22 22 L32 32 L44 20 L50 26 L38 38 L48 48 L44 52 L34 42 L20 52 L12 44 L22 34 Z" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linejoin="round"/>
-      </svg>
-    `;
-  }
-  if (match("consum", "adhesive", "tape", "glue", "paint", "solder", "flux", "alcohol")) {
-    return `
-      <svg class="stock-card-glyph" viewBox="0 0 64 64" aria-hidden="true">
-        <path d="M26 14 L38 14 L38 24 L46 44 Q46 52 38 52 L26 52 Q18 52 18 44 L26 24 Z" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linejoin="round"/>
-        <line x1="24" y1="14" x2="40" y2="14" stroke="currentColor" stroke-width="1.5"/>
-        <line x1="22" y1="40" x2="42" y2="40" stroke="currentColor" stroke-width="0.8"/>
-        <line x1="24" y1="44" x2="40" y2="44" stroke="currentColor" stroke-width="0.6"/>
-      </svg>
-    `;
-  }
-  if (match("sensor", "module", "component", "passive", "resistor", "capacitor")) {
-    return `
-      <svg class="stock-card-glyph" viewBox="0 0 64 64" aria-hidden="true">
-        <line x1="8" y1="32" x2="20" y2="32" stroke="currentColor" stroke-width="1.5"/>
-        <path d="M20 32 L24 24 L28 40 L32 24 L36 40 L40 24 L44 32" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linejoin="round"/>
-        <line x1="44" y1="32" x2="56" y2="32" stroke="currentColor" stroke-width="1.5"/>
-      </svg>
-    `;
-  }
-  if (match("wire", "cable", "connector", "jst", "plug")) {
-    return `
-      <svg class="stock-card-glyph" viewBox="0 0 64 64" aria-hidden="true">
-        <path d="M10 20 Q20 20 24 32 Q28 44 38 44 L54 44" fill="none" stroke="currentColor" stroke-width="1.5"/>
-        <rect x="48" y="38" width="8" height="12" rx="1" fill="none" stroke="currentColor" stroke-width="1.2"/>
-        <circle cx="52" cy="42" r="1" fill="currentColor"/>
-        <circle cx="52" cy="47" r="1" fill="currentColor"/>
-      </svg>
-    `;
-  }
-  // Fallback: crosshair / blueprint tick
-  return `
-    <svg class="stock-card-glyph" viewBox="0 0 64 64" aria-hidden="true">
-      <circle cx="32" cy="32" r="18" fill="none" stroke="currentColor" stroke-width="1.2"/>
-      <line x1="32" y1="8" x2="32" y2="22" stroke="currentColor" stroke-width="1"/>
-      <line x1="32" y1="42" x2="32" y2="56" stroke="currentColor" stroke-width="1"/>
-      <line x1="8" y1="32" x2="22" y2="32" stroke="currentColor" stroke-width="1"/>
-      <line x1="42" y1="32" x2="56" y2="32" stroke="currentColor" stroke-width="1"/>
-      <circle cx="32" cy="32" r="2" fill="currentColor"/>
+  const key = segment.toLowerCase().replaceAll("&", "and").replace(/\s+/g, " ").trim();
+  const shell = (body: string) => `
+    <svg class="stock-card-glyph" viewBox="0 0 64 64" aria-hidden="true" fill="none" stroke="currentColor" stroke-width="1.55" stroke-linecap="round" stroke-linejoin="round">
+      ${body}
     </svg>
   `;
+
+  switch (key) {
+    case "actuators":
+      return shell(`<path d="M12 40h11l8-8h11l10-10"/><path d="M33 32v12"/><path d="M21 40v8"/><path d="M43 24l9 9"/>`);
+    case "art and craft":
+      return shell(`<path d="M13 46c8-3 14-8 18-16"/><path d="M31 30l8-10"/><path d="M39 20l10 10"/><path d="M19 42c4 2 8 2 12 0"/>`);
+    case "cameras":
+      return shell(`<path d="M14 42h33c3 0 5-2 5-5V24c0-3-2-5-5-5H33l-4 5H18c-3 0-4 1-4 4z"/><path d="M39 28l7 7-7 7"/><path d="M18 30h10"/>`);
+    case "compute":
+      return shell(`<rect x="15" y="18" width="34" height="28" rx="2"/><path d="M22 18v-6M31 18v-6M40 18v-6M22 52v-6M31 52v-6M40 52v-6"/><path d="M24 31h16"/><path d="M24 37h10"/>`);
+    case "drilling":
+      return shell(`<path d="M18 18l14 14"/><path d="M32 32l14-14"/><path d="M26 26l-8 20"/><path d="M38 26l8 20"/>`);
+    case "electronics":
+      return shell(`<rect x="17" y="18" width="30" height="28" rx="2"/><path d="M24 18v-6M32 18v-6M40 18v-6M24 52v-6M32 52v-6M40 52v-6"/><path d="M24 28h16"/><path d="M24 34h8"/><path d="M37 34h3"/>`);
+    case "general electronics":
+      return shell(`<path d="M15 41h18c5 0 8-3 10-8l2-5"/><path d="M41 24h8v8h-8z"/><path d="M18 30l6 6"/><path d="M24 30l-6 6"/>`);
+    case "hand tools":
+      return shell(`<path d="M18 16l11 11"/><path d="M24 10c-4 0-7 3-7 7 0 2 1 4 2 5"/><path d="M45 26l7 7"/><path d="M30 27l15 15"/><path d="M19 45l11-11"/>`);
+    case "materials":
+      return shell(`<path d="M18 42c9-3 15-10 18-20"/><path d="M24 43c7 2 13 2 19 0"/><path d="M21 33c5 1 10 1 16 0"/><path d="M28 22h12"/>`);
+    case "mechanical":
+      return shell(`<path d="M18 36h28"/><path d="M24 30h16"/><path d="M28 24h8"/><path d="M18 42l6 6"/><path d="M46 42l-6 6"/>`);
+    case "motor control":
+      return shell(`<rect x="18" y="20" width="28" height="24" rx="2"/><path d="M24 32h16"/><path d="M24 26h7"/><path d="M35 26h5"/><path d="M30 44v8"/>`);
+    case "motors":
+      return shell(`<path d="M16 40h18"/><path d="M34 25h12l6 7-6 7H34z"/><path d="M22 26v12"/><path d="M18 40l-4 6"/><path d="M26 40l4 6"/>`);
+    case "safety":
+      return shell(`<path d="M32 15l15 6v10c0 9-5 16-15 19-10-3-15-10-15-19V21z"/><path d="M25 31l5 5 9-10"/>`);
+    case "sensors":
+      return shell(`<path d="M14 36h10l5-9 6 14 5-9h10"/><path d="M31 22v5"/><path d="M35 18v4"/>`);
+    case "sewing":
+      return shell(`<path d="M18 44c10-2 16-9 19-20"/><path d="M37 24l7-7"/><path d="M28 40c6 2 12 2 18 0"/>`);
+    case "xtool":
+      return shell(`<path d="M18 16l10 10"/><path d="M36 24l10-10"/><path d="M22 48l10-10"/><path d="M42 48l-10-10"/><path d="M28 26h8"/><path d="M24 40h16"/>`);
+    default:
+      return shell(`<path d="M18 42h20"/><path d="M38 42l8-8"/><path d="M18 42l6-18"/><path d="M24 24h16"/>`);
+  }
 }
 
 function renderStockItemRow(row: InventoryRow, eyebrowPath: readonly string[]): string {
