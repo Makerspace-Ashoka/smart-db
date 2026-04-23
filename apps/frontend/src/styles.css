@@ -509,19 +509,6 @@ button:disabled { opacity: 0.4; cursor: not-allowed; }
   box-shadow: none;
   transition: background 140ms ease;
 }
-.inventory-row::before {
-  content: "";
-  position: absolute;
-  left: 0;
-  top: 0.5rem;
-  bottom: 0.5rem;
-  width: 2px;
-  background: transparent;
-  border-radius: 2px;
-  transition: background 140ms ease;
-}
-.inventory-row:hover { background: var(--dim); }
-.inventory-row:hover::before { background: var(--orange); }
 .inventory-row:focus-visible {
   outline: 2px solid var(--ring);
   outline-offset: -2px;
@@ -534,11 +521,10 @@ button:disabled { opacity: 0.4; cursor: not-allowed; }
   color: var(--ink-3);
   line-height: 1;
   justify-self: end;
-  transition: color 140ms ease, transform 140ms ease;
+  transition: color 140ms ease;
 }
 .inventory-row:hover .inventory-row-chev {
-  color: var(--ink);
-  transform: translateX(2px);
+  color: var(--ink-2);
 }
 
 .inventory-row-detail { padding: 0.375rem 0 0.75rem 1.5rem; border-bottom: 1px solid var(--border); }
