@@ -807,6 +807,25 @@ button:disabled { opacity: 0.4; cursor: not-allowed; }
   display: block;
 }
 
+.part-art-fallback,
+.part-hero-fallback {
+  display: none;
+  width: 100%;
+  height: 100%;
+  position: absolute;
+  inset: 0;
+  align-items: center;
+  justify-content: center;
+}
+.part-art.has-broken-image img,
+.part-hero.has-broken-image img {
+  display: none;
+}
+.part-art.has-broken-image .part-art-fallback,
+.part-hero.has-broken-image .part-hero-fallback {
+  display: flex;
+}
+
 .part-art-picker {
   width: 2.5rem;
   height: 2.5rem;

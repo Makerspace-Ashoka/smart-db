@@ -202,29 +202,33 @@ function renderIconSlot(iconId: string, label: string): string {
 type PartVisualData = Pick<PartType, "canonicalName" | "categoryPath" | "imageUrl">;
 
 function renderPartTileArt(part: PartVisualData, variant: "picker" | "inventory"): string {
+  const iconHtml = renderIconSlot(iconIdForPart(part.canonicalName, part.categoryPath), part.canonicalName);
   if (!part.imageUrl) {
-    return renderIconSlot(iconIdForPart(part.canonicalName, part.categoryPath), part.canonicalName);
+    return iconHtml;
   }
 
   return `
     <span class="part-art part-art-${variant}" aria-hidden="true">
       <img src="${attr(part.imageUrl)}" alt="" loading="lazy" decoding="async" />
+      <span class="part-art-fallback">${iconHtml}</span>
     </span>
   `;
 }
 
 function renderPartHero(part: PartVisualData, variant: "detail" | "scan"): string {
+  const iconHtml = renderIconSlot(iconIdForPart(part.canonicalName, part.categoryPath), part.canonicalName);
   if (part.imageUrl) {
     return `
       <div class="part-hero part-hero-${variant}" aria-hidden="true">
         <img src="${attr(part.imageUrl)}" alt="" decoding="async" />
+        <span class="part-hero-fallback">${iconHtml}</span>
       </div>
     `;
   }
 
   return `
     <div class="part-hero part-hero-${variant} is-fallback" aria-hidden="true">
-      ${renderIconSlot(iconIdForPart(part.canonicalName, part.categoryPath), part.canonicalName)}
+      ${iconHtml}
     </div>
   `;
 }

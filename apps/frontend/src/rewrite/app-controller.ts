@@ -231,6 +231,7 @@ export class RewriteAppController {
     this.root.addEventListener("input", this.handleInput);
     this.root.addEventListener("change", this.handleChange);
     this.root.addEventListener("keydown", this.handleKeyDown);
+    this.root.addEventListener("error", this.handleImageError, true);
     window.addEventListener("online", this.handleOnline);
     window.addEventListener("offline", this.handleOffline);
     if (typeof window !== "undefined") {
@@ -275,6 +276,7 @@ export class RewriteAppController {
     this.root.removeEventListener("input", this.handleInput);
     this.root.removeEventListener("change", this.handleChange);
     this.root.removeEventListener("keydown", this.handleKeyDown);
+    this.root.removeEventListener("error", this.handleImageError, true);
     window.removeEventListener("online", this.handleOnline);
     window.removeEventListener("offline", this.handleOffline);
     if (this.routingInstalled && typeof window !== "undefined") {
@@ -289,6 +291,14 @@ export class RewriteAppController {
 
   private readonly handleOffline = () => {
     this.patch({ isOnline: false });
+  };
+
+  private readonly handleImageError = (event: Event) => {
+    const target = event.target;
+    if (!(target instanceof HTMLImageElement)) return;
+    const wrap = target.closest(".part-art, .part-hero");
+    if (!wrap || wrap.classList.contains("has-broken-image")) return;
+    wrap.classList.add("has-broken-image");
   };
 
   private readonly handlePopState = () => {
