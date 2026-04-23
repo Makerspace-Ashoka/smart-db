@@ -67,33 +67,36 @@ export function renderApp(state: RewriteUiState): string {
   return `
     <div class="shell app-shell">
       <header class="app-masthead">
-        <div class="app-brand">
-          <p class="eyebrow">Smart DB</p>
-          <div class="app-brand-row">
-            <strong class="header-brand">Smart DB</strong>
-            <span class="app-brand-tag">makerspace inventory</span>
+        <div class="app-masthead-row">
+          <strong class="header-brand">SMART DB</strong>
+          <div class="app-masthead-menu">
+            <button
+              type="button"
+              class="icon-btn"
+              data-action="toggle-theme"
+              aria-label="${state.theme === "dark" ? "Switch to light mode" : "Switch to dark mode"}"
+              aria-pressed="${state.theme === "dark" ? "true" : "false"}"
+              title="${state.theme === "dark" ? "Light mode" : "Dark mode"}"
+            >${state.theme === "dark" ? "☼" : "☾"}</button>
+            <button
+              type="button"
+              class="icon-btn"
+              data-action="logout"
+              ${disabled(state.pendingAction === "logout")}
+              aria-label="Log out"
+              title="Log out"
+            >
+              <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+                <line x1="4" y1="6" x2="20" y2="6"/>
+                <line x1="4" y1="12" x2="20" y2="12"/>
+                <line x1="4" y1="18" x2="20" y2="18"/>
+              </svg>
+            </button>
           </div>
         </div>
-        <div class="header-status">
-          <span class="header-user">${escapeHtml(state.authState.session.username)}</span>
-          ${partDbHealth ? `<div class="pill ${partDbHealth.tone}">${escapeHtml(partDbHealth.label)}</div>` : ""}
-          ${partDbSync ? `<div class="pill ${partDbSync.tone}">${escapeHtml(partDbSync.label)}</div>` : ""}
-        </div>
-        <div class="header-actions">
-          <button
-            type="button"
-            data-action="toggle-theme"
-            class="theme-toggle"
-            aria-label="${state.theme === "dark" ? "Switch to light mode" : "Switch to dark mode"}"
-            aria-pressed="${state.theme === "dark" ? "true" : "false"}"
-          >${state.theme === "dark" ? "Light" : "Dark"}</button>
-          <button
-            type="button"
-            data-action="logout"
-            ${disabled(state.pendingAction === "logout")}
-          >
-            ${state.pendingAction === "logout" ? "..." : "Logout"}
-          </button>
+        <div class="app-masthead-status">
+          <span class="masthead-sync">Last sync · ${state.dashboard ? "live" : "—"}</span>
+          ${partDbHealth ? `<span class="pill ${partDbHealth.tone}">${escapeHtml(partDbHealth.label)}</span>` : ""}
         </div>
       </header>
 
@@ -356,20 +359,33 @@ function renderScanTab(state: RewriteUiState): string {
         ? renderLabelCard(state, labelOptions, assignIssues)
         : state.scanResult?.mode === "interact"
           ? renderInteractCard(state, eventIssues, bulkQuantityStep, bulkUnitSymbol)
-          : renderScanEmptyState(state)
+          : ""
     : renderBulkQueueCard(state, bulkLabelOptions, bulkAssignIssues);
 
+  const isBulk = state.scanMode.kind === "bulk";
+  const isAutoCount = state.scanMode.behavior === "increment";
+  const queueCount = state.bulkQueue.rows.length;
+  const hasCamera = state.camera.supported;
+  const cameraLive = Boolean(state.camera.activeStream);
+
   return `
-    <section id="panel-scan" role="tabpanel" aria-labelledby="tab-scan" class="panel panel-workspace panel-scan">
-      ${renderWorkspaceHeader(
-        "Scan Workspace",
-        "One-by-one intake, bulk actions, and lifecycle updates in a single durable flow.",
-        "Scan",
-      )}
-      <div class="scan-workspace">
-        <div class="scan-stage">
-          ${renderScanner(state, state.cameraLookupCode !== null, cameraBlockedReason)}
-          <form class="scan-form" data-form="scan">
+    <section id="panel-scan" role="tabpanel" aria-labelledby="tab-scan" class="panel panel-scan">
+      <header class="scan-head">
+        <h2>${isBulk ? "Bulk queue" : "Scan"}</h2>
+      </header>
+
+      <div class="scan-viewfinder ${cameraLive ? "is-live" : ""}">
+        ${hasCamera ? renderScanner(state, state.cameraLookupCode !== null, cameraBlockedReason) : ""}
+        ${!cameraLive ? `
+          <span class="scan-viewfinder-corner tl" aria-hidden="true"></span>
+          <span class="scan-viewfinder-corner tr" aria-hidden="true"></span>
+          <span class="scan-viewfinder-corner bl" aria-hidden="true"></span>
+          <span class="scan-viewfinder-corner br" aria-hidden="true"></span>
+          <p class="scan-viewfinder-label">Aim at QR code to scan</p>
+        ` : ""}
+      </div>
+
+      <form class="scan-input-row" data-form="scan">
         <label class="sr-only" for="scan-code-input">Scan or type a QR / barcode</label>
         <input
           id="scan-code-input"
@@ -379,92 +395,68 @@ function renderScanTab(state: RewriteUiState): string {
           value="${attr(state.scanCode)}"
           autocomplete="off"
         />
-        <button type="submit" ${disabled(state.pendingAction !== null)}>
-          ${state.pendingAction === "scan" ? "Opening..." : state.scanMode.kind === "bulk" ? "Add" : "Open"}
+        <button type="submit" class="scan-input-submit" aria-label="Submit code" ${disabled(state.pendingAction !== null)}>
+          <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+            <rect x="4" y="6" width="16" height="12" rx="2"/>
+            <path d="M8 6V5a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v1"/>
+            <circle cx="12" cy="12" r="2.5"/>
+          </svg>
         </button>
-          </form>
+      </form>
 
-          <div class="scan-mode-bar">
-            <button
-              type="button"
-              class="scan-mode-btn ${state.scanMode.kind === "oneByOne" ? "active" : ""}"
-              data-action="set-scan-mode-kind"
-              data-scan-mode-kind="oneByOne"
-            >
-              One-by-one
-            </button>
-            <button
-              type="button"
-              class="scan-mode-btn ${state.scanMode.kind === "bulk" ? "active" : ""}"
-              data-action="set-scan-mode-kind"
-              data-scan-mode-kind="bulk"
-            >
-              Bulk
-            </button>
-          </div>
+      <button
+        type="button"
+        class="scan-queue-btn ${isBulk ? "is-active" : ""}"
+        data-action="set-scan-mode-kind"
+        data-scan-mode-kind="${isBulk ? "oneByOne" : "bulk"}"
+      >
+        ${isBulk ? "CLOSE SCAN QUEUE" : "OPEN SCAN QUEUE"} (${queueCount})
+      </button>
 
-          ${state.scanMode.kind === "oneByOne" ? `
-            <div class="scan-mode-bar">
+      <div class="scan-chip-row">
+        ${isAutoCount ? `
           <button
             type="button"
-            class="scan-mode-btn ${state.scanMode.behavior === "viewOnly" ? "active" : ""}"
+            class="scan-chip is-on"
             data-action="set-scan-behavior"
             data-scan-behavior="viewOnly"
-          >
-            View only
-          </button>
+            aria-pressed="true"
+          >+1 Auto-count</button>
           <button
             type="button"
-            class="scan-mode-btn ${state.scanMode.behavior === "increment" ? "active" : ""}"
+            class="scan-mode-link"
+            data-action="set-scan-behavior"
+            data-scan-behavior="viewOnly"
+          >View only</button>
+        ` : `
+          <button
+            type="button"
+            class="scan-chip"
             data-action="set-scan-behavior"
             data-scan-behavior="increment"
-          >
-            Auto-count
-          </button>
-        </div>
-          ` : `
-            <div class="scan-mode-bar">
+            aria-pressed="false"
+          >View only</button>
           <button
             type="button"
-            class="scan-mode-btn ${state.bulkQueue.action === "label" ? "active" : ""}"
-            data-action="set-bulk-action"
-            data-bulk-action="label"
-          >
-            Bulk label
-          </button>
-          <button
-            type="button"
-            class="scan-mode-btn ${state.bulkQueue.action === "move" ? "active" : ""}"
-            data-action="set-bulk-action"
-            data-bulk-action="move"
-          >
-            Bulk move
-          </button>
-          <button
-            type="button"
-            class="scan-mode-btn ${state.bulkQueue.action === "delete" ? "active" : ""}"
-            data-action="set-bulk-action"
-            data-bulk-action="delete"
-          >
-            Bulk reverse
-          </button>
-        </div>
-          `}
-        </div>
+            class="scan-mode-link"
+            data-action="set-scan-behavior"
+            data-scan-behavior="increment"
+          >+1 Auto-count</button>
+        `}
+      </div>
 
-        <div class="scan-detail" aria-live="polite">
-          ${detailMarkup}
-          ${state.scanMode.kind === "oneByOne" && state.scanResult && !state.cameraLookupCode ? `
-            <button
-              type="button"
-              class="scan-next-bottom"
-              data-action="scan-next"
-              ${disabled(state.pendingAction !== null)}
-            >
-              Scan next item
-            </button>
-          ` : ""}
-        </div>
+      <div class="scan-detail" aria-live="polite">
+        ${detailMarkup}
+        ${state.scanMode.kind === "oneByOne" && state.scanResult && !state.cameraLookupCode ? `
+          <button
+            type="button"
+            class="scan-next-bottom"
+            data-action="scan-next"
+            ${disabled(state.pendingAction !== null)}
+          >
+            Scan next item
+          </button>
+        ` : ""}
       </div>
     </section>
   `;
@@ -759,7 +751,7 @@ function renderLabelCard(
         ${renderPartTypeField(state, labelOptions, assignIssues)}
         ${renderSharedAssignFields(state, assignIssues)}
         <button type="submit" ${disabled(state.pendingAction !== null || Object.keys(assignIssues).length > 0)}>
-          ${state.pendingAction === "assign" ? "Assigning..." : "Assign QR"}
+          ${state.pendingAction === "assign" ? "Assigning..." : "Assign item"}
         </button>
       </form>
     </div>
@@ -1512,21 +1504,23 @@ function renderInventoryTab(state: RewriteUiState): string {
   const totalEntities = rows.reduce((sum, row) => sum + row.entityCount, 0);
 
   return `
-    <section id="panel-inventory" role="tabpanel" aria-labelledby="tab-inventory" class="panel panel-workspace panel-inventory">
-      ${renderWorkspaceHeader("Stock Ledger", "Grouped inventory, on-hand counts, and drill-in by part type.", "Stock")}
-      <div class="workspace-stats">
-        <article class="mini-stat">
-          <span>Visible types</span>
-          <strong>${rows.length}</strong>
-        </article>
-        <article class="mini-stat">
-          <span>Total QRs</span>
-          <strong>${totalEntities}</strong>
-        </article>
-        <article class="mini-stat">
-          <span>On hand</span>
-          <strong>${escapeHtml(formatQuantity(totalOnHand))}</strong>
-        </article>
+    <section id="panel-inventory" role="tabpanel" aria-labelledby="tab-inventory" class="panel panel-inventory">
+      <header class="panel-head">
+        <h2>Stock</h2>
+      </header>
+      <div class="stock-summary">
+        <div class="stock-summary-cell">
+          <span class="stock-summary-label">Types</span>
+          <strong class="stock-summary-value">${rows.length}</strong>
+        </div>
+        <div class="stock-summary-cell">
+          <span class="stock-summary-label">QRs</span>
+          <strong class="stock-summary-value">${totalEntities}</strong>
+        </div>
+        <div class="stock-summary-cell">
+          <span class="stock-summary-label">On hand</span>
+          <strong class="stock-summary-value">${escapeHtml(formatQuantity(totalOnHand))}</strong>
+        </div>
       </div>
       <div class="stock-controls">
         <input type="search" aria-label="Filter inventory" name="inventory.query" value="${attr(state.inventoryUi.query)}" placeholder="Search..." />
@@ -1707,56 +1701,68 @@ function renderPartTypeDetail(state: RewriteUiState, partTypeId: string): string
 
 function renderDashboardTab(state: RewriteUiState): string {
   const sync = state.partDbSyncStatus;
+  const health = state.partDbStatus;
+  const queueCount = sync?.pending ?? 0;
+  const failureCount = sync?.failedLast24h ?? 0;
+  const queueTone = failureCount > 0 ? "error" : queueCount > 0 ? "warn" : "ok";
+  const queueLabel = failureCount > 0
+    ? `${failureCount} failed`
+    : queueCount > 0
+      ? `${queueCount} pending`
+      : "clear";
+  const healthTone = health?.connected ? "ok" : health?.configured ? "warn" : "error";
+  const healthLabel = health?.connected ? "OK" : health?.configured ? "checking" : "off";
 
   return `
-    <section id="panel-dashboard" role="tabpanel" aria-labelledby="tab-dashboard" class="panel panel-workspace panel-dashboard">
-      ${renderWorkspaceHeader("Overview", "Operational counts and sync health at a glance.", "Dashboard")}
-      <section class="metrics metrics-cards">
-        ${renderMetric("Part types", state.dashboard?.partTypeCount ?? 0)}
-        ${renderMetric("Instances", state.dashboard?.instanceCount ?? 0)}
-        ${renderMetric("Bulk bins", state.dashboard?.bulkStockCount ?? 0)}
-        ${renderMetric("Provisional", state.dashboard?.provisionalCount ?? 0)}
-        ${renderMetric("Unassigned QRs", state.dashboard?.unassignedQrCount ?? 0)}
+    <section id="panel-dashboard" role="tabpanel" aria-labelledby="tab-dashboard" class="panel-dashboard">
+      <section class="dash-grid" aria-label="Inventory counts">
+        ${renderDashTile("Part types", state.dashboard?.partTypeCount ?? 0)}
+        ${renderDashTile("Instances", state.dashboard?.instanceCount ?? 0)}
+        ${renderDashTile("Bulk bins", state.dashboard?.bulkStockCount ?? 0)}
+        ${renderDashTile("Provisional", state.dashboard?.provisionalCount ?? 0)}
+        ${renderDashTile("Unassigned QRs", state.dashboard?.unassignedQrCount ?? 0)}
+        ${renderDashTile("Checked out", state.dashboard?.recentEvents.length ?? 0)}
       </section>
-      <section class="dashboard-rail">
-        <article class="dashboard-card">
-          <div class="dashboard-card-head">
-            ${renderIconSlot("sync", "Sync")}
-            <div>
-              <p class="eyebrow">Part-DB</p>
-              <h3>Sync posture</h3>
-            </div>
+      <section class="dash-health" aria-labelledby="dash-health-heading">
+        <h3 id="dash-health-heading" class="dash-health-title">Part-DB Health</h3>
+        <dl class="dash-health-list">
+          <div class="dash-health-row">
+            <dt>Health</dt>
+            <dd class="dash-health-value tone-${healthTone}"><span class="dot" aria-hidden="true"></span>${escapeHtml(healthLabel)}</dd>
           </div>
-          <div class="dashboard-card-lines">
-            <span>Queued</span><strong>${sync?.pending ?? 0}</strong>
-            <span>In flight</span><strong>${sync?.inFlight ?? 0}</strong>
-            <span>Failures</span><strong>${sync?.failedLast24h ?? 0}</strong>
+          <div class="dash-health-row">
+            <dt>Queue</dt>
+            <dd class="dash-health-value tone-${queueTone}"><span class="dot" aria-hidden="true"></span>${escapeHtml(queueLabel)}</dd>
           </div>
-        </article>
-        <article class="dashboard-card">
-          <div class="dashboard-card-head">
-            ${renderIconSlot("activity", "Activity")}
-            <div>
-              <p class="eyebrow">Recent</p>
-              <h3>Operator rhythm</h3>
-            </div>
+          <div class="dash-health-row">
+            <dt>Last sync</dt>
+            <dd class="dash-health-value tone-muted">${state.dashboard ? "live" : "—"}</dd>
           </div>
-          <p class="muted-copy">
-            ${state.dashboard?.recentEvents.length
-              ? `${state.dashboard.recentEvents.length} recent event${state.dashboard.recentEvents.length === 1 ? "" : "s"} recorded.`
-              : "No recent activity yet."}
-          </p>
-        </article>
+        </dl>
+        <button type="button" class="dash-health-link" data-action="change-tab" data-tab="admin">
+          Open sync center →
+        </button>
       </section>
     </section>
+  `;
+}
+
+function renderDashTile(label: string, value: number): string {
+  return `
+    <article class="dash-tile">
+      <span class="dash-tile-label">${escapeHtml(label)}</span>
+      <strong class="dash-tile-value">${value.toLocaleString("en-US")}</strong>
+    </article>
   `;
 }
 
 function renderActivityTab(state: RewriteUiState): string {
   const events = state.dashboard?.recentEvents ?? [];
   return `
-    <section id="panel-activity" role="tabpanel" aria-labelledby="tab-activity" class="panel panel-workspace panel-activity">
-      ${renderWorkspaceHeader("Recent Activity", "Audit history, corrections, and session-level scan context.", "Activity")}
+    <section id="panel-activity" role="tabpanel" aria-labelledby="tab-activity" class="panel panel-activity">
+      <header class="panel-head">
+        <h2>Activity</h2>
+      </header>
       ${events.length === 0 && state.scanHistory.length === 0 ? `<p class="activity-empty">No activity yet. Events appear here as you scan and update inventory.</p>` : ""}
       ${events.length > 0 ? `
         <ul class="activity-list">
@@ -1837,10 +1843,99 @@ function renderAdminTab(state: RewriteUiState): string {
   const mergeOptions = state.mergeSearch.results.length > 0 ? state.mergeSearch.results : state.catalogSuggestions;
   const isDownloadingLabels = state.downloadingBatchId === state.latestBatch?.id;
 
+  const categoryAgg = new Map<string, { types: number; onHand: number; unit: string }>();
+  for (const row of state.inventorySummary) {
+    const top = row.categoryPath[0] ?? "Uncategorized";
+    const prev = categoryAgg.get(top) ?? { types: 0, onHand: 0, unit: row.unit.symbol };
+    prev.types += 1;
+    prev.onHand += row.onHand;
+    categoryAgg.set(top, prev);
+  }
+  const categoryRows = Array.from(categoryAgg.entries())
+    .sort((a, b) => a[0].localeCompare(b[0]));
+
+  const partDbLinked = state.partDbStatus?.connected ?? false;
+
   return `
-    <section id="panel-admin" role="tabpanel" aria-labelledby="tab-admin" class="panel panel-workspace panel-admin-shell">
-      ${renderWorkspaceHeader("Admin Tools", "Queue health, label batches, and catalog corrections.", "Admin")}
-      <div class="admin-grid">
+    <section id="panel-admin" role="tabpanel" aria-labelledby="tab-admin" class="panel panel-admin">
+      <header class="panel-head">
+        <h2>Assets</h2>
+      </header>
+
+      <ul class="assets-list">
+        ${categoryRows.map(([top, info]) => `
+          <li class="assets-row">
+            <span class="assets-row-name">${escapeHtml(top.toUpperCase())}</span>
+            <span class="assets-row-meta">${info.types} type${info.types === 1 ? "" : "s"}</span>
+            <span class="assets-row-value">${escapeHtml(formatQuantity(info.onHand))} on hand</span>
+            <span class="assets-row-chev" aria-hidden="true">›</span>
+          </li>
+        `).join("")}
+        ${categoryRows.length === 0 ? `<li class="assets-row assets-row-empty"><span class="assets-row-name">No inventory yet</span></li>` : ""}
+      </ul>
+
+      <p class="admin-section-label">Admin shortcuts</p>
+      <ul class="admin-shortcuts">
+        <li>
+          <a class="admin-shortcut" href="#admin-sync">
+            <span class="admin-shortcut-icon" aria-hidden="true">
+              <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round">
+                <path d="M3 12a9 9 0 0 1 15-6.7L21 8"/>
+                <path d="M21 3v5h-5"/>
+                <path d="M21 12a9 9 0 0 1-15 6.7L3 16"/>
+                <path d="M3 21v-5h5"/>
+              </svg>
+            </span>
+            <span class="admin-shortcut-label">Sync Center</span>
+            <span class="admin-shortcut-meta">
+              <span class="status-dot ${partDbLinked ? "ok" : "warn"}" aria-hidden="true"></span>
+              ${partDbLinked ? "PART-DB linked" : "PART-DB offline"}
+            </span>
+            <span class="admin-shortcut-chev" aria-hidden="true">›</span>
+          </a>
+        </li>
+        <li>
+          <a class="admin-shortcut" href="#admin-batches">
+            <span class="admin-shortcut-icon" aria-hidden="true">
+              <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round">
+                <rect x="3" y="3" width="7" height="7" rx="1"/>
+                <rect x="14" y="3" width="7" height="7" rx="1"/>
+                <rect x="3" y="14" width="7" height="7" rx="1"/>
+                <rect x="14" y="14" width="7" height="7" rx="1"/>
+              </svg>
+            </span>
+            <span class="admin-shortcut-label">QR Batch Tools</span>
+            <span class="admin-shortcut-chev" aria-hidden="true">›</span>
+          </a>
+        </li>
+        <li>
+          <a class="admin-shortcut" href="#admin-merge">
+            <span class="admin-shortcut-icon" aria-hidden="true">
+              <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round">
+                <path d="M6 3v5a4 4 0 0 0 4 4h4a4 4 0 0 1 4 4v5"/>
+                <path d="M18 3v5"/>
+                <path d="M15 6l3-3 3 3"/>
+              </svg>
+            </span>
+            <span class="admin-shortcut-label">Merge Provisional Types</span>
+            <span class="admin-shortcut-chev" aria-hidden="true">›</span>
+          </a>
+        </li>
+        <li>
+          <a class="admin-shortcut" href="#admin-settings">
+            <span class="admin-shortcut-icon" aria-hidden="true">
+              <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round">
+                <circle cx="12" cy="12" r="3"/>
+                <path d="M19.4 15a1.7 1.7 0 0 0 .3 1.8l.1.1a2 2 0 1 1-2.8 2.8l-.1-.1a1.7 1.7 0 0 0-1.8-.3 1.7 1.7 0 0 0-1 1.5V21a2 2 0 1 1-4 0v-.1a1.7 1.7 0 0 0-1.1-1.5 1.7 1.7 0 0 0-1.8.3l-.1.1a2 2 0 1 1-2.8-2.8l.1-.1a1.7 1.7 0 0 0 .3-1.8 1.7 1.7 0 0 0-1.5-1H3a2 2 0 1 1 0-4h.1a1.7 1.7 0 0 0 1.5-1.1 1.7 1.7 0 0 0-.3-1.8l-.1-.1a2 2 0 1 1 2.8-2.8l.1.1a1.7 1.7 0 0 0 1.8.3H9a1.7 1.7 0 0 0 1-1.5V3a2 2 0 1 1 4 0v.1a1.7 1.7 0 0 0 1 1.5 1.7 1.7 0 0 0 1.8-.3l.1-.1a2 2 0 1 1 2.8 2.8l-.1.1a1.7 1.7 0 0 0-.3 1.8V9a1.7 1.7 0 0 0 1.5 1H21a2 2 0 1 1 0 4h-.1a1.7 1.7 0 0 0-1.5 1z"/>
+              </svg>
+            </span>
+            <span class="admin-shortcut-label">System Settings</span>
+            <span class="admin-shortcut-chev" aria-hidden="true">›</span>
+          </a>
+        </li>
+      </ul>
+
+      <div class="admin-grid" id="admin-sync">
       <section class="panel">
         ${renderPanelTitle("Part-DB sync", "SmartDB remains writable while sync catches up in the background.", "sync")}
         <div class="sync-status-grid">
@@ -1868,7 +1963,7 @@ function renderAdminTab(state: RewriteUiState): string {
         ` : `<p class="muted-copy">No recent sync failures.</p>`}
       </section>
 
-      <section class="panel">
+      <section class="panel" id="admin-batches">
         ${renderPanelTitle("Print QR batches", state.authState.status === "authenticated" ? `Pre-register sticker ranges. This batch will be attributed to ${state.authState.session.username}.` : "Pre-register sticker ranges.", "batch")}
         <p class="muted-copy batch-preview">Next range preview: ${escapeHtml(state.batchForm.prefix)}-${state.batchForm.startNumber} to ${escapeHtml(state.batchForm.prefix)}-${state.batchForm.startNumber + state.batchForm.count - 1} (${state.batchForm.count} labels)</p>
         ${state.latestBatch ? `
@@ -1889,7 +1984,7 @@ function renderAdminTab(state: RewriteUiState): string {
         </form>
       </section>
 
-      <section class="panel">
+      <section class="panel" id="admin-merge">
         ${renderPanelTitle("Canonicalize provisional types", "A provisional type is one a scanner created on the fly because the catalog didn't have it yet. This tool is where you merge near-duplicates into the canonical row or approve a provisional as canonical.", "merge")}
         <div class="stack">
           <label>
