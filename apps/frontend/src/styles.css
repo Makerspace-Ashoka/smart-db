@@ -510,7 +510,7 @@ button:disabled { opacity: 0.4; cursor: not-allowed; }
   transition: background 140ms ease;
 }
 .inventory-row:hover:not(:disabled) {
-  background: var(--dim);
+  background: transparent;
   border-color: transparent;
   box-shadow: none;
 }
@@ -2949,10 +2949,11 @@ a { transition: color var(--t) var(--ease-in-out); }
 
 .inventory-row-wrap {
   background: var(--surface);
+  transition: background 140ms ease;
 }
 
 .inventory-row-wrap:hover {
-  background: var(--surface);
+  background: var(--dim);
 }
 
 .inventory-group-title {
