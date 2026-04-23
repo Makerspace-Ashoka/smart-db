@@ -599,20 +599,9 @@ button:disabled { opacity: 0.4; cursor: not-allowed; }
   position: relative;
   overflow: hidden;
   display: block;
-  border: 1px solid color-mix(in srgb, var(--blue) 28%, var(--border));
-  background:
-    radial-gradient(circle at top left, color-mix(in srgb, var(--orange) 16%, transparent), transparent 48%),
-    linear-gradient(180deg, color-mix(in srgb, var(--blue-bg) 65%, var(--surface)), var(--surface));
-  box-shadow: var(--shadow-xs);
-}
-
-.part-art::after,
-.part-hero::after {
-  content: "";
-  position: absolute;
-  inset: 0;
-  background: linear-gradient(180deg, rgba(255,255,255,0.1), transparent 38%, rgba(0,0,0,0.08));
-  pointer-events: none;
+  border: 1px solid var(--border);
+  background: var(--surface);
+  box-shadow: none;
 }
 
 .part-art img,
