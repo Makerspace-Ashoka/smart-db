@@ -609,8 +609,40 @@ button:disabled { opacity: 0.4; cursor: not-allowed; }
   line-height: 1;
   justify-self: end;
   transition: color 140ms ease;
+  z-index: 1;
 }
 .stock-card-wrap:hover .stock-card-chev { color: var(--ink-2); }
+
+.stock-card-wrap.has-glyph { position: relative; }
+.stock-card-wrap.has-glyph .stock-card { position: relative; }
+.stock-card-glyph {
+  position: absolute;
+  top: 50%;
+  right: 2.25rem;
+  transform: translateY(-50%);
+  width: 56px;
+  height: 56px;
+  color: var(--ink);
+  opacity: 0.08;
+  pointer-events: none;
+  z-index: 0;
+}
+.stock-card-wrap.has-glyph:hover .stock-card-glyph { opacity: 0.14; }
+.stock-card-wrap.has-glyph .stock-card-copy { position: relative; z-index: 1; }
+
+@media (min-width: 900px) {
+  .stock-card-list {
+    grid-template-columns: repeat(auto-fill, minmax(320px, 1fr));
+    gap: 0.625rem;
+  }
+}
+@media (min-width: 1280px) {
+  .stock-card-list {
+    grid-template-columns: repeat(auto-fill, minmax(360px, 1fr));
+    gap: 0.75rem;
+  }
+  .stock-card-glyph { width: 64px; height: 64px; }
+}
 
 .inventory-row-wrap {
   display: block;

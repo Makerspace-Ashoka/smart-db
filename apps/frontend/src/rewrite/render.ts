@@ -1592,6 +1592,97 @@ function renderInventoryReverseToolbar(state: RewriteUiState, partTypeId: string
 
 type InventoryRow = RewriteUiState["inventorySummary"][number];
 
+function stockCategoryGlyph(segment: string): string {
+  const key = segment.toLowerCase();
+  const match = (...needles: string[]): boolean => needles.some((n) => key.includes(n));
+
+  if (match("board", "electron", "micro", "arduino", "raspberry")) {
+    return `
+      <svg class="stock-card-glyph" viewBox="0 0 64 64" aria-hidden="true">
+        <rect x="10" y="18" width="44" height="28" rx="1.5" fill="none" stroke="currentColor" stroke-width="1.5"/>
+        <rect x="22" y="26" width="12" height="12" fill="none" stroke="currentColor" stroke-width="1.2"/>
+        <line x1="14" y1="22" x2="14" y2="42" stroke="currentColor" stroke-width="0.8"/>
+        <line x1="18" y1="22" x2="18" y2="42" stroke="currentColor" stroke-width="0.8"/>
+        <line x1="44" y1="22" x2="44" y2="42" stroke="currentColor" stroke-width="0.8"/>
+        <line x1="48" y1="22" x2="48" y2="42" stroke="currentColor" stroke-width="0.8"/>
+        <circle cx="40" cy="30" r="1" fill="currentColor"/>
+        <circle cx="44" cy="30" r="1" fill="currentColor"/>
+        <circle cx="40" cy="34" r="1" fill="currentColor"/>
+      </svg>
+    `;
+  }
+  if (match("fasten", "bolt", "nut", "screw", "hex", "metric", "imperial")) {
+    return `
+      <svg class="stock-card-glyph" viewBox="0 0 64 64" aria-hidden="true">
+        <polygon points="32,12 48,22 48,42 32,52 16,42 16,22" fill="none" stroke="currentColor" stroke-width="1.5"/>
+        <circle cx="32" cy="32" r="6" fill="none" stroke="currentColor" stroke-width="1.2"/>
+        <line x1="20" y1="27" x2="44" y2="27" stroke="currentColor" stroke-width="0.6"/>
+        <line x1="20" y1="32" x2="44" y2="32" stroke="currentColor" stroke-width="0.6"/>
+        <line x1="20" y1="37" x2="44" y2="37" stroke="currentColor" stroke-width="0.6"/>
+      </svg>
+    `;
+  }
+  if (match("filament", "3d", "print", "pla", "petg", "abs", "resin", "sla")) {
+    return `
+      <svg class="stock-card-glyph" viewBox="0 0 64 64" aria-hidden="true">
+        <circle cx="32" cy="22" r="10" fill="none" stroke="currentColor" stroke-width="1.5"/>
+        <circle cx="32" cy="22" r="4" fill="none" stroke="currentColor" stroke-width="1"/>
+        <line x1="24" y1="22" x2="40" y2="22" stroke="currentColor" stroke-width="0.6"/>
+        <path d="M24 38 L40 38 L36 52 L28 52 Z" fill="none" stroke="currentColor" stroke-width="1.5"/>
+        <line x1="28" y1="42" x2="36" y2="42" stroke="currentColor" stroke-width="0.6"/>
+        <line x1="29" y1="46" x2="35" y2="46" stroke="currentColor" stroke-width="0.6"/>
+      </svg>
+    `;
+  }
+  if (match("tool", "drill", "saw", "wrench", "plier", "hand")) {
+    return `
+      <svg class="stock-card-glyph" viewBox="0 0 64 64" aria-hidden="true">
+        <path d="M14 14 L22 14 L22 22 L32 32 L44 20 L50 26 L38 38 L48 48 L44 52 L34 42 L20 52 L12 44 L22 34 Z" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linejoin="round"/>
+      </svg>
+    `;
+  }
+  if (match("consum", "adhesive", "tape", "glue", "paint", "solder", "flux", "alcohol")) {
+    return `
+      <svg class="stock-card-glyph" viewBox="0 0 64 64" aria-hidden="true">
+        <path d="M26 14 L38 14 L38 24 L46 44 Q46 52 38 52 L26 52 Q18 52 18 44 L26 24 Z" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linejoin="round"/>
+        <line x1="24" y1="14" x2="40" y2="14" stroke="currentColor" stroke-width="1.5"/>
+        <line x1="22" y1="40" x2="42" y2="40" stroke="currentColor" stroke-width="0.8"/>
+        <line x1="24" y1="44" x2="40" y2="44" stroke="currentColor" stroke-width="0.6"/>
+      </svg>
+    `;
+  }
+  if (match("sensor", "module", "component", "passive", "resistor", "capacitor")) {
+    return `
+      <svg class="stock-card-glyph" viewBox="0 0 64 64" aria-hidden="true">
+        <line x1="8" y1="32" x2="20" y2="32" stroke="currentColor" stroke-width="1.5"/>
+        <path d="M20 32 L24 24 L28 40 L32 24 L36 40 L40 24 L44 32" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linejoin="round"/>
+        <line x1="44" y1="32" x2="56" y2="32" stroke="currentColor" stroke-width="1.5"/>
+      </svg>
+    `;
+  }
+  if (match("wire", "cable", "connector", "jst", "plug")) {
+    return `
+      <svg class="stock-card-glyph" viewBox="0 0 64 64" aria-hidden="true">
+        <path d="M10 20 Q20 20 24 32 Q28 44 38 44 L54 44" fill="none" stroke="currentColor" stroke-width="1.5"/>
+        <rect x="48" y="38" width="8" height="12" rx="1" fill="none" stroke="currentColor" stroke-width="1.2"/>
+        <circle cx="52" cy="42" r="1" fill="currentColor"/>
+        <circle cx="52" cy="47" r="1" fill="currentColor"/>
+      </svg>
+    `;
+  }
+  // Fallback: crosshair / blueprint tick
+  return `
+    <svg class="stock-card-glyph" viewBox="0 0 64 64" aria-hidden="true">
+      <circle cx="32" cy="32" r="18" fill="none" stroke="currentColor" stroke-width="1.2"/>
+      <line x1="32" y1="8" x2="32" y2="22" stroke="currentColor" stroke-width="1"/>
+      <line x1="32" y1="42" x2="32" y2="56" stroke="currentColor" stroke-width="1"/>
+      <line x1="8" y1="32" x2="22" y2="32" stroke="currentColor" stroke-width="1"/>
+      <line x1="42" y1="32" x2="56" y2="32" stroke="currentColor" stroke-width="1"/>
+      <circle cx="32" cy="32" r="2" fill="currentColor"/>
+    </svg>
+  `;
+}
+
 function renderStockItemRow(row: InventoryRow, eyebrowPath: readonly string[]): string {
   const isStocked = row.bins > 0 || row.instanceCount > 0;
   const eyebrow = eyebrowPath.join(" › ");
@@ -1615,7 +1706,7 @@ function renderStockItemRow(row: InventoryRow, eyebrowPath: readonly string[]): 
   `;
 }
 
-function renderStockCategoryCard(segment: string, rows: readonly InventoryRow[]): string {
+function renderStockCategoryCard(segment: string, rows: readonly InventoryRow[], withGlyph: boolean): string {
   const types = rows.length;
   const qrs = rows.reduce((sum, r) => sum + r.entityCount, 0);
   const onHand = rows.reduce((sum, r) => sum + r.onHand, 0);
@@ -1624,7 +1715,7 @@ function renderStockCategoryCard(segment: string, rows: readonly InventoryRow[])
     ? `${formatQuantity(onHand)} ${[...units][0]}`
     : `${types} type${types === 1 ? "" : "s"}`;
   return `
-    <li class="stock-card-wrap">
+    <li class="stock-card-wrap${withGlyph ? " has-glyph" : ""}">
       <button
         type="button"
         class="stock-card"
@@ -1632,6 +1723,7 @@ function renderStockCategoryCard(segment: string, rows: readonly InventoryRow[])
         data-category-segment="${attr(segment)}"
         aria-label="Open ${attr(segment)}"
       >
+        ${withGlyph ? stockCategoryGlyph(segment) : ""}
         <span class="stock-card-copy">
           <strong class="stock-card-title">${escapeHtml(segment)}</strong>
           <span class="stock-card-meta">
@@ -1724,9 +1816,10 @@ function renderInventoryTab(state: RewriteUiState): string {
   const sortedChildren = Array.from(childGroups.entries())
     .sort((a, b) => a[0].localeCompare(b[0]));
 
+  const withGlyph = browsePath.length === 0;
   const childCardsHtml = sortedChildren.length === 0 ? "" : `
     <ul class="stock-card-list">
-      ${sortedChildren.map(([segment, rows]) => renderStockCategoryCard(segment, rows)).join("")}
+      ${sortedChildren.map(([segment, rows]) => renderStockCategoryCard(segment, rows, withGlyph)).join("")}
     </ul>
   `;
 
