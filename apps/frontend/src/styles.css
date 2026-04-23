@@ -509,11 +509,20 @@ button:disabled { opacity: 0.4; cursor: not-allowed; }
   box-shadow: none;
   transition: background 140ms ease;
 }
+.inventory-row:hover:not(:disabled) {
+  background: transparent;
+  border-color: transparent;
+  box-shadow: none;
+}
 .inventory-row:focus-visible {
   outline: 2px solid var(--ring);
   outline-offset: -2px;
 }
-.inventory-row:active { transform: none; }
+.inventory-row:active:not(:disabled) {
+  transform: none;
+  box-shadow: none;
+  opacity: 1;
+}
 
 .inventory-row-chev {
   font-size: 1.25rem;
