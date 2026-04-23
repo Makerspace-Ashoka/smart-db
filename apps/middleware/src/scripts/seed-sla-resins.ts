@@ -13,42 +13,8 @@ import { PartDbPartsResource } from "../partdb/resources/parts.js";
 import { PartDbStorageLocationsResource } from "../partdb/resources/storage-locations.js";
 import { InventoryService } from "../services/inventory-service.js";
 import { type NewPartTypeDraft } from "@smart-db/contracts";
-
-interface SeedItem {
-  name: string;
-  category: string;
-  unit: { symbol: string; name: string; isInteger: boolean };
-  aliases?: string[];
-}
-
-const L = { symbol: "L", name: "Liters", isInteger: false };
-const KG = { symbol: "kg", name: "Kilograms", isInteger: false };
-
-// SLA / MSLA photopolymer resins — tracked by volume (or mass for the eLastic 0.5kg flexible)
-const CATALOG: SeedItem[] = [
-  // ── Formlabs Resins (5L bottles) ─────────────────────────────────
-  { name: "Formlabs Clear Resin V5",                         category: "Materials/SLA Resin/Standard", unit: L, aliases: ["Formlabs", "Clear", "V5"] },
-  { name: "Formlabs Grey Resin V5",                          category: "Materials/SLA Resin/Standard", unit: L, aliases: ["Formlabs", "Grey", "V5"] },
-  { name: "Formlabs Elastic 50A Resin",                      category: "Materials/SLA Resin/Flexible", unit: L, aliases: ["Formlabs", "Elastic", "50A"] },
-
-  // ── Elegoo Standard Resins ───────────────────────────────────────
-  { name: "Elegoo Standard Resin — Grey",                    category: "Materials/SLA Resin/Standard", unit: L, aliases: ["Elegoo", "Grey"] },
-  { name: "Elegoo Standard Resin — Black",                   category: "Materials/SLA Resin/Standard", unit: L, aliases: ["Elegoo", "Black"] },
-  { name: "Elegoo Standard Resin — Red",                     category: "Materials/SLA Resin/Standard", unit: L, aliases: ["Elegoo", "Red"] },
-  { name: "Elegoo Standard Resin — Blue",                    category: "Materials/SLA Resin/Standard", unit: L, aliases: ["Elegoo", "Blue"] },
-  { name: "Elegoo Standard Resin — Green",                   category: "Materials/SLA Resin/Standard", unit: L, aliases: ["Elegoo", "Green"] },
-
-  // ── eSUN PLA Resin ───────────────────────────────────────────────
-  { name: "eSUN eResin-PLA — Grey",                          category: "Materials/SLA Resin/Standard", unit: L, aliases: ["eSUN", "PLA", "Grey"] },
-  { name: "eSUN eResin-PLA — White",                         category: "Materials/SLA Resin/Standard", unit: L, aliases: ["eSUN", "PLA", "White"] },
-  { name: "eSUN eResin-PLA — Black",                         category: "Materials/SLA Resin/Standard", unit: L, aliases: ["eSUN", "PLA", "Black"] },
-  { name: "eSUN eResin-PLA — Clear",                         category: "Materials/SLA Resin/Standard", unit: L, aliases: ["eSUN", "PLA", "Clear"] },
-
-  // ── eSUN Specialty Resins ────────────────────────────────────────
-  { name: "eSUN eLastic Flexible Resin (0.5 kg)",            category: "Materials/SLA Resin/Flexible", unit: KG, aliases: ["eSUN", "Elastic", "Flex"] },
-  { name: "eSUN Hard Tough Resin — Black",                   category: "Materials/SLA Resin/Engineering", unit: L, aliases: ["eSUN", "Tough", "Black"] },
-  { name: "eSUN High Temp Resin",                            category: "Materials/SLA Resin/Engineering", unit: L, aliases: ["eSUN", "High Temp"] },
-];
+import { buildPartTypeArtUrl } from "./part-type-art.js";
+import { SLA_RESIN_SEED_CATALOG } from "./seed-data.js";
 
 async function main(): Promise<void> {
   const db = createDatabase(config.dataPath);
@@ -62,14 +28,14 @@ async function main(): Promise<void> {
   let created = 0;
   let skipped = 0;
 
-  for (const item of CATALOG) {
+  for (const item of SLA_RESIN_SEED_CATALOG) {
     const draft: NewPartTypeDraft = {
       kind: "new",
       canonicalName: item.name,
       category: item.category,
-      aliases: item.aliases ?? [],
+      aliases: item.aliases ? [...item.aliases] : [],
       notes: "SLA / MSLA photopolymer resin",
-      imageUrl: null,
+      imageUrl: buildPartTypeArtUrl(item.category, item.name),
       countable: false,
       unit: item.unit,
     };

@@ -13,73 +13,8 @@ import { PartDbPartsResource } from "../partdb/resources/parts.js";
 import { PartDbStorageLocationsResource } from "../partdb/resources/storage-locations.js";
 import { InventoryService } from "../services/inventory-service.js";
 import { type NewPartTypeDraft } from "@smart-db/contracts";
-
-interface SeedItem {
-  name: string;
-  category: string;
-  aliases?: string[];
-}
-
-const KG = { symbol: "kg", name: "Kilograms", isInteger: false };
-
-// All filaments are 1.75mm spools tracked by mass.
-const CATALOG: SeedItem[] = [
-  // ── PLA+ Standard ────────────────────────────────────────────────
-  { name: "eSUN PLA+ 1.75mm — Black",       category: "Materials/3D Printing Filament/PLA", aliases: ["PLA+", "Black"] },
-  { name: "eSUN PLA+ 1.75mm — White",       category: "Materials/3D Printing Filament/PLA", aliases: ["PLA+", "White"] },
-  { name: "eSUN PLA+ 1.75mm — Yellow",      category: "Materials/3D Printing Filament/PLA", aliases: ["PLA+", "Yellow"] },
-  { name: "eSUN PLA+ 1.75mm — Red",         category: "Materials/3D Printing Filament/PLA", aliases: ["PLA+", "Red"] },
-  { name: "eSUN PLA+ 1.75mm — Orange",      category: "Materials/3D Printing Filament/PLA", aliases: ["PLA+", "Orange"] },
-  { name: "eSUN PLA+ 1.75mm — Green",       category: "Materials/3D Printing Filament/PLA", aliases: ["PLA+", "Green"] },
-  { name: "eSUN PLA+ 1.75mm — Purple",      category: "Materials/3D Printing Filament/PLA", aliases: ["PLA+", "Purple"] },
-  { name: "eSUN PLA+ 1.75mm — Light Blue",  category: "Materials/3D Printing Filament/PLA", aliases: ["PLA+", "Light Blue"] },
-  { name: "eSUN PLA+ 1.75mm — Brown",       category: "Materials/3D Printing Filament/PLA", aliases: ["PLA+", "Brown"] },
-  { name: "eSUN PLA+ 1.75mm — Pink",        category: "Materials/3D Printing Filament/PLA", aliases: ["PLA+", "Pink"] },
-
-  // ── PLA — Silk and Specialty ────────────────────────────────────
-  { name: "eSUN PLA Silk Rainbow 1.75mm — Dragon Palace",  category: "Materials/3D Printing Filament/PLA", aliases: ["Silk", "Rainbow"] },
-  { name: "eSUN PLA Silk Rainbow 1.75mm — Flaming Mountain", category: "Materials/3D Printing Filament/PLA", aliases: ["Silk", "Rainbow"] },
-  { name: "eSUN PLA Luminous 1.75mm — Green",              category: "Materials/3D Printing Filament/PLA", aliases: ["Luminous", "Glow"] },
-  { name: "eSUN PLA Luminous 1.75mm — Rainbow",            category: "Materials/3D Printing Filament/PLA", aliases: ["Luminous", "Glow"] },
-  { name: "eSUN ePLA-Silk Magic 1.75mm — Red Blue",        category: "Materials/3D Printing Filament/PLA", aliases: ["Silk", "Magic"] },
-  { name: "eSUN eSilk PLA 1.75mm — Bronze",                category: "Materials/3D Printing Filament/PLA", aliases: ["Silk", "Bronze"] },
-  { name: "eSUN eSilk PLA 1.75mm — Violet",                category: "Materials/3D Printing Filament/PLA", aliases: ["Silk", "Violet"] },
-  { name: "eSUN ePLA-Silk Mystic 1.75mm — Gold Green Black", category: "Materials/3D Printing Filament/PLA", aliases: ["Silk", "Mystic"] },
-  { name: "eSUN ePLA-Silk Mystic 1.75mm — Gold Red Green", category: "Materials/3D Printing Filament/PLA", aliases: ["Silk", "Mystic"] },
-  { name: "eSUN eMarble PLA 1.75mm — Natural Grey",        category: "Materials/3D Printing Filament/PLA", aliases: ["Marble", "Grey"] },
-
-  // ── ABS+ ─────────────────────────────────────────────────────────
-  { name: "eSUN ABS+ 1.75mm — Black",          category: "Materials/3D Printing Filament/ABS", aliases: ["ABS+", "Black"] },
-  { name: "eSUN ABS+ 1.75mm — Grey",           category: "Materials/3D Printing Filament/ABS", aliases: ["ABS+", "Grey"] },
-  { name: "eSUN ABS+ 1.75mm — Orange",         category: "Materials/3D Printing Filament/ABS", aliases: ["ABS+", "Orange"] },
-  { name: "eSUN ABS+ 1.75mm — Fire Engine Red", category: "Materials/3D Printing Filament/ABS", aliases: ["ABS+", "Red"] },
-  { name: "eSUN ABS+ 1.75mm — Silver",         category: "Materials/3D Printing Filament/ABS", aliases: ["ABS+", "Silver"] },
-  { name: "eSUN ABS+ 1.75mm — Light Blue",     category: "Materials/3D Printing Filament/ABS", aliases: ["ABS+", "Light Blue"] },
-  { name: "eSUN ABS+ 1.75mm — Purple",         category: "Materials/3D Printing Filament/ABS", aliases: ["ABS+", "Purple"] },
-  { name: "eSUN ABS+ 1.75mm — Brown",          category: "Materials/3D Printing Filament/ABS", aliases: ["ABS+", "Brown"] },
-  { name: "eSUN ABS+ 1.75mm — Natural",        category: "Materials/3D Printing Filament/ABS", aliases: ["ABS+", "Natural"] },
-  { name: "eSUN ABS+ 1.75mm — Blue",           category: "Materials/3D Printing Filament/ABS", aliases: ["ABS+", "Blue"] },
-  { name: "eSUN ABS+ 1.75mm — Yellow",         category: "Materials/3D Printing Filament/ABS", aliases: ["ABS+", "Yellow"] },
-  { name: "eSUN ABS+ 1.75mm — Pink",           category: "Materials/3D Printing Filament/ABS", aliases: ["ABS+", "Pink"] },
-
-  // ── PETG ─────────────────────────────────────────────────────────
-  { name: "eSUN PETG 1.75mm — Yellow",            category: "Materials/3D Printing Filament/PETG", aliases: ["PETG", "Yellow"] },
-  { name: "eSUN PETG 1.75mm — Solid Red",         category: "Materials/3D Printing Filament/PETG", aliases: ["PETG", "Red"] },
-  { name: "eSUN PETG 1.75mm — Green",             category: "Materials/3D Printing Filament/PETG", aliases: ["PETG", "Green"] },
-  { name: "eSUN PETG 1.75mm — Translucent Grey",  category: "Materials/3D Printing Filament/PETG", aliases: ["PETG", "Grey"] },
-  { name: "eSUN PETG 1.75mm — Blue",              category: "Materials/3D Printing Filament/PETG", aliases: ["PETG", "Blue"] },
-
-  // ── TPU and Flexible ─────────────────────────────────────────────
-  { name: "eSUN eTPU 1.75mm — White (95A)",       category: "Materials/3D Printing Filament/TPU", aliases: ["TPU", "White", "95A"] },
-  { name: "eSUN eTPU 1.75mm — Black (95A)",       category: "Materials/3D Printing Filament/TPU", aliases: ["TPU", "Black", "95A"] },
-  { name: "eSUN eFlex TPU 1.75mm — Natural (87A)", category: "Materials/3D Printing Filament/TPU", aliases: ["TPU", "Flex", "Natural", "87A"] },
-  { name: "eSUN eLastic 1.75mm — Black (83A)",    category: "Materials/3D Printing Filament/TPU", aliases: ["Elastic", "Black", "83A"] },
-  { name: "SunLU TPU 1.75mm — Burgundy (95A)",    category: "Materials/3D Printing Filament/TPU", aliases: ["TPU", "Burgundy", "95A"] },
-
-  // ── Carbon Fibre Nylon ───────────────────────────────────────────
-  { name: "eSUN ePA12-CF 1.75mm — Black",         category: "Materials/3D Printing Filament/Nylon CF", aliases: ["Nylon", "PA12", "Carbon Fibre"] },
-  { name: "eSUN PA-CF 1.75mm — Black",            category: "Materials/3D Printing Filament/Nylon CF", aliases: ["Nylon", "PA", "Carbon Fibre"] },
-];
+import { buildPartTypeArtUrl } from "./part-type-art.js";
+import { FDM_FILAMENT_SEED_CATALOG, KG } from "./seed-data.js";
 
 async function main(): Promise<void> {
   const db = createDatabase(config.dataPath);
@@ -93,14 +28,14 @@ async function main(): Promise<void> {
   let created = 0;
   let skipped = 0;
 
-  for (const item of CATALOG) {
+  for (const item of FDM_FILAMENT_SEED_CATALOG) {
     const draft: NewPartTypeDraft = {
       kind: "new",
       canonicalName: item.name,
       category: item.category,
-      aliases: item.aliases ?? [],
+      aliases: item.aliases ? [...item.aliases] : [],
       notes: "FDM filament — track by mass",
-      imageUrl: null,
+      imageUrl: buildPartTypeArtUrl(item.category, item.name),
       countable: false,  // bulk material
       unit: KG,
     };

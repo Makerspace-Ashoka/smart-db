@@ -425,6 +425,7 @@ export class InventoryService {
     id: string;
     canonicalName: string;
     categoryPath: string[];
+    imageUrl: string | null;
     unit: { symbol: string; name: string; isInteger: boolean };
     countable: boolean;
     bins: number;
@@ -441,6 +442,7 @@ export class InventoryService {
           pt.canonical_name,
           pt.category,
           pt.category_path_json,
+          pt.image_url,
           pt.unit_symbol,
           pt.unit_name,
           pt.unit_is_integer,
@@ -459,6 +461,7 @@ export class InventoryService {
         canonical_name: string;
         category: string;
         category_path_json: string;
+        image_url: string | null;
         unit_symbol: string;
         unit_name: string;
         unit_is_integer: number;
@@ -482,6 +485,7 @@ export class InventoryService {
         id: row.id,
         canonicalName: row.canonical_name,
         categoryPath,
+        imageUrl: stringOrNull(row.image_url),
         unit: {
           symbol: row.unit_symbol,
           name: row.unit_name,
