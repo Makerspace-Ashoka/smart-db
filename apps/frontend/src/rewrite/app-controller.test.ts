@@ -407,6 +407,33 @@ describe("RewriteAppController", () => {
     controller.dispose();
   });
 
+  it("keeps the idle scanner artwork passive and uses a dedicated camera button", async () => {
+    const { startRewriteApp } = await import("./app-controller");
+    apiMock.getSession.mockResolvedValueOnce({
+      subject: "user-1",
+      username: "lab-admin",
+      name: "Lab Admin",
+      email: "lab@example.com",
+      roles: ["smartdb.admin"],
+      issuedAt: "2026-01-01T00:00:00.000Z",
+      expiresAt: null,
+    });
+
+    const controller = startRewriteApp(document.getElementById("root")!);
+    await flush();
+
+    const viewfinder = document.querySelector<HTMLElement>(".scan-viewfinder");
+    expect(viewfinder).not.toBeNull();
+    expect(viewfinder!.dataset.action).toBeUndefined();
+    expect(viewfinder!.querySelector(".scan-idle-art")).not.toBeNull();
+
+    const cameraButton = viewfinder!.querySelector<HTMLButtonElement>('[data-action="camera-start"]');
+    expect(cameraButton).not.toBeNull();
+    expect(cameraButton!.classList.contains("camera-start-btn")).toBe(true);
+    expect(cameraButton!.textContent).toContain("Enable camera");
+    controller.dispose();
+  });
+
   it("strips transport noise before lookup without rewriting the scanned identity", async () => {
     const { startRewriteApp } = await import("./app-controller");
     apiMock.getSession.mockResolvedValueOnce({

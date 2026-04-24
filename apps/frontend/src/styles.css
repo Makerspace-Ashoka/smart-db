@@ -993,17 +993,20 @@ button:disabled { opacity: 0.4; cursor: not-allowed; }
   color: var(--orange);
 }
 
-/* ── camera ascii art button ── */
+/* ── camera control button ── */
 .camera-btn {
   display: flex;
-  flex-direction: column;
+  flex-direction: row;
   align-items: center;
-  gap: 0.75rem;
-  padding: 2rem 1rem;
+  justify-content: center;
+  gap: 0.45rem;
+  padding: 0.6rem 0.9rem;
   background: var(--surface);
-  border: 1px dashed var(--border-2);
-  color: var(--ink-2);
-  width: 100%;
+  border: 1px solid var(--border-2);
+  border-radius: 8px;
+  color: var(--ink);
+  width: auto;
+  min-height: 44px;
 }
 
 .camera-btn:hover:not(:disabled) {
@@ -1012,16 +1015,20 @@ button:disabled { opacity: 0.4; cursor: not-allowed; }
   color: var(--blue);
 }
 
-.camera-ascii {
+.camera-btn-kicker {
   font-family: var(--mono);
-  font-size: 1rem;
-  line-height: 1.3;
-  white-space: pre;
+  font-size: 0.62rem;
+  letter-spacing: 0.12em;
+  text-transform: uppercase;
   color: var(--ink-3);
 }
 
-.camera-btn:hover .camera-ascii {
-  color: var(--blue);
+.camera-btn-label {
+  font-family: var(--mono);
+  font-size: 0.72rem;
+  font-weight: 600;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
 }
 
 /* ── entity kind corner switch ─────── */
@@ -2715,29 +2722,6 @@ a { transition: color var(--t) var(--ease-in-out); }
   margin: 0;
 }
 
-.scan-viewfinder .qr-scanner > button,
-.scan-viewfinder .camera-btn {
-  position: absolute;
-  inset: 0;
-  width: 100%;
-  height: 100%;
-  min-height: 0;
-  background: transparent;
-  border: 0;
-  border-radius: 0;
-  color: rgba(243, 236, 220, 0.92);
-  display: flex;
-  flex-direction: column;
-  align-items: center;
-  justify-content: center;
-  gap: 0.4rem;
-}
-
-.scan-viewfinder .camera-btn .camera-ascii,
-.scan-viewfinder .camera-btn > span:not(.camera-ascii) {
-  display: none;
-}
-
 .scan-viewfinder .viewfinder {
   position: absolute;
   inset: 0;
@@ -3133,18 +3117,6 @@ a { transition: color var(--t) var(--ease-in-out); }
 .result-card-headline .ui-icon {
   width: 1.35rem;
   height: 1.35rem;
-}
-
-.camera-btn {
-  min-height: 220px;
-  justify-content: center;
-  border-radius: 16px;
-  background: var(--surface);
-  border: 1px dashed var(--border-2);
-}
-
-.camera-btn .camera-ascii {
-  color: var(--blue);
 }
 
 .viewfinder {
@@ -3924,7 +3896,6 @@ button.primary-cta:disabled {
   --font-sans: var(--font);
   --serif: var(--display);
   --rule: var(--border);
-  --scan-plate-url: url("/art/generated/scan-workbench-light.png");
   --corner-ornaments-url: url("/art/generated/corner-ornaments-light.svg");
   --scan-art-left-top-url: url("/art/generated/scan-art-left-top.png");
   --scan-art-left-mid-url: url("/art/generated/scan-art-left-mid.png");
@@ -3953,7 +3924,6 @@ button.primary-cta:disabled {
 }
 
 html.dark {
-  --scan-plate-url: url("/art/generated/scan-workbench-dark.png");
   --corner-ornaments-url: url("/art/generated/corner-ornaments-dark.svg");
   --bg: #091522;
   --bg-ink: #132337;
@@ -4262,8 +4232,11 @@ html.dark .location-group {
   transform-origin: 50% 58%;
   will-change: transform, filter;
   background:
-    linear-gradient(180deg, rgba(13,20,35,0.18), rgba(13,20,35,0.08)),
-    var(--scan-plate-url) center / cover no-repeat;
+    radial-gradient(circle at 50% 42%, color-mix(in srgb, var(--surface) 74%, white 10%) 0 11%, transparent 31%),
+    linear-gradient(180deg, color-mix(in srgb, var(--surface-2) 82%, transparent), color-mix(in srgb, var(--dim) 72%, transparent)),
+    linear-gradient(90deg, rgba(23, 68, 147, 0.06) 1px, transparent 1px),
+    linear-gradient(rgba(23, 68, 147, 0.045) 1px, transparent 1px);
+  background-size: auto, auto, 32px 32px, 32px 32px;
   box-shadow:
     0 18px 42px rgba(13, 20, 35, 0.13),
     0 4px 12px rgba(13, 20, 35, 0.08),
@@ -4318,8 +4291,11 @@ html.dark .location-group {
 html.dark .scan-viewfinder {
   border-color: rgba(145, 175, 234, 0.18);
   background:
-    linear-gradient(180deg, rgba(4,10,18,0.12), rgba(4,10,18,0.18)),
-    var(--scan-plate-url) center / cover no-repeat;
+    radial-gradient(circle at 50% 42%, rgba(145, 175, 234, 0.08) 0 12%, transparent 32%),
+    linear-gradient(180deg, rgba(9, 23, 40, 0.92), rgba(6, 15, 27, 0.96)),
+    linear-gradient(90deg, rgba(145,175,234,0.055) 1px, transparent 1px),
+    linear-gradient(rgba(145,175,234,0.045) 1px, transparent 1px);
+  background-size: auto, auto, 32px 32px, 32px 32px;
   box-shadow:
     0 18px 44px rgba(0, 0, 0, 0.34),
     0 0 0 1px rgba(145, 175, 234, 0.08) inset;
@@ -4388,6 +4364,198 @@ html.dark .scan-viewfinder:focus-within {
   text-transform: uppercase;
   padding: 0 0.8rem;
   text-wrap: balance;
+}
+
+.scan-idle-art {
+  position: absolute;
+  inset: 0;
+  z-index: 2;
+  width: 100%;
+  height: 100%;
+  color: #1d355e;
+  pointer-events: none;
+}
+
+.scan-idle-art-grid {
+  stroke: currentColor;
+  stroke-width: 0.65;
+  opacity: 0.18;
+}
+
+.scan-idle-art-circuit,
+.scan-idle-art-tools,
+.scan-idle-art-calibration {
+  fill: none;
+  stroke: currentColor;
+  stroke-linecap: round;
+  stroke-linejoin: round;
+}
+
+.scan-idle-art-circuit {
+  stroke-width: 1.25;
+  opacity: 0.32;
+}
+
+.scan-idle-art-circuit circle {
+  fill: color-mix(in srgb, var(--surface) 55%, var(--blue) 45%);
+  stroke: currentColor;
+}
+
+.scan-idle-art-tools {
+  stroke-width: 1.45;
+  opacity: 0.24;
+}
+
+.scan-idle-art-target {
+  color: #141c2d;
+  fill: color-mix(in srgb, var(--surface) 84%, var(--ink) 16%);
+  stroke: currentColor;
+  stroke-width: 1.35;
+  opacity: 0.94;
+  filter: drop-shadow(0 12px 18px rgba(13, 20, 35, 0.14));
+}
+
+.scan-idle-art-target > rect:first-child {
+  fill: color-mix(in srgb, var(--ink) 88%, black 12%);
+  stroke: color-mix(in srgb, var(--ink) 72%, white 28%);
+}
+
+.scan-idle-art-target > rect:nth-child(2) {
+  fill: color-mix(in srgb, var(--ink) 78%, var(--surface) 22%);
+  opacity: 0.9;
+}
+
+.scan-idle-art-target > rect:nth-child(3) {
+  fill: color-mix(in srgb, var(--surface) 92%, white 8%);
+  stroke: color-mix(in srgb, var(--ink) 42%, var(--surface));
+}
+
+.scan-idle-art-qr {
+  fill: color-mix(in srgb, var(--ink) 88%, black 12%);
+  stroke: none;
+}
+
+.scan-idle-art-calibration {
+  stroke: var(--orange);
+  stroke-width: 1.05;
+  opacity: 0.38;
+}
+
+html.dark .scan-idle-art {
+  color: #91afea;
+}
+
+html.dark .scan-idle-art-target {
+  fill: rgba(145, 175, 234, 0.08);
+  stroke: rgba(238, 244, 251, 0.42);
+  filter: drop-shadow(0 14px 24px rgba(0, 0, 0, 0.36));
+}
+
+html.dark .scan-idle-art-target > rect:first-child {
+  fill: rgba(5, 9, 15, 0.88);
+  stroke: rgba(145, 175, 234, 0.28);
+}
+
+html.dark .scan-idle-art-target > rect:nth-child(2) {
+  fill: rgba(6, 13, 24, 0.72);
+}
+
+html.dark .scan-idle-art-target > rect:nth-child(3) {
+  fill: rgba(220, 229, 244, 0.8);
+  stroke: rgba(145, 175, 234, 0.35);
+}
+
+html.dark .scan-idle-art-qr {
+  fill: #07111e;
+}
+
+.scan-viewfinder .qr-scanner {
+  z-index: 4;
+  pointer-events: none;
+}
+
+.scan-viewfinder .qr-scanner > * {
+  pointer-events: auto;
+}
+
+.scan-viewfinder .camera-btn {
+  position: absolute;
+  right: 0.9rem;
+  bottom: 0.9rem;
+  z-index: 5;
+  width: auto;
+  max-width: calc(100% - 1.8rem);
+  min-height: 2.75rem;
+  padding: 0.54rem 0.82rem;
+  border-radius: 8px;
+  border: 1px solid color-mix(in srgb, var(--blue) 34%, var(--border));
+  background: color-mix(in srgb, var(--surface) 84%, transparent);
+  box-shadow: var(--etched-shadow);
+  color: var(--ink);
+  backdrop-filter: blur(10px);
+}
+
+.scan-viewfinder .camera-btn:hover:not(:disabled) {
+  transform: translateY(-1px);
+  background: color-mix(in srgb, var(--surface) 92%, var(--blue-bg));
+}
+
+.scan-viewfinder .camera-btn:disabled {
+  opacity: 0.62;
+  cursor: wait;
+}
+
+.scan-viewfinder .camera-live-stop,
+.scan-viewfinder .camera-next-btn {
+  position: absolute;
+  right: 0.85rem;
+  z-index: 5;
+  width: auto;
+  min-height: 2.65rem;
+  padding: 0.5rem 0.8rem;
+  border-radius: 8px;
+  border: 1px solid rgba(255, 250, 240, 0.34);
+  background: rgba(4, 8, 14, 0.58);
+  color: rgba(255, 250, 240, 0.94);
+  font-family: var(--mono);
+  font-size: 0.72rem;
+  font-weight: 600;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  backdrop-filter: blur(10px);
+}
+
+.scan-viewfinder .camera-live-stop {
+  top: 0.85rem;
+}
+
+.scan-viewfinder .camera-next-btn {
+  bottom: 0.85rem;
+}
+
+.viewfinder-hint {
+  position: absolute;
+  left: 50%;
+  bottom: 0.9rem;
+  transform: translateX(-50%);
+  padding: 0.34rem 0.58rem;
+  border-radius: 999px;
+  background: rgba(4, 8, 14, 0.54);
+  color: rgba(255, 250, 240, 0.9);
+  font-family: var(--mono);
+  font-size: 0.68rem;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  pointer-events: none;
+}
+
+html.dark .scan-viewfinder .camera-btn {
+  border-color: rgba(145, 175, 234, 0.35);
+  background: rgba(10, 22, 36, 0.78);
+  color: var(--ink);
+  box-shadow:
+    0 0 0 1px rgba(145, 175, 234, 0.08) inset,
+    0 10px 24px rgba(0, 0, 0, 0.22);
 }
 
 .scan-input-row input,
