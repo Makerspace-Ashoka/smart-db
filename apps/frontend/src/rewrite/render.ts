@@ -63,7 +63,7 @@ export function renderApp(state: RewriteUiState): string {
   const isAdmin = hasSmartDbRole(state.authState.session.roles, smartDbRoles.admin);
 
   return `
-    <div class="shell app-shell" data-art-zone="app-shell">
+    <div class="shell app-shell app-shell-${state.activeTab}" data-art-zone="app-shell" data-active-tab="${state.activeTab}">
       <header class="app-masthead" data-motion-surface="masthead">
         <div class="app-masthead-row">
           <div class="app-masthead-brand">
