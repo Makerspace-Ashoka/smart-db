@@ -956,10 +956,11 @@ button:disabled { opacity: 0.4; cursor: not-allowed; }
   font-family: var(--mono);
   font-size: 0.68rem;
   font-weight: 600;
-  letter-spacing: 0.14em;
+  letter-spacing: 0.06em;
   text-transform: uppercase;
   color: var(--ink-3);
-  line-height: 1;
+  line-height: 1.15;
+  overflow-wrap: anywhere;
 }
 .sync-status-card span {
   display: block;
@@ -1439,7 +1440,7 @@ html.theme-transition *::after {
   .viewfinder video { max-height: 55vh; }
 
   .metrics { grid-template-columns: repeat(5, minmax(0, 1fr)); }
-  .sync-status-grid { grid-template-columns: repeat(5, minmax(0, 1fr)); }
+  .sync-status-grid { grid-template-columns: repeat(4, minmax(0, 1fr)); }
 
   .header-bar { padding-bottom: 0.875rem; }
 
@@ -3280,6 +3281,11 @@ html.dark body {
     padding-left: 0.85rem;
     padding-right: 0.85rem;
   }
+
+  /* Full-bleed panels must match the shell's mobile padding, otherwise the
+     negative margin (base: -1rem) overshoots and pushes ~2px of horizontal
+     overflow past the viewport edge on phones. */
+  .panel { margin-left: -0.85rem; margin-right: -0.85rem; }
 
   .auth-card,
   .auth-wait,

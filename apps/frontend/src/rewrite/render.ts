@@ -1156,6 +1156,9 @@ function renderInteractCard(
           ${secondary.length > 0 ? `<div class="action-buttons action-buttons-secondary">${secondary.map(renderBtn).join("")}</div>` : ""}
         `;
       })()}
+      ${state.scanResult.availableActions.length === 0 ? `
+        <p class="muted-copy no-actions-note">No further actions — this item is ${escapeHtml(state.scanResult.entity.state.replace(/_/g, " "))}.</p>
+      ` : `
       <form class="form-grid" data-form="event">
         ${(state.eventForm.event === "moved" || state.eventForm.event === "checked_out") ? `
           <label>
@@ -1201,6 +1204,7 @@ function renderInteractCard(
           ${state.pendingAction === "event" ? "Saving..." : escapeHtml(`Confirm ${actionLabel(state.eventForm.event)}`)}
         </button>
       </form>
+      `}
       ${renderScanLocations(state)}
       ${state.scanResult.recentEvents.length > 0 ? `
         <p class="section-label">Recent history</p>
