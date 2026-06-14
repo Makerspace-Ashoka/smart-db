@@ -49,6 +49,15 @@ export async function registerAuthRoutes(
       );
       return reply.redirect(result.redirectTo);
     } catch (error) {
+      // Surface the real reason in the logs. Previously the callback swallowed
+      // every failure and only showed the user a generic "Sign-in failed",
+      // making the OAuth round-trip impossible to diagnose. The error message
+      // (e.g. token-exchange status, nonce/state mismatch, JWKS failure) is
+      // structured and carries no bearer tokens, so it is safe to log.
+      request.log.error(
+        { err: error, hasAuthRequestCookie: Boolean(request.cookies[authRequestCookieName]) },
+        "auth callback failed",
+      );
       reply.clearCookie(
         authRequestCookieName,
         transientCookieOptions(config.publicBaseUrl),

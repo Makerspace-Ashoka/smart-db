@@ -1326,9 +1326,10 @@ export class RewriteAppController {
     try {
       const session = await api.getSession(signal);
       this.authActor.send({ type: "SESSION.RESTORED", session });
-      if (authError) {
-        this.addToast(authError, "error");
-      }
+      // If the session restored, sign-in succeeded — do NOT surface a stale
+      // `authError` from a prior/redundant failed callback. Showing
+      // "Sign-in failed. Please try again." to an authenticated user is wrong
+      // and was the long-standing "even a successful sign-in says it failed" bug.
       await this.loadAuthenticatedData(session);
       this.hydrateFromUrl();
       this.startBackgroundTimers();
