@@ -1178,7 +1178,8 @@ function renderInteractCard(
         ${state.eventForm.event === "checked_out" ? `
           <label>
             Assignee
-            <input name="event.assignee" value="${attr(state.eventForm.assignee)}" />
+            <input name="event.assignee" value="${attr(state.eventForm.assignee)}" placeholder="${attr(state.authState.status === "authenticated" ? state.authState.session.username : "")}" />
+            <small class="field-help">Leave blank to check out to yourself.</small>
           </label>
         ` : ""}
         ${(state.eventForm.event === "restocked" || state.eventForm.event === "consumed" || state.eventForm.event === "adjusted") && state.scanResult.entity.targetType === "bulk" ? `

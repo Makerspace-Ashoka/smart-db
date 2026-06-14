@@ -72,6 +72,7 @@ export function buildDefaultEventFormForEntity(
 ): EventFormState {
   return {
     ...defaultEventForm,
+    event: defaultEventActionForEntity(entity),
     targetType: entity.targetType,
     targetId: entity.id,
     location: entity.location,
@@ -81,6 +82,22 @@ export function buildDefaultEventFormForEntity(
         : "",
     quantityIsInteger: entity.partType.unit.isInteger,
   };
+}
+
+// Default the interact form to the action most likely intended for the item's
+// current state, so the prominent confirm button matches intent: scanning an
+// AVAILABLE item is almost always a check-out, and a CHECKED-OUT item a return.
+// Other states keep the neutral "moved" default. Kept pure (state only) so the
+// dirty-check baseline in hasInProgressScanWork() stays consistent with the
+// form the controller actually seeds.
+function defaultEventActionForEntity(
+  entity: Extract<ScanResponse, { mode: "interact" }>["entity"],
+): EventFormState["event"] {
+  if (entity.targetType === "instance") {
+    if (entity.state === "available") return "checked_out";
+    if (entity.state === "checked_out") return "returned";
+  }
+  return defaultEventForm.event;
 }
 
 export function hasInProgressScanWork(
