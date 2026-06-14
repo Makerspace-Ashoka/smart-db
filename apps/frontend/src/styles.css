@@ -1328,11 +1328,11 @@ button:disabled { opacity: 0.4; cursor: not-allowed; }
 /* ── dark mode ───────── */
 
 html.dark {
-  --bg: #11151c;
-  --surface: #181d27;
+  --bg: #0c1016;
+  --surface: #171d28;
   --dim: #1d2530;
-  --border: #2d3948;
-  --border-2: #435267;
+  --border: #2a3645;
+  --border-2: #415065;
 
   --ink: #eef2f8;
   --ink-strong: #fbfdff;
@@ -3192,11 +3192,11 @@ a { transition: color var(--t) var(--ease-in-out); }
 }
 
 html.dark {
-  --bg: #11151c;
-  --surface: #181d27;
+  --bg: #0c1016;
+  --surface: #171d28;
   --dim: #1d2530;
-  --border: #2d3948;
-  --border-2: #435267;
+  --border: #2a3645;
+  --border-2: #415065;
 
   --ink: #eef2f8;
   --ink-strong: #fbfdff;
@@ -3988,14 +3988,11 @@ body::before {
 
 html.dark body {
   background-image:
-    linear-gradient(rgba(145, 175, 234, 0.035) 1px, transparent 1px),
-    linear-gradient(90deg, rgba(145, 175, 234, 0.032) 1px, transparent 1px),
-    repeating-linear-gradient(0deg, transparent, transparent 23px, rgba(145, 175, 234, 0.035) 23px, rgba(145, 175, 234, 0.035) 24px),
-    repeating-linear-gradient(90deg, transparent, transparent 23px, rgba(145, 175, 234, 0.035) 23px, rgba(145, 175, 234, 0.035) 24px),
-    var(--parts-pattern-url);
+    repeating-linear-gradient(0deg, transparent, transparent 23px, rgba(145, 175, 234, 0.016) 23px, rgba(145, 175, 234, 0.016) 24px),
+    repeating-linear-gradient(90deg, transparent, transparent 23px, rgba(145, 175, 234, 0.016) 23px, rgba(145, 175, 234, 0.016) 24px);
 }
 
-html.dark body::before { opacity: 0.78; }
+html.dark body::before { opacity: 0.32; }
 #root { position: relative; z-index: 1; }
 
 .shell {
@@ -4468,7 +4465,7 @@ html.dark .scan-idle-mark {
 .scan-viewfinder .camera-btn {
   position: absolute;
   right: 0.9rem;
-  bottom: 0.9rem;
+  top: 0.9rem;
   z-index: 5;
   width: auto;
   max-width: calc(100% - 1.8rem);
@@ -4842,6 +4839,43 @@ html.dark .part-hero {
 .borrow-status { margin-top: 0.25rem; }
 .borrow-overdue { margin-left: 0.5rem; }
 .scan-locations { margin-top: 0.75rem; }
+
+/* "At N places" list — location-led rows. Replaces the checkbox-grid layout
+   that crammed the QR code into a 1.125rem column and overlapped the location. */
+.scan-location-list { list-style: none; margin: 0.4rem 0 0; padding: 0; }
+.scan-location-item {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 0.75rem;
+  padding: 0.45rem 0.5rem;
+  border-bottom: 1px solid var(--border);
+  font-size: 0.8125rem;
+}
+.scan-location-item:last-child { border-bottom: none; }
+.scan-location-item.selected {
+  background: var(--blue-bg);
+  border-radius: 8px;
+  border-bottom-color: transparent;
+}
+.scan-location-main { display: flex; flex-direction: column; gap: 0.1rem; min-width: 0; }
+.scan-location-where { color: var(--ink); overflow-wrap: anywhere; }
+.scan-location-code {
+  font-family: var(--mono);
+  font-size: 0.68rem;
+  color: var(--ink-3);
+  overflow-wrap: anywhere;
+}
+.scan-location-state {
+  font-family: var(--mono);
+  font-size: 0.75rem;
+  color: var(--ink-2);
+  text-align: right;
+  overflow-wrap: anywhere;
+  flex-shrink: 0;
+  max-width: 48%;
+}
+
 .scan-edit-history { margin-top: 1rem; }
 
 .inventory-reverse-toolbar {

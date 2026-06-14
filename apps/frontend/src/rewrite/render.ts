@@ -1178,7 +1178,7 @@ function renderInteractCard(
         ${state.eventForm.event === "checked_out" ? `
           <label>
             Assignee
-            <input name="event.assignee" value="${attr(state.eventForm.assignee)}" placeholder="${attr(state.authState.status === "authenticated" ? state.authState.session.username : "")}" />
+            <input name="event.assignee" value="${attr(state.eventForm.assignee)}" placeholder="${attr(state.authState.status === "authenticated" ? formatActor(state.authState.session.username) : "")}" />
             <small class="field-help">Leave blank to check out to yourself.</small>
           </label>
         ` : ""}
@@ -1213,7 +1213,7 @@ function renderInteractCard(
           ${state.scanResult.recentEvents.map((stockEvent) => `
             <article>
               <strong>${escapeHtml(actionLabel(stockEvent.event))}</strong>
-              <span>${escapeHtml(stockEvent.actor)} · ${escapeHtml(formatTimestamp(stockEvent.createdAt))}</span>
+              <span>${escapeHtml(formatActor(stockEvent.actor))} · ${escapeHtml(formatTimestamp(stockEvent.createdAt))}</span>
               <small>${escapeHtml(`${stockEvent.fromState ?? "none"} → ${stockEvent.toState ?? "none"}`)}</small>
             </article>
           `).join("")}
@@ -1357,7 +1357,7 @@ function renderCurrentBorrow(state: RewriteUiState): string {
     : "";
   return `
     <p class="borrow-status">
-      Borrowed by <strong>${escapeHtml(borrow.borrower)}</strong> since ${escapeHtml(formatTimestamp(borrow.borrowedAt))}${due}${overdue}
+      Borrowed by <strong>${escapeHtml(formatActor(borrow.borrower))}</strong> since ${escapeHtml(formatTimestamp(borrow.borrowedAt))}${due}${overdue}
     </p>
   `;
 }
@@ -1394,6 +1394,17 @@ function renderScanQuickChips(state: RewriteUiState): string {
   return `<div class="quick-chips" aria-label="Quick actions">${chips.join("")}</div>`;
 }
 
+// Human-friendly actor/assignee label. SSO usernames are full emails like
+// "dhivyabharathi.chellakumar_ug2024@ashoka.edu.in"; strip the domain and the
+// "_ug2024"-style roll-number suffix so the activity log reads as a name.
+export function formatActor(actor: string | null | undefined): string {
+  if (!actor) return "system";
+  let name = actor.split("@")[0] ?? actor;
+  name = name.replace(/_[a-z]*\d{2,}.*$/i, "");
+  name = name.replace(/[._]+/g, " ").trim();
+  return name || actor;
+}
+
 function renderScanLocations(state: RewriteUiState): string {
   if (!state.scanResult || state.scanResult.mode !== "interact") {
     return "";
@@ -1424,20 +1435,23 @@ function renderScanLocations(state: RewriteUiState): string {
   return `
     <section class="scan-locations" aria-label="Other locations for this part">
       <p class="muted-copy">At ${total} places:</p>
-      <ul class="inventory-detail-list">
+      <ul class="scan-location-list">
         ${bulkStocks.map((bulk) => `
-          <li class="inventory-detail-item${bulk.id === scannedId ? " selected" : ""}">
-            <code>${escapeHtml(bulk.qrCode)}</code>
-            <span>${escapeHtml(bulk.location)}</span>
-            <strong>${escapeHtml(String(bulk.quantity))} ${escapeHtml(unit.symbol)}</strong>
+          <li class="scan-location-item${bulk.id === scannedId ? " selected" : ""}">
+            <span class="scan-location-main">
+              <span class="scan-location-where">${escapeHtml(bulk.location)}</span>
+              <code class="scan-location-code">${escapeHtml(bulk.qrCode)}</code>
+            </span>
+            <span class="scan-location-state">${escapeHtml(String(bulk.quantity))} ${escapeHtml(unit.symbol)}</span>
           </li>
         `).join("")}
         ${instances.map((instance) => `
-          <li class="inventory-detail-item${instance.id === scannedId ? " selected" : ""}">
-            <code>${escapeHtml(instance.qrCode)}</code>
-            <span>${escapeHtml(instance.location)}</span>
-            <strong>${escapeHtml(instance.status)}</strong>
-            ${instance.assignee ? `<span>${escapeHtml(instance.assignee)}</span>` : ""}
+          <li class="scan-location-item${instance.id === scannedId ? " selected" : ""}">
+            <span class="scan-location-main">
+              <span class="scan-location-where">${escapeHtml(instance.location)}</span>
+              <code class="scan-location-code">${escapeHtml(instance.qrCode)}</code>
+            </span>
+            <span class="scan-location-state">${escapeHtml(instance.status)}${instance.assignee ? ` · ${escapeHtml(formatActor(instance.assignee))}` : ""}</span>
           </li>
         `).join("")}
       </ul>
@@ -1478,7 +1492,7 @@ function renderScanEditPanel(state: RewriteUiState): string {
           ${edit.history.map((event) => `
             <article>
               <strong>${escapeHtml(correctionLabel(event.correctionKind))}</strong>
-              <span>${escapeHtml(event.actor)} · ${escapeHtml(formatTimestamp(event.createdAt))}</span>
+              <span>${escapeHtml(formatActor(event.actor))} · ${escapeHtml(formatTimestamp(event.createdAt))}</span>
               <small>${escapeHtml(event.reason)}</small>
             </article>
           `).join("")}
@@ -2004,7 +2018,7 @@ function renderPartTypeDetail(state: RewriteUiState, partTypeId: string): string
                       <li class="location-item">
                         <code>${escapeHtml(inst.qrCode)}</code>
                         <span class="location-item-kind">${escapeHtml(inst.status)}</span>
-                        ${inst.assignee ? `<span class="muted-copy">${escapeHtml(inst.assignee)}</span>` : ""}
+                        ${inst.assignee ? `<span class="muted-copy">${escapeHtml(formatActor(inst.assignee))}</span>` : ""}
                       </li>
                     `).join("")}
                   </ul>
@@ -2092,7 +2106,7 @@ function renderActivityTab(state: RewriteUiState): string {
               <span class="activity-icon tone-${icon.tone}" aria-hidden="true">${escapeHtml(icon.glyph)}</span>
               <div class="activity-item-body">
                 <div class="activity-item-header">
-                  <span class="activity-action">${escapeHtml(`${actionLabel(event.event)} by ${event.actor ?? "system"}`)}</span>
+                  <span class="activity-action">${escapeHtml(`${actionLabel(event.event)} by ${formatActor(event.actor)}`)}</span>
                   <span class="activity-time">${escapeHtml(formatTimestamp(event.createdAt))}</span>
                 </div>
                 ${event.partName ? `<span class="activity-item-name">${escapeHtml(event.partName)}</span>` : ""}
@@ -2152,7 +2166,7 @@ function renderCorrectionLog(state: RewriteUiState): string {
               </div>
               ${qrCode ? `<span class="activity-item-name"><code class="activity-code">${escapeHtml(qrCode)}</code></span>` : ""}
               <span class="activity-detail">${escapeHtml(event.reason)}</span>
-              <span class="correction-actor">by ${escapeHtml(event.actor)}</span>
+              <span class="correction-actor">by ${escapeHtml(formatActor(event.actor))}</span>
               ${qrCode ? `<button type="button" class="correction-link" data-action="open-correction-on-scan" data-qr-code="${attr(qrCode)}">Open on scan →</button>` : ""}
             </div>
           </li>
@@ -2262,14 +2276,14 @@ function renderAdminTab(state: RewriteUiState): string {
       </section>
 
       <section class="panel" id="admin-batches">
-        ${renderPanelTitle("Print QR batches", state.authState.status === "authenticated" ? `Pre-register sticker ranges. This batch will be attributed to ${state.authState.session.username}.` : "Pre-register sticker ranges.", "batch")}
+        ${renderPanelTitle("Print QR batches", state.authState.status === "authenticated" ? `Pre-register sticker ranges. This batch will be attributed to ${formatActor(state.authState.session.username)}.` : "Pre-register sticker ranges.", "batch")}
         <p class="muted-copy batch-preview">Next range preview: ${escapeHtml(state.batchForm.prefix)}-${state.batchForm.startNumber} to ${escapeHtml(state.batchForm.prefix)}-${state.batchForm.startNumber + state.batchForm.count - 1} (${state.batchForm.count} labels)</p>
         ${state.latestBatch ? `
           <div class="latest-batch-card">
             <div>
               <strong>Latest batch</strong>
               <p>${escapeHtml(`${state.latestBatch.id} · ${state.latestBatch.prefix}-${state.latestBatch.startNumber} to ${state.latestBatch.prefix}-${state.latestBatch.endNumber}`)}</p>
-              <small>${escapeHtml(`${state.latestBatch.endNumber - state.latestBatch.startNumber + 1} labels · created by ${state.latestBatch.actor}`)}</small>
+              <small>${escapeHtml(`${state.latestBatch.endNumber - state.latestBatch.startNumber + 1} labels · created by ${formatActor(state.latestBatch.actor)}`)}</small>
             </div>
             <button type="button" data-action="download-labels" ${disabled(isDownloadingLabels)}>${isDownloadingLabels ? "Downloading..." : "Download PDF Labels"}</button>
           </div>

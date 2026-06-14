@@ -1639,7 +1639,7 @@ describe("RewriteAppController", () => {
     await flush();
 
     expect(apiMock.getPartTypeItems).toHaveBeenCalledWith(measuredPartType.id);
-    const locationsList = document.querySelector<HTMLUListElement>(".scan-locations .inventory-detail-list");
+    const locationsList = document.querySelector<HTMLUListElement>(".scan-locations .scan-location-list");
     expect(locationsList).not.toBeNull();
     expect(locationsList!.querySelectorAll("li")).toHaveLength(2);
     expect(document.body.textContent).toContain("At 2 places");

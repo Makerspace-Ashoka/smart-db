@@ -43,7 +43,7 @@ import {
   parseReassignPartTypeForm,
   parseReverseIngestForm,
 } from "./parsers";
-import { renderApp } from "./render";
+import { renderApp, formatActor } from "./render";
 import { CameraScannerService } from "./services/camera-scanner-service";
 import {
   defaultAssignForm,
@@ -2765,7 +2765,7 @@ export class RewriteAppController {
         assignee: session.username,
       },
       "instance",
-      `Checked out to ${session.username}.`,
+      `Checked out to ${formatActor(session.username)}.`,
     );
   }
 
