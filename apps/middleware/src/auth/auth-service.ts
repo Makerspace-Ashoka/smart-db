@@ -131,28 +131,18 @@ export class AuthService {
   }
 
   async logout(sessionId: string | undefined): Promise<LogoutResult> {
-    if (!sessionId) {
-      return { redirectUrl: null };
+    if (sessionId) {
+      this.sessions.delete(sessionId);
     }
 
-    const existing = this.sessions.get(sessionId);
-    this.sessions.delete(sessionId);
-
-    // Building the Zitadel end-session URL requires the OIDC discovery doc.
-    // If Zitadel is unreachable, misconfigured, or its discovery endpoint
-    // errors out, we still want logout to succeed: the local session is
-    // already deleted, the HTTP cookie is about to be cleared by the route
-    // handler, and the user has no way to reauth against a broken IDP
-    // anyway. Surface null redirectUrl on any failure; the client's
-    // handleLogout already falls back to resetAuthenticatedView when
-    // redirectUrl is empty.
-    let redirectUrl: string | null = null;
-    try {
-      redirectUrl = await this.identityProvider.logoutUrl(existing?.idToken ?? null);
-    } catch {
-      redirectUrl = null;
-    }
-    return { redirectUrl };
+    // App-only logout: delete the local session (the route handler also clears
+    // the session cookie) and let the client return to the in-app SmartDB login
+    // screen. We intentionally do NOT redirect to the Zitadel end-session page —
+    // landing users on the IdP's screen is counter-intuitive. The IdP SSO
+    // session persists, so the next sign-in is fast. (To switch to a full
+    // single-logout, return identityProvider.logoutUrl(idToken) here and ensure
+    // a post_logout_redirect_uri back to the app is registered in Zitadel.)
+    return { redirectUrl: null };
   }
 
   private requireSecret(): string {

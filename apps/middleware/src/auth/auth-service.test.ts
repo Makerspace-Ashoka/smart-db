@@ -192,11 +192,13 @@ describe("AuthService", () => {
     });
 
     expect(service.getSession(stored.id)).toMatchObject({ username: "labeler" });
+    // App-only logout: deletes the local session and returns no redirect, so the
+    // client lands on the SmartDB login screen instead of the Zitadel page.
     await expect(service.logout(stored.id)).resolves.toEqual({
-      redirectUrl: "https://auth.example.com/logout",
+      redirectUrl: null,
     });
     expect(service.getSession(stored.id)).toBeNull();
-    expect(logoutUrl).toHaveBeenCalledWith("id-token");
+    expect(logoutUrl).not.toHaveBeenCalled();
   });
 
   it("still completes logout when the identity provider's logoutUrl throws", async () => {
