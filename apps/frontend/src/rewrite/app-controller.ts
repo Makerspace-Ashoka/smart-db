@@ -2694,12 +2694,19 @@ export class RewriteAppController {
         qrCode: target.qrCode.code,
         targetId: target.entity.id,
       });
-      const refreshed = await api.scan(target.qrCode.code, { autoIncrement: false });
-      this.patch({ scanResult: refreshed });
-      void this.loadScanLocations(refreshed.mode === "interact"
-        ? refreshed.entity.partType.id
-        : target.entity.partType.id);
       this.addToast(successToast, "success");
+      if (targetType === "instance") {
+        // Check out / return returns to the scan-ready view for the next item.
+        this.scanActor.send({ type: "SCAN.NEXT_REQUESTED" });
+        this.clearCurrentScanWorkspace();
+      } else {
+        // Bulk +1/-1 keeps the bin on screen so the count can be tapped rapidly.
+        const refreshed = await api.scan(target.qrCode.code, { autoIncrement: false });
+        this.patch({ scanResult: refreshed });
+        void this.loadScanLocations(refreshed.mode === "interact"
+          ? refreshed.entity.partType.id
+          : target.entity.partType.id);
+      }
       await this.loadAuthenticatedData();
     } catch (caught) {
       this.scanActor.send({
@@ -3098,7 +3105,16 @@ export class RewriteAppController {
         this.addToast(`${actionLabel(response.event)} recorded`, "success");
       }
 
-      if (this.state.scanResult?.mode === "interact") {
+      const wasInstanceEvent =
+        parsedCommand.kind === "record" && parsedCommand.request.targetType === "instance";
+      if (wasInstanceEvent) {
+        // Instance actions (check out, return, move, mark damaged/lost/consumed)
+        // return to the scan-ready view so the next item can be scanned, instead
+        // of lingering on the item that was just acted on.
+        this.scanActor.send({ type: "SCAN.NEXT_REQUESTED" });
+        this.clearCurrentScanWorkspace();
+      } else if (this.state.scanResult?.mode === "interact") {
+        // Bulk bins stay on screen so repeated restock/consume/adjust stays fast.
         await this.performScan(this.state.scanResult.qrCode.code, { silent: true });
       }
       await this.loadAuthenticatedData();

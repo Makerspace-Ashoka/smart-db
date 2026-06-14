@@ -1145,8 +1145,20 @@ function renderInteractCard(
       ${renderScanQuickChips(state)}
       ${(() => {
         const actions = state.scanResult.availableActions;
-        const primary = actions.filter((a) => a === "checked_out");
-        const secondary = actions.filter((a) => a !== "checked_out");
+        const ent = state.scanResult.entity;
+        // The primary (highlighted) action matches the item's state so a
+        // checked-out item leads with Return and an available item with Check
+        // out — instead of always promoting re-checkout.
+        const primaryAction =
+          ent.targetType === "instance"
+            ? ent.state === "checked_out"
+              ? "returned"
+              : ent.state === "available"
+                ? "checked_out"
+                : null
+            : null;
+        const primary = actions.filter((a) => a === primaryAction);
+        const secondary = actions.filter((a) => a !== primaryAction);
         if (primary.length === 0 && secondary.length === 0) return "";
         const renderBtn = (action: typeof actions[number]) =>
           `<button type="button" aria-pressed="${String(state.eventForm.event === action)}" class="${state.eventForm.event === action ? "selected" : ""}" data-action="select-event-action" data-event="${attr(action)}">${escapeHtml(actionLabel(action))}</button>`;
@@ -1378,12 +1390,16 @@ function renderScanQuickChips(state: RewriteUiState): string {
     if (available.has("consumed") && (entity.quantity ?? 0) > 0) {
       chips.push(`<button type="button" data-action="quick-bulk-decrement" ${disabled(pending)}>-1</button>`);
     }
-  } else {
-    if (available.has("checked_out")) {
-      chips.push(`<button type="button" data-action="quick-instance-checkout-me" ${disabled(pending)}>Check out (me)</button>`);
-    }
+  } else if (entity.state === "checked_out") {
+    // A checked-out item's one obvious action is Return. Re-checkout to someone
+    // else is a rare edge case and stays in the secondary action buttons, not
+    // as a confusing second quick chip next to Return.
     if (available.has("returned")) {
       chips.push(`<button type="button" data-action="quick-instance-return" ${disabled(pending)}>Return</button>`);
+    }
+  } else if (entity.state === "available") {
+    if (available.has("checked_out")) {
+      chips.push(`<button type="button" data-action="quick-instance-checkout-me" ${disabled(pending)}>Check out (me)</button>`);
     }
   }
 
