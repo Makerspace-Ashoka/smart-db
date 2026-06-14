@@ -66,10 +66,10 @@ export function renderApp(state: RewriteUiState): string {
     <div class="shell app-shell app-shell-${state.activeTab}" data-art-zone="app-shell" data-active-tab="${state.activeTab}">
       <header class="app-masthead" data-motion-surface="masthead">
         <div class="app-masthead-row">
-          <div class="app-masthead-brand">
+          <button type="button" class="app-masthead-brand" data-action="change-tab" data-tab="scan" aria-label="Smart DB — go to scan">
             <strong class="header-brand">SMART DB</strong>
             <span class="header-eyebrow">Makerspace · Inventory</span>
-          </div>
+          </button>
           <div class="app-masthead-menu">
             <button
               type="button"
@@ -414,7 +414,7 @@ function renderScanTab(state: RewriteUiState): string {
   const hasResult = state.scanMode.kind === "oneByOne" && Boolean(state.scanResult);
 
   const scannerBlock = `
-    <div class="scan-viewfinder ${cameraLive ? "is-live" : ""}" data-art-zone="scan-idle-mark" data-motion-surface="scan-viewfinder" data-camera-supported="${String(hasCamera)}">
+    <div class="scan-viewfinder ${cameraLive ? "is-live" : ""} ${!cameraLive && hasCamera ? "is-tappable" : ""}" data-art-zone="scan-idle-mark" data-motion-surface="scan-viewfinder" data-camera-supported="${String(hasCamera)}"${!cameraLive && hasCamera ? ' data-action="camera-start" aria-label="Start camera"' : ""}>
       ${!cameraLive ? renderScanIdleMark() : ""}
       ${hasCamera ? renderScanner(state, state.cameraLookupCode !== null, cameraBlockedReason) : ""}
       ${!cameraLive ? `
@@ -530,7 +530,7 @@ function renderScanIdleMark(): string {
           <span></span><span></span><span></span><span></span>
         </span>
       </span>
-      <span class="scan-idle-copy">Tap camera or type below</span>
+      <span class="scan-idle-copy">Tap to start camera · or type below</span>
     </div>
   `;
 }

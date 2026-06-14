@@ -3653,6 +3653,17 @@ export class RewriteAppController {
     if (this.state.activeTab !== "scan") {
       return;
     }
+    // On touch devices, focusing the input on render pops the on-screen
+    // keyboard and swallows half the screen the moment the scan tab loads.
+    // Autofocus only helps desktop wedge scanners (which type into the focused
+    // field), so skip it when the primary pointer is coarse (phones/tablets).
+    if (
+      typeof window !== "undefined" &&
+      typeof window.matchMedia === "function" &&
+      window.matchMedia("(pointer: coarse)").matches
+    ) {
+      return;
+    }
     const input = this.root.querySelector<HTMLInputElement>("#scan-code-input");
     if (!input || document.activeElement === input) {
       return;

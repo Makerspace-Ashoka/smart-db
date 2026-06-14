@@ -2020,9 +2020,19 @@ a { transition: color var(--t) var(--ease-in-out); }
 .app-masthead-brand {
   display: flex;
   flex-direction: column;
+  align-items: flex-start;
   gap: 0.1rem;
   min-width: 0;
+  background: none;
+  border: 0;
+  padding: 0;
+  margin: 0;
+  text-align: left;
+  font: inherit;
+  color: inherit;
+  cursor: pointer;
 }
+.app-masthead-brand:hover .header-brand { color: var(--blue); }
 
 .header-brand {
   font-family: var(--display);
@@ -4462,6 +4472,8 @@ html.dark .scan-idle-mark {
   pointer-events: auto;
 }
 
+.scan-viewfinder.is-tappable { cursor: pointer; }
+
 .scan-viewfinder .camera-btn {
   position: absolute;
   right: 0.9rem;
@@ -4469,7 +4481,7 @@ html.dark .scan-idle-mark {
   z-index: 5;
   width: auto;
   max-width: calc(100% - 1.8rem);
-  min-height: 2.75rem;
+  min-height: 44px;
   padding: 0.54rem 0.82rem;
   border-radius: 8px;
   border: 1px solid color-mix(in srgb, var(--blue) 34%, var(--border));
