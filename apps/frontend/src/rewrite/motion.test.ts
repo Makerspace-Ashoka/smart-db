@@ -75,6 +75,7 @@ const qrCode: QRCode = {
 function makeState(patch: Partial<RewriteUiState> = {}): RewriteUiState {
   return {
     theme: "light",
+    devMode: false,
     authState: {
       status: "authenticated",
       session: {

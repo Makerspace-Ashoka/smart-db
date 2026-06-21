@@ -1,0 +1,9 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512" role="img" aria-label="Smart DB">
+  <rect width="512" height="512" rx="96" fill="#1b2130"/>
+  <rect x="74" y="74" width="260" height="260" rx="42" fill="#fbf6ea"/>
+  <path d="M126 166h98M126 230h148M126 294h92" stroke="#1b2130" stroke-width="28" stroke-linecap="round"/>
+  <path d="M258 134v64" stroke="#a35a16" stroke-width="28" stroke-linecap="round"/>
+  <circle cx="250" cy="276" r="22" fill="#a35a16"/>
+  <path d="M354 188h58c42 0 76 34 76 76s-34 76-76 76h-58" fill="none" stroke="#c47214" stroke-width="30" stroke-linecap="round"/>
+  <circle cx="412" cy="264" r="28" fill="#fbf6ea"/>
+</svg>

@@ -4,6 +4,7 @@ import {
   hasSmartDbRole,
   InvariantError,
   smartDbRoles,
+  type AuthSession,
   type SmartDbRole,
   UnauthenticatedError,
   isApplicationError,
@@ -45,6 +46,10 @@ interface BuildServerOptions {
 
 export async function buildServer(options: BuildServerOptions = {}) {
   const activeConfig = options.configOverride ?? config;
+  if (activeConfig.devAuthBypass) {
+    assertDevAuthBypassAllowed(activeConfig);
+  }
+  const devAuthSession = activeConfig.devAuthBypass ? createDevAuthSession() : null;
   const app = Fastify({
     logger:
       process.env.NODE_ENV === "test"
@@ -157,6 +162,13 @@ export async function buildServer(options: BuildServerOptions = {}) {
     request: Parameters<preHandlerAsyncHookHandler>[0],
     reply: Parameters<preHandlerAsyncHookHandler>[1],
   ) => {
+    if (devAuthSession) {
+      request.authContext = {
+        sessionId: "dev-auth-bypass",
+        session: devAuthSession,
+      };
+      return;
+    }
     const sessionId = request.cookies[activeConfig.sessionCookieName];
     const session = sessionId ? authService.getSession(sessionId) : null;
     if (!sessionId || !session) {
@@ -267,6 +279,36 @@ export async function buildServer(options: BuildServerOptions = {}) {
   });
 
   return app;
+}
+
+function assertDevAuthBypassAllowed(config: AppConfig): void {
+  if (process.env.NODE_ENV === "production") {
+    throw new InvariantError("DEV_AUTH_BYPASS cannot be enabled in production.");
+  }
+  if (!isLocalUrl(config.frontendOrigin) || !isLocalUrl(config.publicBaseUrl)) {
+    throw new InvariantError("DEV_AUTH_BYPASS is limited to localhost development origins.");
+  }
+}
+
+function isLocalUrl(value: string): boolean {
+  try {
+    const hostname = new URL(value).hostname.toLowerCase();
+    return hostname === "localhost" || hostname === "127.0.0.1" || hostname === "::1" || hostname === "[::1]";
+  } catch {
+    return false;
+  }
+}
+
+function createDevAuthSession(now: Date = new Date()): AuthSession {
+  return {
+    subject: "dev-auth-bypass",
+    username: "dev-admin",
+    name: "Dev Auth Bypass",
+    email: null,
+    roles: [smartDbRoles.admin, smartDbRoles.labeler, smartDbRoles.viewer],
+    issuedAt: now.toISOString(),
+    expiresAt: null,
+  };
 }
 
 function registerLenientJsonParser(app: FastifyInstance): void {

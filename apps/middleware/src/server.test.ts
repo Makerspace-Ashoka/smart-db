@@ -183,13 +183,18 @@ afterEach(() => {
   vi.restoreAllMocks();
 });
 
-function makeConfig() {
+function makeConfig(overrides: {
+  devAuthBypass?: boolean;
+  frontendOrigin?: string;
+  publicBaseUrl?: string;
+} = {}) {
   return {
     port: 4100,
     frontendOrigin: "http://localhost:5173",
     publicBaseUrl: "http://localhost:4100",
     dataPath: join(mkdtempSync(join(tmpdir(), "smart-db-server-")), "smart.db"),
     sessionCookieName: "smartdb_session",
+    devAuthBypass: false,
     partDb: {
       baseUrl: "https://partdb.example.com",
       publicBaseUrl: "https://partdb.example.com",
@@ -203,6 +208,7 @@ function makeConfig() {
       roleClaim: "smartdb_roles",
       sessionCookieSecret: "test-session-secret",
     },
+    ...overrides,
   };
 }
 
@@ -308,6 +314,55 @@ describe("buildServer", () => {
     expect(authService.logout).toHaveBeenCalledTimes(3);
 
     await app.close();
+  });
+
+  it("supports explicit local dev auth bypass without a session cookie", async () => {
+    const authService = makeAuthService();
+    const app = await buildServer({
+      configOverride: makeConfig({ devAuthBypass: true }),
+      authService,
+    });
+
+    const session = await app.inject({
+      method: "GET",
+      url: "/api/auth/session",
+    });
+    expect(session.statusCode).toBe(200);
+    expect(session.json()).toMatchObject({
+      subject: "dev-auth-bypass",
+      username: "dev-admin",
+      roles: ["smartdb.admin", "smartdb.labeler", "smartdb.viewer"],
+    });
+
+    const dashboard = await app.inject({
+      method: "GET",
+      url: "/api/dashboard",
+    });
+    expect(dashboard.statusCode).toBe(200);
+    expect(authService.getSession).not.toHaveBeenCalled();
+
+    await app.close();
+  });
+
+  it("refuses dev auth bypass outside local non-production development", async () => {
+    const previousNodeEnv = process.env.NODE_ENV;
+    process.env.NODE_ENV = "production";
+    await expect(
+      buildServer({
+        configOverride: makeConfig({ devAuthBypass: true }),
+      }),
+    ).rejects.toThrow("DEV_AUTH_BYPASS cannot be enabled in production.");
+    process.env.NODE_ENV = previousNodeEnv;
+
+    await expect(
+      buildServer({
+        configOverride: makeConfig({
+          devAuthBypass: true,
+          frontendOrigin: "https://smartdb.example.com",
+          publicBaseUrl: "https://smartdb.example.com",
+        }),
+      }),
+    ).rejects.toThrow("DEV_AUTH_BYPASS is limited to localhost development origins.");
   });
 
   it("sanitizes auth callback failures before redirecting back to the frontend", async () => {

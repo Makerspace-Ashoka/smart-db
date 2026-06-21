@@ -86,6 +86,18 @@ vi.mock("./services/camera-scanner-service", () => ({
   },
 }));
 
+const devModeMocks = vi.hoisted(() => ({
+  isFrontendDevAuthBypassEnabled: vi.fn(() => false),
+}));
+
+vi.mock("../dev-mode", async (importOriginal) => {
+  const actual = await importOriginal<typeof import("../dev-mode")>();
+  return {
+    ...actual,
+    isFrontendDevAuthBypassEnabled: devModeMocks.isFrontendDevAuthBypassEnabled,
+  };
+});
+
 const dashboard: DashboardSummary = {
   partTypeCount: 2,
   instanceCount: 4,
@@ -169,6 +181,7 @@ describe("RewriteAppController", () => {
       window.history.replaceState(null, "", "/");
     }
     vi.clearAllMocks();
+    devModeMocks.isFrontendDevAuthBypassEnabled.mockReturnValue(false);
     cameraMocks.start.mockResolvedValue({ ok: true });
     cameraMocks.attach.mockResolvedValue({ ok: true });
     cameraMocks.getSnapshot.mockReturnValue(defaultCameraState);
@@ -319,6 +332,47 @@ describe("RewriteAppController", () => {
     controller.dispose();
   });
 
+  it("supports explicit dev auth bypass with unmistakable UI state", async () => {
+    const { startRewriteApp } = await import("./app-controller");
+
+    const controller = startRewriteApp(document.getElementById("root")!, {
+      devMode: true,
+    });
+    await flush();
+
+    expect(apiMock.getSession).not.toHaveBeenCalled();
+    expect(apiMock.getDashboard).toHaveBeenCalled();
+    expect(document.querySelector('[data-tab="admin"]')).not.toBeNull();
+    expect(document.querySelector('[data-action="logout"]')).toBeNull();
+    expect(document.body.textContent).toContain("DEV MODE");
+    expect(document.body.textContent).toContain("AUTH BYPASS");
+    expect(document.body.textContent).toContain("Dev session");
+    controller.dispose();
+  });
+
+  it("surfaces backend dev auth bypass sessions in production-like builds", async () => {
+    const { startRewriteApp } = await import("./app-controller");
+    apiMock.getSession.mockResolvedValueOnce({
+      subject: "dev-auth-bypass",
+      username: "dev-admin",
+      name: "Dev Auth Bypass",
+      email: null,
+      roles: ["smartdb.admin", "smartdb.labeler", "smartdb.viewer"],
+      issuedAt: "2026-01-01T00:00:00.000Z",
+      expiresAt: null,
+    });
+
+    const controller = startRewriteApp(document.getElementById("root")!);
+    await flush();
+
+    expect(apiMock.getSession).toHaveBeenCalled();
+    expect(document.querySelector('[data-tab="admin"]')).not.toBeNull();
+    expect(document.querySelector('[data-action="logout"]')).toBeNull();
+    expect(document.body.textContent).toContain("DEV MODE");
+    expect(document.body.textContent).toContain("AUTH BYPASS");
+    controller.dispose();
+  });
+
   it("handles tab clicks that originate on SVG icon elements", async () => {
     const { startRewriteApp } = await import("./app-controller");
     apiMock.getSession.mockResolvedValueOnce({
@@ -448,16 +502,17 @@ describe("RewriteAppController", () => {
     const controller = startRewriteApp(document.getElementById("root")!);
     await flush();
 
-    const cameraButton = document.querySelector<HTMLButtonElement>('[data-action="camera-start"]');
-    expect(cameraButton).not.toBeNull();
-    cameraButton!.click();
+    const viewfinder = document.querySelector<HTMLElement>(".scan-viewfinder");
+    expect(viewfinder).not.toBeNull();
+    expect(viewfinder!.dataset.action).toBe("camera-start");
+    viewfinder!.click();
     await flush();
 
     expect(cameraMocks.start).toHaveBeenCalledTimes(1);
     controller.dispose();
   });
 
-  it("makes the idle scanner tappable to start the camera and keeps a dedicated button", async () => {
+  it("makes the idle scanner tappable to start the camera without a duplicate button", async () => {
     const { startRewriteApp } = await import("./app-controller");
     apiMock.getSession.mockResolvedValueOnce({
       subject: "user-1",
@@ -477,16 +532,72 @@ describe("RewriteAppController", () => {
     expect(viewfinder!.dataset.action).toBe("camera-start");
     expect(viewfinder!.querySelector(".scan-idle-mark")).not.toBeNull();
     expect(viewfinder!.querySelector(".scan-idle-mark svg")).toBeNull();
-
-    const cameraButton = viewfinder!.querySelector<HTMLButtonElement>('[data-action="camera-start"]');
-    expect(cameraButton).not.toBeNull();
-    expect(cameraButton!.classList.contains("camera-start-btn")).toBe(true);
-    expect(cameraButton!.textContent).toContain("Enable camera");
+    expect(viewfinder!.querySelector('[data-action="camera-start"]')).toBeNull();
 
     const submitButton = document.querySelector<HTMLButtonElement>(".scan-input-submit");
     expect(submitButton).not.toBeNull();
     expect(submitButton!.textContent?.trim()).toBe("Open");
     expect(submitButton!.querySelector("svg")).toBeNull();
+    controller.dispose();
+  });
+
+  it("keeps denied camera permission from trapping the user in a retry loop", async () => {
+    const { startRewriteApp } = await import("./app-controller");
+    apiMock.getSession.mockResolvedValueOnce({
+      subject: "user-1",
+      username: "lab-admin",
+      name: "Lab Admin",
+      email: "lab@example.com",
+      roles: ["smartdb.admin"],
+      issuedAt: "2026-01-01T00:00:00.000Z",
+      expiresAt: null,
+    });
+    cameraMocks.subscribe.mockImplementationOnce((listener: (snapshot: typeof defaultCameraState) => void) => {
+      listener({
+        ...defaultCameraState,
+        phase: "denied",
+        permissionState: "denied",
+        failure: {
+          kind: "permission",
+          operation: "camera.start",
+          code: "denied",
+          message: "Camera permission was denied. Allow camera access in the browser and try again.",
+          retryability: "after-user-action",
+          details: {
+            errorName: "NotAllowedError",
+            errorMessage: "blocked",
+            secureContext: true,
+          },
+        },
+      });
+      return () => {};
+    });
+
+    const controller = startRewriteApp(document.getElementById("root")!);
+    await flush();
+
+    const viewfinder = document.querySelector<HTMLElement>(".scan-viewfinder");
+    expect(viewfinder).not.toBeNull();
+    expect(viewfinder!.dataset.action).toBeUndefined();
+    viewfinder!.click();
+    await flush();
+    expect(cameraMocks.start).not.toHaveBeenCalled();
+
+    expect(document.body.textContent).toContain("Camera blocked");
+    expect(document.body.textContent).toContain("Use manual input below");
+    const retryButton = document.querySelector<HTMLButtonElement>(".camera-recovery-secondary");
+    expect(retryButton).not.toBeNull();
+    expect(retryButton!.textContent).toContain("Retry camera");
+    retryButton!.click();
+    await flush();
+    expect(cameraMocks.start).toHaveBeenCalledTimes(1);
+
+    const manualButton = document.querySelector<HTMLButtonElement>('[data-action="focus-scan-input"]');
+    const scanInput = document.querySelector<HTMLInputElement>("#scan-code-input");
+    expect(manualButton).not.toBeNull();
+    expect(scanInput).not.toBeNull();
+    manualButton!.click();
+    expect(document.activeElement).toBe(scanInput);
     controller.dispose();
   });
 
@@ -625,9 +736,9 @@ describe("RewriteAppController", () => {
     const controller = startRewriteApp(document.getElementById("root")!);
     await flush();
 
-    const cameraButton = document.querySelector<HTMLButtonElement>('[data-action="camera-start"]');
-    expect(cameraButton).not.toBeNull();
-    cameraButton!.click();
+    const viewfinder = document.querySelector<HTMLElement>(".scan-viewfinder");
+    expect(viewfinder).not.toBeNull();
+    viewfinder!.click();
     await flush();
     cameraMocks.stop.mockClear();
     cameraMocks.attach.mockClear();
@@ -683,9 +794,9 @@ describe("RewriteAppController", () => {
     const controller = startRewriteApp(document.getElementById("root")!);
     await flush();
 
-    const cameraButton = document.querySelector<HTMLButtonElement>('[data-action="camera-start"]');
-    expect(cameraButton).not.toBeNull();
-    cameraButton!.click();
+    const viewfinder = document.querySelector<HTMLElement>(".scan-viewfinder");
+    expect(viewfinder).not.toBeNull();
+    viewfinder!.click();
     await flush();
 
     const attached = cameraMocks.attach.mock.calls.find(

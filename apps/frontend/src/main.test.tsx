@@ -1,9 +1,14 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
 const startRewriteApp = vi.fn();
+const registerPwa = vi.fn();
 
 vi.mock("./rewrite/app-controller", () => ({
   startRewriteApp,
+}));
+
+vi.mock("./pwa", () => ({
+  registerPwa,
 }));
 
 describe("main", () => {
@@ -16,5 +21,6 @@ describe("main", () => {
     await import("./main");
 
     expect(startRewriteApp).toHaveBeenCalledWith(document.getElementById("root"));
+    expect(registerPwa).toHaveBeenCalled();
   });
 });

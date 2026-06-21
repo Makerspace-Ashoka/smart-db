@@ -63,12 +63,13 @@ export function renderApp(state: RewriteUiState): string {
   const isAdmin = hasSmartDbRole(state.authState.session.roles, smartDbRoles.admin);
 
   return `
-    <div class="shell app-shell app-shell-${state.activeTab}" data-art-zone="app-shell" data-active-tab="${state.activeTab}">
+    <div class="shell app-shell app-shell-${state.activeTab} ${state.devMode ? "app-shell-dev-mode" : ""}" data-art-zone="app-shell" data-active-tab="${state.activeTab}">
       <header class="app-masthead" data-motion-surface="masthead">
         <div class="app-masthead-row">
           <button type="button" class="app-masthead-brand" data-action="change-tab" data-tab="scan" aria-label="Smart DB — go to scan">
             <strong class="header-brand">SMART DB</strong>
             <span class="header-eyebrow">Makerspace · Inventory</span>
+            ${state.devMode ? `<span class="dev-mode-pill">DEV MODE · AUTH BYPASS</span>` : ""}
           </button>
           <div class="app-masthead-menu">
             <button
@@ -78,22 +79,24 @@ export function renderApp(state: RewriteUiState): string {
               aria-label="${state.theme === "dark" ? "Switch to light mode" : "Switch to dark mode"}"
               aria-pressed="${state.theme === "dark" ? "true" : "false"}"
               title="${state.theme === "dark" ? "Light mode" : "Dark mode"}"
-            >${state.theme === "dark" ? "☼" : "☾"}</button>
-            <button
-              type="button"
-              class="logout-btn"
-              data-action="logout"
-              ${disabled(state.pendingAction === "logout")}
-              aria-label="Log out"
-              title="Log out"
-            >
-              <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
-                <path d="M15 17l5-5-5-5"/>
-                <line x1="20" y1="12" x2="9" y2="12"/>
-                <path d="M9 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h4"/>
-              </svg>
-              <span>Log out</span>
-            </button>
+            >${renderThemeToggleIcon(state.theme)}</button>
+            ${state.devMode
+              ? `<span class="dev-mode-session" title="Dev auth bypass is active">Dev session</span>`
+              : `<button
+                  type="button"
+                  class="logout-btn"
+                  data-action="logout"
+                  ${disabled(state.pendingAction === "logout")}
+                  aria-label="Log out"
+                  title="Log out"
+                >
+                  <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+                    <path d="M15 17l5-5-5-5"/>
+                    <line x1="20" y1="12" x2="9" y2="12"/>
+                    <path d="M9 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h4"/>
+                  </svg>
+                  <span>Log out</span>
+                </button>`}
           </div>
         </div>
       </header>
@@ -101,6 +104,7 @@ export function renderApp(state: RewriteUiState): string {
       ${renderToasts(state.toasts)}
 
       <div class="global-banners">
+        ${state.devMode ? `<p class="banner dev-mode-banner"><strong>DEV MODE</strong> Auth bypass is active. Local admin access is unlocked.</p>` : ""}
         ${!state.isOnline ? `<p class="banner error">You appear to be offline.</p>` : ""}
         ${state.sessionExpiringSoon ? `<p class="banner error">Session expires soon.</p>` : ""}
         ${state.refreshError ? `<p class="banner error">${escapeHtml(state.refreshError)}</p>` : ""}
@@ -114,7 +118,7 @@ export function renderApp(state: RewriteUiState): string {
         ${state.activeTab === "admin" && isAdmin ? renderAdminTab(state) : ""}
       </main>
 
-      ${renderTabBar(state.activeTab, isAdmin ? ["dashboard", "scan", "inventory", "activity", "admin"] : ["dashboard", "scan", "inventory", "activity"])}
+      ${renderTabBar(state.activeTab, isAdmin ? ["dashboard", "inventory", "scan", "activity", "admin"] : ["dashboard", "inventory", "scan", "activity"])}
     </div>
   `;
 }
@@ -128,6 +132,23 @@ function renderPanelTitle(title: string, copy: string, iconId?: string): string 
       </div>
       <p>${escapeHtml(copy)}</p>
     </div>
+  `;
+}
+
+function renderThemeToggleIcon(theme: RewriteUiState["theme"]): string {
+  if (theme === "dark") {
+    return `
+      <svg class="theme-toggle-icon" viewBox="0 0 24 24" fill="none" aria-hidden="true" focusable="false">
+        <circle cx="12" cy="12" r="4.2"/>
+        <path d="M12 2.8v2.1M12 19.1v2.1M4.9 4.9l1.5 1.5M17.6 17.6l1.5 1.5M2.8 12h2.1M19.1 12h2.1M4.9 19.1l1.5-1.5M17.6 6.4l1.5-1.5"/>
+      </svg>
+    `;
+  }
+  return `
+    <svg class="theme-toggle-icon theme-toggle-icon-moon" viewBox="0 0 24 24" fill="none" aria-hidden="true" focusable="false">
+      <path class="theme-toggle-fill" d="M19.1 14.9A7.9 7.9 0 0 1 9.1 4.9 8.1 8.1 0 1 0 19.1 14.9Z"/>
+      <path d="M16.8 4.2l0.5 1.2 1.2 0.5-1.2 0.5-0.5 1.2-0.5-1.2-1.2-0.5 1.2-0.5 0.5-1.2Z"/>
+    </svg>
   `;
 }
 
@@ -325,7 +346,7 @@ function renderTabBar(activeTab: TabId, tabs: readonly TabId[]): string {
           type="button"
           role="tab"
           id="tab-${tab}"
-          class="${activeTab === tab ? "active" : ""}"
+          class="${activeTab === tab ? "active" : ""}${tab === "scan" ? " tab-scan" : ""}"
           aria-selected="${String(activeTab === tab)}"
           aria-controls="panel-${tab}"
           tabIndex="${activeTab === tab ? "0" : "-1"}"
@@ -411,11 +432,13 @@ function renderScanTab(state: RewriteUiState): string {
   const queueCount = state.bulkQueue.rows.length;
   const hasCamera = state.camera.supported;
   const cameraLive = Boolean(state.camera.activeStream);
+  const cameraDenied = state.camera.phase === "denied" || state.camera.permissionState === "denied";
   const hasResult = state.scanMode.kind === "oneByOne" && Boolean(state.scanResult);
+  const scannerIsTappable = !cameraLive && hasCamera && !cameraDenied;
 
   const scannerBlock = `
-    <div class="scan-viewfinder ${cameraLive ? "is-live" : ""} ${!cameraLive && hasCamera ? "is-tappable" : ""}" data-art-zone="scan-idle-mark" data-motion-surface="scan-viewfinder" data-camera-supported="${String(hasCamera)}"${!cameraLive && hasCamera ? ' data-action="camera-start" aria-label="Start camera"' : ""}>
-      ${!cameraLive ? renderScanIdleMark() : ""}
+    <div class="scan-viewfinder ${cameraLive ? "is-live" : ""} ${scannerIsTappable ? "is-tappable" : ""}" data-art-zone="scan-idle-mark" data-motion-surface="scan-viewfinder" data-camera-supported="${String(hasCamera)}"${scannerIsTappable ? ' data-action="camera-start" aria-label="Start camera"' : ""}>
+      ${!cameraLive ? renderScanIdleMark(cameraDenied) : ""}
       ${hasCamera ? renderScanner(state, state.cameraLookupCode !== null, cameraBlockedReason) : ""}
       ${!cameraLive ? `
         <span class="scan-trace-line trace-a" aria-hidden="true"></span>
@@ -521,7 +544,7 @@ function renderScanTab(state: RewriteUiState): string {
   `;
 }
 
-function renderScanIdleMark(): string {
+function renderScanIdleMark(cameraDenied = false): string {
   return `
     <div class="scan-idle-mark" aria-hidden="true">
       <span class="scan-idle-device">
@@ -530,7 +553,7 @@ function renderScanIdleMark(): string {
           <span></span><span></span><span></span><span></span>
         </span>
       </span>
-      <span class="scan-idle-copy">Tap to start camera · or type below</span>
+      <span class="scan-idle-copy">${cameraDenied ? "Use manual input below" : "Tap to start camera · or type below"}</span>
     </div>
   `;
 }
@@ -540,30 +563,27 @@ function renderScanner(state: RewriteUiState, isLookingUp: boolean, blockedReaso
     return "";
   }
 
-  const startLabel = state.camera.permissionState === "granted" ? "Start camera" : "Enable camera";
+  const cameraDenied = state.camera.phase === "denied" || state.camera.permissionState === "denied";
 
   return `
     <div class="qr-scanner">
       ${blockedReason ? `<p class="banner error">${escapeHtml(blockedReason)}</p>` : ""}
-      ${state.camera.phase === "denied" || state.camera.phase === "failure" ? `<p class="banner error">${escapeHtml(state.camera.failure?.message ?? "Camera unavailable. Use manual input instead.")}</p>` : ""}
+      ${cameraDenied ? `
+        <div class="camera-recovery" role="status">
+          <p class="camera-recovery-title">Camera blocked</p>
+          <p>${escapeHtml(`${state.camera.failure?.message ?? "Camera permission was denied."} Type the code below, or allow camera access in browser settings and retry.`)}</p>
+          <div class="camera-recovery-actions">
+            <button type="button" class="camera-recovery-primary" data-action="focus-scan-input">Use manual input</button>
+            <button type="button" class="camera-recovery-secondary" data-action="camera-start" ${disabled(Boolean(blockedReason) || isLookingUp)}>Retry camera</button>
+          </div>
+        </div>
+      ` : ""}
+      ${!cameraDenied && state.camera.phase === "failure" ? `<p class="banner error">${escapeHtml(state.camera.failure?.message ?? "Camera unavailable. Use manual input instead.")}</p>` : ""}
       ${!state.camera.activeStream && state.camera.lastResult ? `
         <div class="scan-status" aria-live="polite">
           <strong>Detected ${escapeHtml(state.camera.lastResult)}</strong>
           <p>${escapeHtml(isLookingUp ? `Looking up ${state.camera.lastResult}...` : "Ready to scan the next item.")}</p>
         </div>
-      ` : ""}
-      ${!state.camera.activeStream && (state.camera.permissionState !== "granted" || !state.camera.lastResult) ? `
-        <button
-          type="button"
-          class="camera-btn camera-start-btn"
-          data-action="camera-start"
-          aria-label="${attr(startLabel)}"
-          title="${attr(startLabel)}"
-          ${disabled(Boolean(blockedReason) || isLookingUp)}
-        >
-          <span class="camera-btn-kicker">Camera</span>
-          <span class="camera-btn-label">${escapeHtml(startLabel)}</span>
-        </button>
       ` : ""}
       <div class="viewfinder"${state.camera.activeStream ? "" : " hidden"}>
         <video id="rewrite-camera-video" playsinline muted autoplay></video>

@@ -7,6 +7,7 @@ import "@fontsource/ibm-plex-mono/400.css";
 import "@fontsource/ibm-plex-mono/500.css";
 
 import "./styles.css";
+import { registerPwa } from "./pwa";
 import { startRewriteApp } from "./rewrite/app-controller";
 
 const root = document.getElementById("root");
@@ -16,4 +17,4 @@ if (!root) {
 }
 
 startRewriteApp(root);
-
+registerPwa();

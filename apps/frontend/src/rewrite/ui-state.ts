@@ -232,6 +232,7 @@ export type ScanEditState =
 
 export interface RewriteUiState {
   readonly theme: "light" | "dark";
+  readonly devMode: boolean;
   readonly authState: AuthViewState;
   readonly dashboard: DashboardSummary | null;
   readonly partDbStatus: PartDbConnectionStatus | null;
