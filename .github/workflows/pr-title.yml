@@ -11,6 +11,37 @@ jobs:
     env:
       FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: true
     steps:
+      - name: Validate PR route
+        env:
+          BASE_REF: ${{ github.event.pull_request.base.ref }}
+          HEAD_REF: ${{ github.event.pull_request.head.ref }}
+          HEAD_REPO: ${{ github.event.pull_request.head.repo.full_name }}
+          REPOSITORY: ${{ github.repository }}
+        run: |
+          if [ "$BASE_REF" = "main" ]; then
+            if [ "$HEAD_REF" != "dev" ] || [ "$HEAD_REPO" != "$REPOSITORY" ]; then
+              echo "✗ Production PRs must come from the canonical dev branch."
+              echo ""
+              echo "Open feature branches against dev first. After dev is reviewed,"
+              echo "deployed to staging, and accepted, open the dev → main PR."
+              echo ""
+              echo "Got: ${HEAD_REPO}:${HEAD_REF} → ${REPOSITORY}:main"
+              exit 1
+            fi
+
+            echo "✓ dev → main release PR"
+            exit 0
+          fi
+
+          if [ "$BASE_REF" = "dev" ] && [ "$HEAD_REF" = "main" ]; then
+            echo "✗ main must not be merged back into dev through feature flow."
+            echo ""
+            echo "Create a topic branch from dev and open that PR against dev."
+            exit 1
+          fi
+
+          echo "✓ PR route accepted: ${HEAD_REPO}:${HEAD_REF} → ${REPOSITORY}:${BASE_REF}"
+
       - name: Validate PR title
         env:
           PR_TITLE: ${{ github.event.pull_request.title }}

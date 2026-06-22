@@ -103,7 +103,9 @@ The compose stack runs:
 - `middleware`: Node 24 Fastify API with the Smart DB SQLite database mounted under `deploy/state/smartdb/data`.
 - `partdb`: a pinned Part-DB image with its SQLite database, uploads, and public media mounted under `deploy/state/partdb`.
 
-Pushes to `main` run the shared check workflow, then deploy through the self-hosted `smartdb` runner. The production workflow rsyncs the repository to `/opt/smart-db`, rebuilds the gateway and middleware images, starts the compose project, and checks both middleware and gateway health before finishing. See `deploy/README.md` for runtime paths, TLS notes, and backup behavior.
+Normal development goes through `dev`: create a topic branch, open the PR against `dev`, let preview and staging validate it, then merge it into `dev`. Merged topic branches with ordinary prefixes such as `feat/`, `fix/`, `docs/`, `ci/`, `chore/`, `codex/`, and `dependabot/` are deleted automatically after they land in `dev`; long-lived branches such as `main`, `dev`, `release/*`, and `hotfix/*` are kept. Production only moves through a `dev` → `main` PR. The PR hygiene workflow rejects feature-branch PRs aimed directly at `main`.
+
+Pushes to `dev` deploy staging. Pushes to `main` run the shared check workflow, then deploy through the self-hosted `smartdb` runner. The production workflow rsyncs the repository to `/opt/smart-db`, rebuilds the gateway and middleware images, starts the compose project, and checks both middleware and gateway health before finishing. See `deploy/README.md` for runtime paths, TLS notes, and backup behavior.
 
 ## Catalog Seeding
 
