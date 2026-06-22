@@ -24,7 +24,7 @@ Part-DB remains the richer catalog and reporting surface. Smart DB is the fast f
   <img src="docs/images/readme/desktop-admin.png" alt="Smart DB desktop admin asset categories" width="860" />
 </p>
 
-The screenshots above were captured from local dev mode, so the yellow auth-bypass banner is intentionally visible. Production builds use the same responsive shell without the dev-mode warning.
+The screenshots above were captured from a local authenticated session with the standard catalog seeded.
 
 ## What It Handles
 
