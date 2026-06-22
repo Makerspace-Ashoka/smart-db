@@ -35,7 +35,7 @@ docker exec deploy-middleware-1 sh -c 'cd /workspace && pnpm --filter @smart-db/
 
 Smart DB is an intake-first inventory system for a university makerspace. Monorepo with three packages:
 
-- **`packages/contracts`** — Zod schemas, typed errors, Result type, FSM transitions. Both apps import from `@smart-db/contracts`.
+- **`packages/contracts`** — Zod schemas, typed errors, Result type, and inventory transition helpers. Both apps import from `@smart-db/contracts`.
 - **`apps/middleware`** — Fastify 5 API + SQLite (Node.js native `node:sqlite`, WAL mode). Port 4000.
 - **`apps/frontend`** — TypeScript + HTML/CSS phone-first UI, built with Vite. Port 5173.
 
@@ -52,7 +52,7 @@ Smart DB is an intake-first inventory system for a university makerspace. Monore
 | Path | Purpose |
 |------|---------|
 | `packages/contracts/src/schemas.ts` | All Zod schemas, enums, measurement units |
-| `packages/contracts/src/transitions.ts` | FSM transition tables (INSTANCE_TRANSITIONS) |
+| `packages/contracts/src/transitions.ts` | Instance and bulk stock transition helpers |
 | `apps/middleware/src/services/inventory-service.ts` | All domain logic (~2000 LOC) |
 | `apps/middleware/src/routes/inventory-routes.ts` | HTTP route handlers |
 | `apps/middleware/src/partdb/partdb-rest.ts` | Part-DB HTTP client (JSON-LD, Hydra) |
@@ -66,11 +66,11 @@ Smart DB is an intake-first inventory system for a university makerspace. Monore
 
 ---
 
-## FINITE STATE MACHINES — THE GROUND TRUTH
+## STATE AND LIFECYCLE RULES
 
-**Every state, every transition, every guard is defined here. If the code disagrees with this document, the code is wrong.**
+**The code and tests are authoritative. This section summarizes the current domain lifecycle rules so agents know where to look before changing behavior.**
 
-### FSM 1: QR Code Lifecycle
+### Lifecycle 1: QR Code Assignment
 
 States: `printed`, `assigned`, `voided`, `duplicate`
 
@@ -89,7 +89,7 @@ States: `printed`, `assigned`, `voided`, `duplicate`
 
 **`duplicate` is defined but never used in any transition.**
 
-### FSM 2: Physical Instance Lifecycle
+### Transition Set 2: Physical Instance Lifecycle
 
 States: `available`, `checked_out`, `consumed`, `damaged`, `lost`
 
@@ -108,7 +108,7 @@ States: `available`, `checked_out`, `consumed`, `damaged`, `lost`
 
 **`consumed` is TERMINAL. No transitions out.**
 
-Full transition table (from `INSTANCE_TRANSITIONS` in `transitions.ts`):
+Transition table from `INSTANCE_TRANSITIONS` in `packages/contracts/src/transitions.ts`:
 
 | From | Event | To | Guard |
 |------|-------|----|-------|
@@ -135,7 +135,7 @@ Full transition table (from `INSTANCE_TRANSITIONS` in `transitions.ts`):
 
 **`voidQrCode()` forces ANY → consumed via 'disposed' event, bypassing normal FSM.**
 
-### FSM 3: Bulk Stock Quantity Events
+### Transition Set 3: Bulk Stock Quantity Events
 
 Bulk stocks don't have a traditional FSM — they have a **quantity** (REAL) and a **derived level** (good/low/empty). The level is computed, never stored as the primary state.
 
@@ -162,7 +162,7 @@ Available actions depend on quantity:
 
 **`voidQrCode()` forces level → 'empty' via 'consumed' event.**
 
-### FSM 4: Part Type Review Lifecycle
+### Lifecycle 4: Part Type Review
 
 ```
   ┌─ resolvePartType() ──► needsReview=true ─┐
@@ -181,7 +181,7 @@ Available actions depend on quantity:
 - `approvePartType()` sets `needsReview=false` (idempotent)
 - `mergePartTypes(source, dest)` moves all inventory from source → dest, merges aliases, sets `needsReview=false` on dest, DELETES source
 
-### FSM 5: Part-DB Outbox Lifecycle
+### Lifecycle 5: Part-DB Outbox
 
 States: `pending`, `leased`, `delivered`, `failed`, `dead`
 
@@ -226,7 +226,7 @@ Dependencies are respected: a `create_lot` waits for its `create_part` to be `de
 - **Atomic transactions**: QR assignment + entity creation + event logging in a single SQLite transaction.
 - **Append-only events**: State changes produce StockEvent records. History is never rewritten.
 - **Case-insensitive normalization**: QR codes, part type names, locations, and category cache lookups all use `LOWER()` matching. Storage preserves original case; lookup ignores it.
-- **The FSM is law**: Every state transition must be in the transition table. `getAvailableInstanceActions()` and `getAvailableBulkActions()` derive from the same table the backend enforces.
+- **Domain transitions are enforced in shared helpers**: `getAvailableInstanceActions()`, `getAvailableBulkActions()`, `getNextInstanceStatus()`, and `getNextBulkQuantity()` are the helpers the backend enforces and the frontend surfaces.
 - **Outbox pattern for Part-DB**: SmartDB is the source of truth. Part-DB is a mirror. The user is NEVER blocked by Part-DB being down.
 - **Self-hosted everything**: Fonts (fontsource), WASM (zxing_reader.wasm in public/), no CDN dependencies.
 
