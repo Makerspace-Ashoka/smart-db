@@ -3,6 +3,9 @@ import { join } from "node:path";
 import { tmpdir } from "node:os";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import {
+  type BulkAssignQrsResponse,
+  type BulkMoveEntitiesResponse,
+  type BulkReverseIngestResponse,
   ConflictError,
   type CorrectionEvent,
   type DashboardSummary,
@@ -129,6 +132,22 @@ const reverseIngestResponse: ReverseIngestAssignmentResponse = {
   },
 };
 
+const bulkAssignResponse: BulkAssignQrsResponse = {
+  entities: [entitySummary],
+  processedCount: 1,
+};
+
+const bulkMoveResponse: BulkMoveEntitiesResponse = {
+  events: [stockEvent],
+  processedCount: 1,
+};
+
+const bulkReverseResponse: BulkReverseIngestResponse = {
+  qrCodes: [reverseIngestResponse.qrCode],
+  correctionEvents: [reverseIngestResponse.correctionEvent],
+  processedCount: 1,
+};
+
 const partDbStatus: PartDbConnectionStatus = {
   configured: false,
   connected: false,
@@ -164,13 +183,18 @@ afterEach(() => {
   vi.restoreAllMocks();
 });
 
-function makeConfig() {
+function makeConfig(overrides: {
+  devAuthBypass?: boolean;
+  frontendOrigin?: string;
+  publicBaseUrl?: string;
+} = {}) {
   return {
     port: 4100,
     frontendOrigin: "http://localhost:5173",
     publicBaseUrl: "http://localhost:4100",
     dataPath: join(mkdtempSync(join(tmpdir(), "smart-db-server-")), "smart.db"),
     sessionCookieName: "smartdb_session",
+    devAuthBypass: false,
     partDb: {
       baseUrl: "https://partdb.example.com",
       publicBaseUrl: "https://partdb.example.com",
@@ -184,6 +208,7 @@ function makeConfig() {
       roleClaim: "smartdb_roles",
       sessionCookieSecret: "test-session-secret",
     },
+    ...overrides,
   };
 }
 
@@ -258,11 +283,86 @@ describe("buildServer", () => {
     expect(logout.statusCode).toBe(200);
     expect(logout.json()).toEqual({ ok: true, redirectUrl: null });
 
+    // Browser-shaped bodyless JSON POSTs should still reach the route.
+    const empty = await app.inject({
+      method: "POST",
+      url: "/api/auth/logout",
+      headers: { ...sessionHeaders, "content-type": "application/json" },
+    });
+    expect(empty.statusCode).toBe(200);
+    expect(empty.json()).toEqual({ ok: true, redirectUrl: null });
+
+    const expiredCookie = await app.inject({
+      method: "POST",
+      url: "/api/auth/logout",
+      headers: { origin: sessionHeaders.origin },
+    });
+    expect(expiredCookie.statusCode).toBe(200);
+    expect(expiredCookie.json()).toEqual({ ok: true, redirectUrl: null });
+
+    const malformedJson = await app.inject({
+      method: "POST",
+      url: "/api/auth/logout",
+      payload: "{",
+      headers: { ...sessionHeaders, "content-type": "application/json" },
+    });
+    expect(malformedJson.statusCode).toBe(400);
+    expect(malformedJson.json().error.code).toBe("FST_ERR_CTP_INVALID_JSON_BODY");
+
     expect(authService.startLogin).toHaveBeenCalledTimes(1);
     expect(authService.completeLogin).toHaveBeenCalledTimes(1);
-    expect(authService.logout).toHaveBeenCalledTimes(1);
+    expect(authService.logout).toHaveBeenCalledTimes(3);
 
     await app.close();
+  });
+
+  it("supports explicit local dev auth bypass without a session cookie", async () => {
+    const authService = makeAuthService();
+    const app = await buildServer({
+      configOverride: makeConfig({ devAuthBypass: true }),
+      authService,
+    });
+
+    const session = await app.inject({
+      method: "GET",
+      url: "/api/auth/session",
+    });
+    expect(session.statusCode).toBe(200);
+    expect(session.json()).toMatchObject({
+      subject: "dev-auth-bypass",
+      username: "dev-admin",
+      roles: ["smartdb.admin", "smartdb.labeler", "smartdb.viewer"],
+    });
+
+    const dashboard = await app.inject({
+      method: "GET",
+      url: "/api/dashboard",
+    });
+    expect(dashboard.statusCode).toBe(200);
+    expect(authService.getSession).not.toHaveBeenCalled();
+
+    await app.close();
+  });
+
+  it("refuses dev auth bypass outside local non-production development", async () => {
+    const previousNodeEnv = process.env.NODE_ENV;
+    process.env.NODE_ENV = "production";
+    await expect(
+      buildServer({
+        configOverride: makeConfig({ devAuthBypass: true }),
+      }),
+    ).rejects.toThrow("DEV_AUTH_BYPASS cannot be enabled in production.");
+    process.env.NODE_ENV = previousNodeEnv;
+
+    await expect(
+      buildServer({
+        configOverride: makeConfig({
+          devAuthBypass: true,
+          frontendOrigin: "https://smartdb.example.com",
+          publicBaseUrl: "https://smartdb.example.com",
+        }),
+      }),
+    ).rejects.toThrow("DEV_AUTH_BYPASS is limited to localhost development origins.");
   });
 
   it("sanitizes auth callback failures before redirecting back to the frontend", async () => {
@@ -426,6 +526,18 @@ describe("buildServer", () => {
       skipped: 0,
     });
 
+    const artBackfill = await app.inject({
+      method: "POST",
+      url: "/api/part-types/art/backfill",
+      headers: sessionHeaders,
+    });
+    expect(artBackfill.statusCode).toBe(200);
+    expect(artBackfill.json()).toEqual({
+      updated: 0,
+      unchanged: 0,
+      missingAssets: 0,
+    });
+
     await app.close();
   });
 
@@ -444,7 +556,12 @@ describe("buildServer", () => {
     const service = {
       getDashboardSummary: vi.fn(() => dashboard),
       searchPartTypes: vi.fn(() => [partType]),
+      getKnownLocations: vi.fn(() => ["Electronics Lab / Shelf B2"]),
+      createKnownLocation: vi.fn(),
+      getKnownCategories: vi.fn(() => ["Electronics / Microcontrollers"]),
+      createKnownCategory: vi.fn(),
       getProvisionalPartTypes: vi.fn(() => [partType]),
+      listCorrectionEvents: vi.fn(() => [correctionEvent]),
       registerQrBatch: vi.fn(() => ({
         batch: {
           id: "batch-1",
@@ -475,15 +592,19 @@ describe("buildServer", () => {
       })),
       scanCode: vi.fn(async () => scanResponse),
       assignQr: vi.fn(() => entitySummary),
+      bulkAssignQrs: vi.fn(() => bulkAssignResponse),
       recordEvent: vi.fn(() => stockEvent),
+      bulkMoveEntities: vi.fn(() => bulkMoveResponse),
       mergePartTypes: vi.fn(() => partType),
       getCorrectionHistory: vi.fn(() => [correctionEvent]),
       reassignEntityPartType: vi.fn(() => reassignResponse),
       editPartTypeDefinition: vi.fn(() => editPartTypeResponse),
       reverseIngestAssignment: vi.fn(() => reverseIngestResponse),
+      bulkReverseIngest: vi.fn(() => bulkReverseResponse),
       getPartDbStatus: vi.fn(async () => partDbStatus),
       voidQrCode: vi.fn(() => voidedQr),
       approvePartType: vi.fn(() => ({ ...partType, needsReview: false })),
+      backfillPartTypeArt: vi.fn(() => ({ updated: 1, unchanged: 2, missingAssets: 3 })),
     };
 
     const app = await buildServer({
@@ -513,6 +634,36 @@ describe("buildServer", () => {
     await expect(
       app.inject({
         method: "GET",
+        url: "/api/locations",
+        headers: sessionHeaders,
+      }),
+    ).resolves.toMatchObject({ statusCode: 200 });
+    await expect(
+      app.inject({
+        method: "POST",
+        url: "/api/locations",
+        payload: { path: " Electronics Lab / Shelf B2 " },
+        headers: sessionHeaders,
+      }),
+    ).resolves.toMatchObject({ statusCode: 200 });
+    await expect(
+      app.inject({
+        method: "GET",
+        url: "/api/categories",
+        headers: sessionHeaders,
+      }),
+    ).resolves.toMatchObject({ statusCode: 200 });
+    await expect(
+      app.inject({
+        method: "POST",
+        url: "/api/categories",
+        payload: { path: " Electronics / Microcontrollers " },
+        headers: sessionHeaders,
+      }),
+    ).resolves.toMatchObject({ statusCode: 200 });
+    await expect(
+      app.inject({
+        method: "GET",
         url: "/api/part-types/provisional",
         headers: sessionHeaders,
       }),
@@ -531,7 +682,7 @@ describe("buildServer", () => {
     await expect(
       app.inject({
         method: "POST",
-        url: "/api/scan",
+        url: "/api/scan?count=false&amount=2.5",
         payload: { code: "EAN-1234" },
         headers: sessionHeaders,
       }),
@@ -555,11 +706,46 @@ describe("buildServer", () => {
     await expect(
       app.inject({
         method: "POST",
+        url: "/api/bulk/assign",
+        payload: {
+          qrs: ["QR-1001"],
+          assignment: {
+            entityKind: "instance",
+            location: "Shelf A",
+            partType: {
+              kind: "existing",
+              existingPartTypeId: "part-1",
+            },
+          },
+        },
+        headers: sessionHeaders,
+      }),
+    ).resolves.toMatchObject({ statusCode: 200 });
+    await expect(
+      app.inject({
+        method: "POST",
         url: "/api/events",
         payload: {
           targetType: "instance",
           targetId: "instance-1",
           event: "moved",
+          location: "Shelf B",
+        },
+        headers: sessionHeaders,
+      }),
+    ).resolves.toMatchObject({ statusCode: 200 });
+    await expect(
+      app.inject({
+        method: "POST",
+        url: "/api/bulk/move",
+        payload: {
+          targets: [
+            {
+              targetType: "instance",
+              targetId: "instance-1",
+              qrCode: "QR-1001",
+            },
+          ],
           location: "Shelf B",
         },
         headers: sessionHeaders,
@@ -611,8 +797,22 @@ describe("buildServer", () => {
     ).resolves.toMatchObject({ statusCode: 200 });
     await expect(
       app.inject({
+        method: "POST",
+        url: "/api/part-types/art/backfill",
+        headers: sessionHeaders,
+      }),
+    ).resolves.toMatchObject({ statusCode: 200 });
+    await expect(
+      app.inject({
         method: "GET",
         url: "/api/corrections/history?targetType=instance&targetId=instance-1",
+        headers: sessionHeaders,
+      }),
+    ).resolves.toMatchObject({ statusCode: 200 });
+    await expect(
+      app.inject({
+        method: "GET",
+        url: "/api/corrections?limit=25",
         headers: sessionHeaders,
       }),
     ).resolves.toMatchObject({ statusCode: 200 });
@@ -659,6 +859,23 @@ describe("buildServer", () => {
     ).resolves.toMatchObject({ statusCode: 200 });
     await expect(
       app.inject({
+        method: "POST",
+        url: "/api/bulk/reverse-ingest",
+        payload: {
+          targets: [
+            {
+              assignedKind: "instance",
+              assignedId: "instance-1",
+              qrCode: "QR-1001",
+            },
+          ],
+          reason: "Wrong ingest",
+        },
+        headers: sessionHeaders,
+      }),
+    ).resolves.toMatchObject({ statusCode: 200 });
+    await expect(
+      app.inject({
         method: "GET",
         url: "/api/qr-batches/batch-1/labels.pdf",
         headers: sessionHeaders,
@@ -671,12 +888,23 @@ describe("buildServer", () => {
     });
 
     expect(service.searchPartTypes).toHaveBeenCalledWith("arduino");
+    expect(service.createKnownLocation).toHaveBeenCalledWith("Electronics Lab / Shelf B2");
+    expect(service.createKnownCategory).toHaveBeenCalledWith("Electronics / Microcontrollers");
+    expect(service.scanCode).toHaveBeenCalledWith("EAN-1234", "labeler", {
+      autoIncrement: false,
+      incrementAmount: 2.5,
+    });
     expect(service.voidQrCode).toHaveBeenCalledWith("QR-1001", "labeler");
     expect(service.approvePartType).toHaveBeenCalledWith("part-1");
+    expect(service.backfillPartTypeArt).toHaveBeenCalled();
     expect(service.getCorrectionHistory).toHaveBeenCalledWith("instance", "instance-1");
+    expect(service.listCorrectionEvents).toHaveBeenCalledWith(25);
+    expect(service.bulkAssignQrs).toHaveBeenCalled();
+    expect(service.bulkMoveEntities).toHaveBeenCalled();
     expect(service.reassignEntityPartType).toHaveBeenCalled();
     expect(service.editPartTypeDefinition).toHaveBeenCalled();
     expect(service.reverseIngestAssignment).toHaveBeenCalled();
+    expect(service.bulkReverseIngest).toHaveBeenCalled();
     await app.close();
   });
 
@@ -687,7 +915,12 @@ describe("buildServer", () => {
         throw new Error("boom");
       }),
       searchPartTypes: vi.fn(() => []),
+      getKnownLocations: vi.fn(() => []),
+      createKnownLocation: vi.fn(),
+      getKnownCategories: vi.fn(() => []),
+      createKnownCategory: vi.fn(),
       getProvisionalPartTypes: vi.fn(() => []),
+      listCorrectionEvents: vi.fn(() => []),
       registerQrBatch: vi.fn(() => {
         throw new ConflictError("Batch already exists.");
       }),
@@ -697,8 +930,11 @@ describe("buildServer", () => {
       }),
       scanCode: vi.fn(async () => scanResponse),
       assignQr: vi.fn(() => entitySummary),
+      bulkAssignQrs: vi.fn(() => bulkAssignResponse),
       recordEvent: vi.fn(() => stockEvent),
+      bulkMoveEntities: vi.fn(() => bulkMoveResponse),
       mergePartTypes: vi.fn(() => partType),
+      bulkReverseIngest: vi.fn(() => bulkReverseResponse),
       getPartDbStatus: vi.fn(async () => partDbStatus),
     };
 
@@ -724,6 +960,44 @@ describe("buildServer", () => {
         message: "Could not parse register QR batch request.",
         details: expect.objectContaining({
           context: "register QR batch request",
+        }),
+      },
+    });
+
+    const locationParseFailure = await app.inject({
+      method: "POST",
+      url: "/api/locations",
+      payload: {
+        path: " / ",
+      },
+      headers: sessionHeaders,
+    });
+    expect(locationParseFailure.statusCode).toBe(400);
+    expect(locationParseFailure.json()).toEqual({
+      error: {
+        code: "parse_input",
+        message: "Could not parse known location request.",
+        details: expect.objectContaining({
+          context: "known location request",
+        }),
+      },
+    });
+
+    const scanQueryParseFailure = await app.inject({
+      method: "POST",
+      url: "/api/scan?amount=bad",
+      payload: {
+        code: "EAN-1234",
+      },
+      headers: sessionHeaders,
+    });
+    expect(scanQueryParseFailure.statusCode).toBe(400);
+    expect(scanQueryParseFailure.json()).toEqual({
+      error: {
+        code: "parse_input",
+        message: "Could not parse scan options query.",
+        details: expect.objectContaining({
+          context: "scan options query",
         }),
       },
     });

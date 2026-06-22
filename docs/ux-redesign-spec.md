@@ -1,5 +1,8 @@
 # Smart DB UX Redesign Specification
 
+Historical note:
+- This specification drove the rewrite work. It deliberately preserves pre-rewrite findings and targets; verify current behavior against the code, tests, and README before treating any finding as still open.
+
 A comprehensive, mobile-first UX specification synthesized from five independent deep analyses: finite state machine audit, network resilience assessment, user journey friction mapping, mobile interaction design, and edge case/error recovery analysis.
 
 **Design philosophy**: If the user has to think about the app, the app has failed. Every interaction should feel like pointing at a thing and having the right thing happen.
@@ -26,7 +29,7 @@ A comprehensive, mobile-first UX specification synthesized from five independent
 
 ## 1. Executive Summary
 
-Smart DB is a phone-first scanning app used in makerspaces where people hold a phone in one hand and a part in the other. The current implementation has a functional backend but the frontend makes the core workflow (scan → label → next) take **25-40 seconds per item** with **7+ keystrokes, 3+ taps, and 3+ scroll gestures**.
+Smart DB is a phone-first scanning app used in makerspaces where people hold a phone in one hand and a part in the other. At the time of this spec, the backend was functional but the frontend made the core workflow (scan → label → next) take **25-40 seconds per item** with **7+ keystrokes, 3+ taps, and 3+ scroll gestures**.
 
 The redesign targets **1-2 taps per item** for repeat part types and **under 5 taps** for new ones, bringing 30-item intake from **12-20 minutes down to 2-3 minutes**.
 

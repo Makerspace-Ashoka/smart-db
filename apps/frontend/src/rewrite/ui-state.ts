@@ -10,19 +10,23 @@ import type {
   RegisterQrBatchRequest,
   ScanResponse,
 } from "@smart-db/contracts";
+export type ScanEditAction = "reassign" | "editShared" | "reverseIngest";
 import type { InventorySummaryRow, PartTypeItemsResponse } from "../api";
+import type { PwaInstallPromptState } from "../pwa";
 import type { CameraScannerSnapshot } from "./services/camera-scanner-service";
 import type {
   AssignFormState,
   EventFormState,
   SearchState,
 } from "./presentation-helpers";
+import type { RewriteFailure } from "./errors";
 
 export type PendingAction =
   | "login"
   | "logout"
   | "batch"
   | "scan"
+  | "bulk"
   | "assign"
   | "event"
   | "correct"
@@ -70,6 +74,8 @@ export interface ScanHistoryEntry {
 export interface InventoryUiState {
   readonly query: string;
   readonly showEmpty: boolean;
+  readonly showAll: boolean;
+  readonly browsePath: readonly string[];
   readonly expandedId: string | null;
   readonly expandedItems: ReadonlyMap<string, PartTypeItemsResponse>;
   readonly expandedErrors: ReadonlyMap<string, string>;
@@ -85,25 +91,149 @@ export interface PathPickerUiState {
   readonly createName: string;
 }
 
-export type CorrectionAction = "reassign" | "editShared" | "reverseIngest" | null;
+export type OneByOneScanBehavior = "increment" | "viewOnly";
+export type BulkQueueAction = "label" | "move" | "delete";
 
-export interface CorrectionUiState {
-  readonly scanCode: string;
-  readonly target: Extract<ScanResponse, { mode: "interact" }> | null;
-  readonly targetError: string | null;
-  readonly history: readonly CorrectionEvent[];
-  readonly historyError: string | null;
-  readonly search: SearchState;
-  readonly replacementPartTypeId: string;
-  readonly action: CorrectionAction;
-  readonly reason: string;
-  readonly sharedCanonicalName: string;
-  readonly sharedCategory: string;
-  readonly sharedExpectedUpdatedAt: string;
+export type ScanModeState =
+  | {
+      readonly kind: "oneByOne";
+      readonly behavior: OneByOneScanBehavior;
+    }
+  | {
+      readonly kind: "bulk";
+      readonly action: BulkQueueAction;
+    };
+
+export interface BulkQueueSummary {
+  readonly uniqueLabelCount: number;
+  readonly totalScanCount: number;
+  readonly duplicateScanCount: number;
 }
+
+export interface BulkLabelFormState extends Omit<AssignFormState, "qrCode"> {}
+
+export interface BulkMoveFormState {
+  readonly location: string;
+  readonly notes: string;
+}
+
+export interface BulkDeleteFormState {
+  readonly reason: string;
+}
+
+export interface BulkUnlabeledQueueRow {
+  readonly kind: "unlabeled";
+  readonly code: string;
+  readonly batchId: string;
+  readonly count: number;
+  readonly firstSeenAt: string;
+  readonly lastSeenAt: string;
+}
+
+export type BulkDeleteEligibility =
+  | {
+      readonly status: "eligible";
+    }
+  | {
+      readonly status: "ineligible";
+      readonly reason: string;
+    };
+
+export interface BulkAssignedQueueRow {
+  readonly kind: "assigned";
+  readonly code: string;
+  readonly count: number;
+  readonly firstSeenAt: string;
+  readonly lastSeenAt: string;
+  readonly targetType: "instance" | "bulk";
+  readonly targetId: string;
+  readonly partTypeId: string;
+  readonly partTypeName: string;
+  readonly location: string;
+  readonly deleteEligibility: BulkDeleteEligibility;
+}
+
+export type BulkQueueRow = BulkUnlabeledQueueRow | BulkAssignedQueueRow;
+
+export type BulkQueueStatus = "empty" | "ready" | "submitting" | "failed";
+
+export interface BulkQueueUiState {
+  readonly status: BulkQueueStatus;
+  readonly action: BulkQueueAction;
+  readonly kind: "unlabeled" | "assigned" | null;
+  readonly rows: readonly BulkQueueRow[];
+  readonly summary: BulkQueueSummary;
+  readonly failure: RewriteFailure | null;
+  readonly labelForm: BulkLabelFormState;
+  readonly labelSearch: SearchState;
+  readonly moveForm: BulkMoveFormState;
+  readonly deleteForm: BulkDeleteFormState;
+}
+
+export type ScanEditForm =
+  | {
+      readonly action: "reassign";
+      readonly search: SearchState;
+      readonly replacementPartTypeId: string;
+      readonly reason: string;
+    }
+  | {
+      readonly action: "editShared";
+      readonly sharedCanonicalName: string;
+      readonly sharedCategory: string;
+      readonly sharedExpectedUpdatedAt: string;
+      readonly reason: string;
+    }
+  | {
+      readonly action: "reverseIngest";
+      readonly reason: string;
+    };
+
+export interface InventoryReverseTarget {
+  readonly kind: "instance" | "bulk";
+  readonly id: string;
+  readonly qrCode: string;
+}
+
+export interface InventoryReverseSelection {
+  readonly partTypeId: string | null;
+  readonly targets: readonly InventoryReverseTarget[];
+  readonly reason: string;
+}
+
+export const defaultInventoryReverseSelection: InventoryReverseSelection = {
+  partTypeId: null,
+  targets: [],
+  reason: "",
+};
+
+export type ScanLocationsState =
+  | { readonly status: "idle" }
+  | { readonly status: "loading"; readonly partTypeId: string }
+  | {
+      readonly status: "ready";
+      readonly partTypeId: string;
+      readonly data: PartTypeItemsResponse;
+    }
+  | {
+      readonly status: "error";
+      readonly partTypeId: string;
+      readonly message: string;
+    };
+
+export type ScanEditState =
+  | { readonly status: "closed" }
+  | {
+      readonly status: "open";
+      readonly form: ScanEditForm;
+      readonly history: readonly CorrectionEvent[];
+      readonly historyError: string | null;
+      readonly dirty: boolean;
+    };
 
 export interface RewriteUiState {
   readonly theme: "light" | "dark";
+  readonly devMode: boolean;
   readonly authState: AuthViewState;
   readonly dashboard: DashboardSummary | null;
   readonly partDbStatus: PartDbConnectionStatus | null;
@@ -115,7 +245,11 @@ export interface RewriteUiState {
   readonly knownCategories: readonly string[];
   readonly inventorySummary: readonly InventorySummaryRow[];
   readonly inventoryUi: InventoryUiState;
-  readonly correctionUi: CorrectionUiState;
+  readonly scanEdit: ScanEditState;
+  readonly scanLocations: ScanLocationsState;
+  readonly correctionLog: readonly CorrectionEvent[];
+  readonly correctionLogError: string | null;
+  readonly inventoryReverseSelection: InventoryReverseSelection;
   readonly provisionalPartTypes: readonly PartType[];
   readonly labelSearch: SearchState;
   readonly mergeSearch: SearchState;
@@ -124,7 +258,8 @@ export interface RewriteUiState {
   readonly assignForm: AssignFormState;
   readonly eventForm: EventFormState;
   readonly scanCode: string;
-  readonly scanMode: "increment" | "inspect";
+  readonly scanMode: ScanModeState;
+  readonly bulkQueue: BulkQueueUiState;
   readonly scanHistory: readonly ScanHistoryEntry[];
   readonly lastAssignment: LastAssignment | null;
   readonly camera: CameraScannerSnapshot;
@@ -134,6 +269,7 @@ export interface RewriteUiState {
   readonly pendingAction: PendingAction;
   readonly downloadingBatchId: string | null;
   readonly activeTab: TabId;
+  readonly pwaInstallPrompt: PwaInstallPromptState;
   readonly toasts: readonly ToastRecord[];
   readonly isOnline: boolean;
   readonly sessionExpiringSoon: boolean;
@@ -150,6 +286,21 @@ export const defaultBatchForm: RegisterQrBatchRequest = {
 
 export const defaultAssignForm: AssignFormState = {
   qrCode: "",
+  entityKind: "instance",
+  location: "",
+  notes: "",
+  partTypeMode: "existing",
+  existingPartTypeId: "",
+  canonicalName: "",
+  category: "",
+  countable: true,
+  unitSymbol: "pcs",
+  initialStatus: "available",
+  initialQuantity: "1",
+  minimumQuantity: "",
+};
+
+export const defaultBulkLabelForm: BulkLabelFormState = {
   entityKind: "instance",
   location: "",
   notes: "",
@@ -184,9 +335,38 @@ export const defaultSearchState: SearchState = {
   error: null,
 };
 
+export const defaultScanMode: ScanModeState = {
+  kind: "oneByOne",
+  behavior: "viewOnly",
+};
+
+export const defaultBulkQueueState: BulkQueueUiState = {
+  status: "empty",
+  action: "label",
+  kind: null,
+  rows: [],
+  summary: {
+    uniqueLabelCount: 0,
+    totalScanCount: 0,
+    duplicateScanCount: 0,
+  },
+  failure: null,
+  labelForm: defaultBulkLabelForm,
+  labelSearch: defaultSearchState,
+  moveForm: {
+    location: "",
+    notes: "",
+  },
+  deleteForm: {
+    reason: "",
+  },
+};
+
 export const defaultInventoryUiState: InventoryUiState = {
   query: "",
   showEmpty: false,
+  showAll: false,
+  browsePath: [],
   expandedId: null,
   expandedItems: new Map(),
   expandedErrors: new Map(),
@@ -202,25 +382,43 @@ export const defaultPathPickerState: PathPickerUiState = {
   createName: "",
 };
 
-export const defaultCorrectionUiState: CorrectionUiState = {
-  scanCode: "",
-  target: null,
-  targetError: null,
-  history: [],
-  historyError: null,
-  search: {
-    query: "",
-    results: [],
-    status: "idle",
-    error: null,
-  },
-  replacementPartTypeId: "",
-  action: null,
-  reason: "",
-  sharedCanonicalName: "",
-  sharedCategory: "",
-  sharedExpectedUpdatedAt: "",
+export const defaultScanEditState: ScanEditState = {
+  status: "closed",
 };
+
+export const defaultScanLocationsState: ScanLocationsState = {
+  status: "idle",
+};
+
+export function makeReassignForm(): Extract<ScanEditForm, { action: "reassign" }> {
+  return {
+    action: "reassign",
+    search: defaultSearchState,
+    replacementPartTypeId: "",
+    reason: "",
+  };
+}
+
+export function makeEditSharedForm(
+  canonicalName: string,
+  categoryPath: readonly string[],
+  expectedUpdatedAt: string,
+): Extract<ScanEditForm, { action: "editShared" }> {
+  return {
+    action: "editShared",
+    sharedCanonicalName: canonicalName,
+    sharedCategory: categoryPath.join(" / "),
+    sharedExpectedUpdatedAt: expectedUpdatedAt,
+    reason: "",
+  };
+}
+
+export function makeReverseIngestForm(): Extract<ScanEditForm, { action: "reverseIngest" }> {
+  return {
+    action: "reverseIngest",
+    reason: "",
+  };
+}
 
 export const defaultCameraState: CameraScannerSnapshot = {
   phase: "idle",

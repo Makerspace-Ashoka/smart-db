@@ -1,17 +1,28 @@
 import { describe, expect, it } from "vitest";
 import {
   applicationErrorResponseSchema,
+  authCallbackQuerySchema,
+  authLoginQuerySchema,
   assignQrRequestSchema,
+  bulkAssignQrsRequestSchema,
+  bulkAssignQrsResponseSchema,
+  bulkMoveEntitiesRequestSchema,
+  bulkMoveEntitiesResponseSchema,
+  bulkReverseIngestRequestSchema,
+  bulkReverseIngestResponseSchema,
   categoryLeafFromPath,
   categoryPathSchema,
   configEnvironmentSchema,
   correctionEventSchema,
   correctionHistoryQuerySchema,
+  correctionListQuerySchema,
   describeCategoryPathParseError,
   defaultMeasurementUnit,
   editPartTypeDefinitionRequestSchema,
   editPartTypeDefinitionResponseSchema,
   getMeasurementUnitBySymbol,
+  knownCategoryRequestSchema,
+  knownLocationRequestSchema,
   latestQrBatchResponseSchema,
   loginRequestSchema,
   loginResponseSchema,
@@ -27,6 +38,7 @@ import {
   registerQrBatchRequestSchema,
   reverseIngestAssignmentRequestSchema,
   reverseIngestAssignmentResponseSchema,
+  scanOptionsQuerySchema,
   scanResponseSchema,
 } from "./index";
 
@@ -51,12 +63,15 @@ describe("schemas", () => {
       PARTDB_PUBLIC_BASE_URL: null,
       PARTDB_API_TOKEN: null,
       PARTDB_SYNC_ENABLED: false,
+      DEV_AUTH_BYPASS: false,
       SESSION_COOKIE_SECRET: null,
       ZITADEL_ISSUER: null,
       ZITADEL_CLIENT_ID: null,
       ZITADEL_CLIENT_SECRET: null,
       ZITADEL_ROLE_CLAIM: null,
     });
+
+    expect(configEnvironmentSchema.parse({ DEV_AUTH_BYPASS: "true" }).DEV_AUTH_BYPASS).toBe(true);
   });
 
   it("parses category paths and measurement units with bounded structure", () => {
@@ -102,6 +117,35 @@ describe("schemas", () => {
       name: "Pieces",
       isInteger: true,
     });
+  });
+
+  it("parses route query and picker creation payloads at the boundary", () => {
+    expect(authLoginQuerySchema.parse({ returnTo: " /scan " })).toEqual({ returnTo: "/scan" });
+    expect(authCallbackQuerySchema.parse({ code: " code-1 ", state: " state-1 " })).toEqual({
+      code: "code-1",
+      state: "state-1",
+    });
+
+    expect(correctionListQuerySchema.parse({})).toEqual({ limit: 50 });
+    expect(correctionListQuerySchema.parse({ limit: "25" })).toEqual({ limit: 25 });
+    expect(() => correctionListQuerySchema.parse({ limit: "0" })).toThrow();
+    expect(() => correctionListQuerySchema.parse({ limit: "abc" })).toThrow();
+
+    expect(scanOptionsQuerySchema.parse({})).toEqual({ count: true, amount: 1 });
+    expect(scanOptionsQuerySchema.parse({ count: "false", amount: "2.5" })).toEqual({
+      count: false,
+      amount: 2.5,
+    });
+    expect(() => scanOptionsQuerySchema.parse({ amount: "-1" })).toThrow();
+
+    expect(knownLocationRequestSchema.parse({ path: " Electronics Lab / Shelf B2 " })).toEqual({
+      path: "Electronics Lab / Shelf B2",
+    });
+    expect(knownCategoryRequestSchema.parse({ path: " Electronics / Resistors " })).toEqual({
+      path: "Electronics / Resistors",
+    });
+    expect(() => knownCategoryRequestSchema.parse({ path: "Bad|Category" })).toThrow(/unsupported characters/i);
+    expect(() => knownLocationRequestSchema.parse({ path: " / " })).toThrow(/Location is required/i);
   });
 
   it("rejects out-of-bounds batch count and invalid prefix characters", () => {
@@ -232,14 +276,28 @@ describe("schemas", () => {
           category: "Fasteners",
           countable: true,
           unit: {
-            symbol: "g",
-            name: "Grams",
-            isInteger: false,
+            symbol: "pcs",
+            name: "Pieces",
+            isInteger: true,
           },
         },
         initialQuantity: 1,
       }),
-    ).toThrow(/integer unit/i);
+    ).toThrow(/measured part types/i);
+
+    expect(() =>
+      assignQrRequestSchema.parse({
+        qrCode: "QR-1005",
+        entityKind: "instance",
+        location: "Shelf A",
+        partType: {
+          kind: "new",
+          canonicalName: "Measured Instance",
+          category: "Fasteners",
+          countable: false,
+        },
+      }),
+    ).toThrow(/countable part types/i);
   });
 
   it("parses lifecycle events, merge requests, responses, and error envelopes", () => {
@@ -501,6 +559,188 @@ describe("schemas", () => {
     ).toBeTruthy();
 
     expect(
+      bulkAssignQrsRequestSchema.parse({
+        qrs: ["QR-1001", "QR-1002"],
+        assignment: {
+          entityKind: "instance",
+          location: "Shelf A",
+          notes: null,
+          partType: {
+            kind: "existing",
+            existingPartTypeId: "part-a",
+          },
+          initialStatus: "available",
+        },
+      }),
+    ).toEqual({
+      qrs: ["QR-1001", "QR-1002"],
+      assignment: {
+        entityKind: "instance",
+        location: "Shelf A",
+        notes: null,
+        partType: {
+          kind: "existing",
+          existingPartTypeId: "part-a",
+        },
+        initialStatus: "available",
+      },
+    });
+
+    expect(() =>
+      bulkAssignQrsRequestSchema.parse({
+        qrs: ["QR-1001", "QR-1001"],
+        assignment: {
+          entityKind: "instance",
+          location: "Shelf A",
+          notes: null,
+          partType: {
+            kind: "existing",
+            existingPartTypeId: "part-a",
+          },
+          initialStatus: "available",
+        },
+      }),
+    ).toThrow();
+
+    expect(
+      bulkMoveEntitiesRequestSchema.parse({
+        targets: [
+          {
+            targetType: "instance",
+            targetId: "instance-1",
+            qrCode: "QR-1001",
+          },
+          {
+            targetType: "bulk",
+            targetId: "bulk-1",
+            qrCode: "QR-1002",
+          },
+        ],
+        location: "Shelf B",
+        notes: null,
+      }),
+    ).toEqual({
+      targets: [
+        {
+          targetType: "instance",
+          targetId: "instance-1",
+          qrCode: "QR-1001",
+        },
+        {
+          targetType: "bulk",
+          targetId: "bulk-1",
+          qrCode: "QR-1002",
+        },
+      ],
+      location: "Shelf B",
+      notes: null,
+    });
+
+    expect(
+      bulkReverseIngestRequestSchema.parse({
+        targets: [
+          {
+            assignedKind: "instance",
+            assignedId: "instance-1",
+            qrCode: "QR-1001",
+          },
+        ],
+        reason: "Undo bad ingest",
+      }),
+    ).toEqual({
+      targets: [
+        {
+          assignedKind: "instance",
+          assignedId: "instance-1",
+          qrCode: "QR-1001",
+        },
+      ],
+      reason: "Undo bad ingest",
+    });
+
+    expect(
+      bulkAssignQrsResponseSchema.parse({
+        entities: [
+          {
+            id: "instance-1",
+            targetType: "instance",
+            qrCode: "QR-1001",
+            partType: {
+              id: "part-a",
+              canonicalName: "Correct Type",
+              category: "Misc",
+              categoryPath: ["Misc"],
+              aliases: [],
+              imageUrl: null,
+              notes: null,
+              countable: true,
+              unit: {
+                symbol: "pcs",
+                name: "Pieces",
+                isInteger: true,
+              },
+              needsReview: false,
+              partDbPartId: null,
+              partDbCategoryId: null,
+              partDbUnitId: null,
+              partDbSyncStatus: "never",
+              createdAt: "2026-01-01T00:00:00.000Z",
+              updatedAt: "2026-01-01T00:00:00.000Z",
+            },
+            location: "Shelf A",
+            state: "available",
+            assignee: null,
+            partDbSyncStatus: "never",
+            quantity: null,
+            minimumQuantity: null,
+          },
+        ],
+        processedCount: 1,
+      }),
+    ).toBeTruthy();
+
+    expect(
+      bulkMoveEntitiesResponseSchema.parse({
+        events: [
+          {
+            id: "event-1",
+            targetType: "instance",
+            targetId: "instance-1",
+            event: "moved",
+            fromState: "available",
+            toState: "available",
+            location: "Shelf B",
+            actor: "lab-admin",
+            notes: null,
+            createdAt: "2026-01-01T00:00:00.000Z",
+          },
+        ],
+        processedCount: 1,
+      }),
+    ).toBeTruthy();
+
+    expect(
+      bulkReverseIngestResponseSchema.parse({
+        qrCodes: [
+          qrCodeSchema.parse({
+            code: "QR-1001",
+            batchId: "batch-1",
+            status: "printed",
+            createdAt: "2026-01-01T00:00:00.000Z",
+            updatedAt: "2026-01-01T00:00:00.000Z",
+          }),
+        ],
+        correctionEvents: [
+          {
+            ...correctionEvent,
+            correctionKind: "ingest_reversed",
+          },
+        ],
+        processedCount: 1,
+      }),
+    ).toBeTruthy();
+
+    expect(
       scanResponseSchema.parse({
         mode: "interact",
         qrCode: {
@@ -549,6 +789,9 @@ describe("schemas", () => {
           connected: false,
           message: "Not configured",
         },
+        currentBorrow: null,
+        canReverseIngest: true,
+        canEditSharedType: true,
       }),
     ).toEqual({
       mode: "interact",
@@ -601,6 +844,9 @@ describe("schemas", () => {
         connected: false,
         message: "Not configured",
       },
+      currentBorrow: null,
+      canReverseIngest: true,
+      canEditSharedType: true,
     });
 
     expect(

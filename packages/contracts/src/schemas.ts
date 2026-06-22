@@ -80,6 +80,11 @@ export const correctionKindSchema = z.enum(correctionKinds);
 
 const isoTimestampSchema = z.string().datetime();
 const identifierSchema = nonEmptyString;
+
+export const borrowDueDateSchema = isoTimestampSchema.refine(
+  (value) => Date.parse(value) > Date.now(),
+  { message: "Due date must be in the future." },
+);
 const booleanEnvironmentSchema = z
   .union([
     z.boolean(),
@@ -145,6 +150,58 @@ export function categoryLeafFromPath(path: z.output<typeof categoryPathSchema>):
   return path[path.length - 1] ?? "Uncategorized";
 }
 
+const locationSegmentPattern = /^[A-Za-z0-9 _\-+&().#]+$/;
+
+export const locationPathSchema = z
+  .array(z.string().trim().min(1).max(255))
+  .min(1)
+  .max(6);
+
+export type LocationPathParseError =
+  | { kind: "empty" }
+  | { kind: "too_deep"; maxDepth: number }
+  | { kind: "invalid_segment"; segment: string };
+
+export function parseLocationPathInput(
+  input: string,
+): Result<z.output<typeof locationPathSchema>, LocationPathParseError> {
+  const segments = input
+    .split("/")
+    .map((segment) => segment.trim())
+    .filter((segment) => segment.length > 0);
+
+  if (segments.length === 0) {
+    return Err({ kind: "empty" });
+  }
+
+  if (segments.length > 6) {
+    return Err({ kind: "too_deep", maxDepth: 6 });
+  }
+
+  for (const segment of segments) {
+    if (segment.length > 255 || !locationSegmentPattern.test(segment)) {
+      return Err({ kind: "invalid_segment", segment });
+    }
+  }
+
+  return Ok(segments);
+}
+
+export function describeLocationPathParseError(error: LocationPathParseError): string {
+  switch (error.kind) {
+    case "empty":
+      return "Location is required.";
+    case "too_deep":
+      return `Location paths can have at most ${error.maxDepth} levels.`;
+    case "invalid_segment":
+      return `Location segment '${error.segment}' contains unsupported characters.`;
+  }
+}
+
+export function locationLeafFromPath(path: z.output<typeof locationPathSchema>): string {
+  return path[path.length - 1] ?? "";
+}
+
 export function getMeasurementUnitBySymbol(symbol: string): z.output<typeof measurementUnitSchema> | null {
   return (
     measurementUnitCatalog.find((unit) => unit.symbol === symbol) ?? null
@@ -201,6 +258,39 @@ export const bulkStockSchema = z
     updatedAt: isoTimestampSchema,
   })
   .strict();
+
+export const entityStatusSchema = z.enum([
+  "available",
+  "checked_out",
+  "consumed",
+  "damaged",
+  "lost",
+]);
+
+export type EntityStatus = z.output<typeof entityStatusSchema>;
+
+export const entitySourceKindSchema = z.enum(["instance", "bulk"]);
+export type EntitySourceKind = z.output<typeof entitySourceKindSchema>;
+
+export const entitySchema = z
+  .object({
+    id: identifierSchema,
+    qrCode: nonEmptyString,
+    partTypeId: identifierSchema,
+    location: nonEmptyString,
+    quantity: z.number().nonnegative(),
+    minimumQuantity: z.number().nonnegative().nullable(),
+    status: entityStatusSchema,
+    assignee: z.string().nullable(),
+    sourceKind: entitySourceKindSchema,
+    partDbLotId: nullableLooseString.nullable(),
+    partDbSyncStatus: partDbSyncStatusSchema,
+    createdAt: isoTimestampSchema,
+    updatedAt: isoTimestampSchema,
+  })
+  .strict();
+
+export type Entity = z.output<typeof entitySchema>;
 
 export const qrCodeSchema = z
   .object({
@@ -298,6 +388,19 @@ export const logoutResponseSchema = z
   })
   .strict();
 
+export const authLoginQuerySchema = z
+  .object({
+    returnTo: z.string().trim().optional(),
+  })
+  .strict();
+
+export const authCallbackQuerySchema = z
+  .object({
+    code: z.string().trim().optional(),
+    state: z.string().trim().optional(),
+  })
+  .strict();
+
 export const registerQrBatchRequestSchema = z
   .object({
     batchId: nonEmptyString.optional(),
@@ -366,6 +469,32 @@ export const partTypeDraftSchema = z
     }
   });
 
+function requireNewPartTypeCompatibility(
+  entityKind: "instance" | "bulk",
+  partType: z.output<typeof partTypeDraftSchema>,
+  context: z.RefinementCtx,
+): void {
+  if (partType.kind !== "new") {
+    return;
+  }
+
+  if (entityKind === "instance" && !partType.countable) {
+    context.addIssue({
+      code: z.ZodIssueCode.custom,
+      path: ["partType", "countable"],
+      message: "Physical instances require countable part types.",
+    });
+  }
+
+  if (entityKind === "bulk" && partType.countable) {
+    context.addIssue({
+      code: z.ZodIssueCode.custom,
+      path: ["partType", "countable"],
+      message: "Bulk stock requires measured part types.",
+    });
+  }
+}
+
 export const instanceAssignQrRequestSchema = z
   .object({
     qrCode: nonEmptyString,
@@ -389,10 +518,14 @@ export const bulkAssignQrRequestSchema = z
   })
   .strict();
 
-export const assignQrRequestSchema = z.discriminatedUnion("entityKind", [
-  instanceAssignQrRequestSchema,
-  bulkAssignQrRequestSchema,
-]);
+export const assignQrRequestSchema = z
+  .discriminatedUnion("entityKind", [
+    instanceAssignQrRequestSchema,
+    bulkAssignQrRequestSchema,
+  ])
+  .superRefine((value, context) => {
+    requireNewPartTypeCompatibility(value.entityKind, value.partType, context);
+  });
 
 export const instanceAssignQrCommandSchema = instanceAssignQrRequestSchema
   .extend({
@@ -406,10 +539,162 @@ export const bulkAssignQrCommandSchema = bulkAssignQrRequestSchema
   })
   .strict();
 
-export const assignQrCommandSchema = z.discriminatedUnion("entityKind", [
-  instanceAssignQrCommandSchema,
-  bulkAssignQrCommandSchema,
-]);
+export const assignQrCommandSchema = z
+  .discriminatedUnion("entityKind", [
+    instanceAssignQrCommandSchema,
+    bulkAssignQrCommandSchema,
+  ])
+  .superRefine((value, context) => {
+    requireNewPartTypeCompatibility(value.entityKind, value.partType, context);
+  });
+
+const uniqueQrCodesSchema = z
+  .array(nonEmptyString)
+  .min(1)
+  .superRefine((codes, context) => {
+    const seen = new Set<string>();
+    for (const [index, code] of codes.entries()) {
+      if (seen.has(code)) {
+        context.addIssue({
+          code: z.ZodIssueCode.custom,
+          path: [index],
+          message: "Each QR/Data Matrix code may appear only once in a batch.",
+        });
+      }
+      seen.add(code);
+    }
+  });
+
+export const sharedInstanceAssignRequestSchema = instanceAssignQrRequestSchema
+  .omit({
+    qrCode: true,
+  })
+  .strict();
+
+export const sharedBulkAssignRequestSchema = bulkAssignQrRequestSchema
+  .omit({
+    qrCode: true,
+  })
+  .strict();
+
+export const sharedAssignRequestSchema = z
+  .discriminatedUnion("entityKind", [
+    sharedInstanceAssignRequestSchema,
+    sharedBulkAssignRequestSchema,
+  ])
+  .superRefine((value, context) => {
+    requireNewPartTypeCompatibility(value.entityKind, value.partType, context);
+  });
+
+export const bulkAssignQrsRequestSchema = z
+  .object({
+    qrs: uniqueQrCodesSchema,
+    assignment: sharedAssignRequestSchema,
+  })
+  .strict();
+
+export const bulkAssignQrsCommandSchema = bulkAssignQrsRequestSchema
+  .extend({
+    actor: nonEmptyString,
+  })
+  .strict();
+
+export const bulkEntityTargetSchema = z
+  .object({
+    targetType: inventoryTargetKindSchema,
+    targetId: identifierSchema,
+    qrCode: nonEmptyString,
+  })
+  .strict();
+
+const uniqueBulkEntityTargetsSchema = z
+  .array(bulkEntityTargetSchema)
+  .min(1)
+  .superRefine((targets, context) => {
+    const seenTargets = new Set<string>();
+    const seenCodes = new Set<string>();
+    for (const [index, target] of targets.entries()) {
+      const targetKey = `${target.targetType}:${target.targetId}`;
+      if (seenTargets.has(targetKey)) {
+        context.addIssue({
+          code: z.ZodIssueCode.custom,
+          path: [index, "targetId"],
+          message: "Each inventory target may appear only once in a batch.",
+        });
+      }
+      if (seenCodes.has(target.qrCode)) {
+        context.addIssue({
+          code: z.ZodIssueCode.custom,
+          path: [index, "qrCode"],
+          message: "Each QR/Data Matrix code may appear only once in a batch.",
+        });
+      }
+      seenTargets.add(targetKey);
+      seenCodes.add(target.qrCode);
+    }
+  });
+
+export const bulkMoveEntitiesRequestSchema = z
+  .object({
+    targets: uniqueBulkEntityTargetsSchema,
+    location: nonEmptyString,
+    notes: nullableLooseString.default(null),
+  })
+  .strict();
+
+export const bulkMoveEntitiesCommandSchema = bulkMoveEntitiesRequestSchema
+  .extend({
+    actor: nonEmptyString,
+  })
+  .strict();
+
+export const bulkReverseIngestTargetSchema = z
+  .object({
+    assignedKind: inventoryTargetKindSchema,
+    assignedId: identifierSchema,
+    qrCode: nonEmptyString,
+  })
+  .strict();
+
+const uniqueBulkReverseTargetsSchema = z
+  .array(bulkReverseIngestTargetSchema)
+  .min(1)
+  .superRefine((targets, context) => {
+    const seenTargets = new Set<string>();
+    const seenCodes = new Set<string>();
+    for (const [index, target] of targets.entries()) {
+      const targetKey = `${target.assignedKind}:${target.assignedId}`;
+      if (seenTargets.has(targetKey)) {
+        context.addIssue({
+          code: z.ZodIssueCode.custom,
+          path: [index, "assignedId"],
+          message: "Each inventory target may appear only once in a batch.",
+        });
+      }
+      if (seenCodes.has(target.qrCode)) {
+        context.addIssue({
+          code: z.ZodIssueCode.custom,
+          path: [index, "qrCode"],
+          message: "Each QR/Data Matrix code may appear only once in a batch.",
+        });
+      }
+      seenTargets.add(targetKey);
+      seenCodes.add(target.qrCode);
+    }
+  });
+
+export const bulkReverseIngestRequestSchema = z
+  .object({
+    targets: uniqueBulkReverseTargetsSchema,
+    reason: nonEmptyString,
+  })
+  .strict();
+
+export const bulkReverseIngestCommandSchema = bulkReverseIngestRequestSchema
+  .extend({
+    actor: nonEmptyString,
+  })
+  .strict();
 
 export const instanceRecordEventRequestSchema = z
   .discriminatedUnion("event", [
@@ -430,6 +715,7 @@ export const instanceRecordEventRequestSchema = z
         notes: normalizedOptionalString,
         location: normalizedOptionalString,
         assignee: normalizedOptionalString,
+        dueAt: borrowDueDateSchema.nullable().optional(),
       })
       .strict(),
     z
@@ -654,6 +940,43 @@ export const correctionHistoryQuerySchema = z
   })
   .strict();
 
+export const correctionListQuerySchema = z
+  .object({
+    limit: z.preprocess(
+      (value) => value ?? 50,
+      z.coerce.number().int().min(1).max(200),
+    ),
+  })
+  .strict();
+
+export const knownLocationRequestSchema = z
+  .object({
+    path: nonEmptyString.superRefine((value, context) => {
+      const parsed = parseLocationPathInput(value);
+      if (!parsed.ok) {
+        context.addIssue({
+          code: z.ZodIssueCode.custom,
+          message: describeLocationPathParseError(parsed.error),
+        });
+      }
+    }),
+  })
+  .strict();
+
+export const knownCategoryRequestSchema = z
+  .object({
+    path: nonEmptyString.superRefine((value, context) => {
+      const parsed = parseCategoryPathInput(value);
+      if (!parsed.ok) {
+        context.addIssue({
+          code: z.ZodIssueCode.custom,
+          message: describeCategoryPathParseError(parsed.error),
+        });
+      }
+    }),
+  })
+  .strict();
+
 export const reassignEntityPartTypeResponseSchema = z
   .object({
     entity: inventoryEntitySummarySchema,
@@ -674,6 +997,55 @@ export const reverseIngestAssignmentResponseSchema = z
     correctionEvent: correctionEventSchema,
   })
   .strict();
+
+export const bulkAssignQrsResponseSchema = z
+  .object({
+    entities: z.array(inventoryEntitySummarySchema).min(1),
+    processedCount: z.number().int().positive(),
+  })
+  .strict()
+  .superRefine((value, context) => {
+    if (value.processedCount !== value.entities.length) {
+      context.addIssue({
+        code: z.ZodIssueCode.custom,
+        path: ["processedCount"],
+        message: "processedCount must equal the number of returned entities.",
+      });
+    }
+  });
+
+export const bulkMoveEntitiesResponseSchema = z
+  .object({
+    events: z.array(stockEventSchema).min(1),
+    processedCount: z.number().int().positive(),
+  })
+  .strict()
+  .superRefine((value, context) => {
+    if (value.processedCount !== value.events.length) {
+      context.addIssue({
+        code: z.ZodIssueCode.custom,
+        path: ["processedCount"],
+        message: "processedCount must equal the number of returned events.",
+      });
+    }
+  });
+
+export const bulkReverseIngestResponseSchema = z
+  .object({
+    qrCodes: z.array(qrCodeSchema).min(1),
+    correctionEvents: z.array(correctionEventSchema).min(1),
+    processedCount: z.number().int().positive(),
+  })
+  .strict()
+  .superRefine((value, context) => {
+    if (value.processedCount !== value.qrCodes.length || value.processedCount !== value.correctionEvents.length) {
+      context.addIssue({
+        code: z.ZodIssueCode.custom,
+        path: ["processedCount"],
+        message: "processedCount must equal the number of returned QR codes and correction events.",
+      });
+    }
+  });
 
 export const mergePartTypesRequestSchema = z
   .object({
@@ -705,6 +1077,22 @@ export const partTypeSearchQuerySchema = z
 export const scanRequestSchema = z
   .object({
     code: nonEmptyString,
+  })
+  .strict();
+
+const scanAutoIncrementQuerySchema = z
+  .union([z.boolean(), z.enum(["true", "false", "1", "0"])])
+  .optional()
+  .default(true)
+  .transform((value) => value === true || value === "true" || value === "1");
+
+export const scanOptionsQuerySchema = z
+  .object({
+    count: scanAutoIncrementQuerySchema,
+    amount: z.preprocess(
+      (value) => value ?? 1,
+      z.coerce.number().positive(),
+    ),
   })
   .strict();
 
@@ -779,6 +1167,14 @@ export const partDbSyncBackfillResponseSchema = z
   })
   .strict();
 
+export const partTypeArtBackfillResponseSchema = z
+  .object({
+    updated: z.number().int().nonnegative(),
+    unchanged: z.number().int().nonnegative(),
+    missingAssets: z.number().int().nonnegative(),
+  })
+  .strict();
+
 export const applicationErrorResponseSchema = z
   .object({
     error: z
@@ -799,6 +1195,48 @@ export const applicationErrorResponseSchema = z
   })
   .strict();
 
+export const borrowCloseReasonSchema = z.enum([
+  "returned",
+  "returned_after_lost",
+  "disposed",
+  "consumed",
+  "lost",
+  "re_checkout",
+  "void_cascade",
+]);
+
+export type BorrowCloseReason = z.output<typeof borrowCloseReasonSchema>;
+
+export const borrowRecordSchema = z
+  .object({
+    id: nonEmptyString,
+    instanceId: nonEmptyString,
+    borrower: nonEmptyString,
+    borrowedAt: isoTimestampSchema,
+    dueAt: isoTimestampSchema.nullable(),
+    returnedAt: isoTimestampSchema.nullable(),
+    closeReason: borrowCloseReasonSchema.nullable(),
+    notes: z.string().nullable(),
+    actor: nonEmptyString,
+    createdAt: isoTimestampSchema,
+  })
+  .strict();
+
+export type BorrowRecord = z.output<typeof borrowRecordSchema>;
+
+export const openBorrowSummarySchema = z
+  .object({
+    id: nonEmptyString,
+    instanceId: nonEmptyString,
+    borrower: nonEmptyString,
+    borrowedAt: isoTimestampSchema,
+    dueAt: isoTimestampSchema.nullable(),
+    isOverdue: z.boolean(),
+  })
+  .strict();
+
+export type OpenBorrowSummary = z.output<typeof openBorrowSummarySchema>;
+
 export const interactInstanceScanResponseSchema = z
   .object({
     mode: z.literal("interact"),
@@ -809,6 +1247,9 @@ export const interactInstanceScanResponseSchema = z
     recentEvents: z.array(stockEventSchema),
     availableActions: z.array(instanceActionSchema),
     partDb: partDbLookupSummarySchema,
+    currentBorrow: openBorrowSummarySchema.nullable(),
+    canReverseIngest: z.boolean(),
+    canEditSharedType: z.boolean(),
   })
   .strict();
 
@@ -823,6 +1264,8 @@ export const interactBulkScanResponseSchema = z
     availableActions: z.array(bulkActionSchema),
     partDb: partDbLookupSummarySchema,
     autoIncremented: z.boolean().optional(),
+    canReverseIngest: z.boolean(),
+    canEditSharedType: z.boolean(),
   })
   .strict();
 
@@ -870,6 +1313,8 @@ export type AuthSession = z.output<typeof authSessionSchema>;
 export type LoginRequest = z.output<typeof loginRequestSchema>;
 export type LoginResponse = z.output<typeof loginResponseSchema>;
 export type LogoutResponse = z.output<typeof logoutResponseSchema>;
+export type AuthLoginQuery = z.output<typeof authLoginQuerySchema>;
+export type AuthCallbackQuery = z.output<typeof authCallbackQuerySchema>;
 export type RegisterQrBatchRequest = z.output<typeof registerQrBatchRequestSchema>;
 export type RegisterQrBatchCommand = z.output<typeof registerQrBatchCommandSchema>;
 export type RegisterQrBatchResponse = z.output<typeof registerQrBatchResponseSchema>;
@@ -879,6 +1324,15 @@ export type NewPartTypeDraft = z.output<typeof newPartTypeDraftSchema>;
 export type PartTypeDraft = z.output<typeof partTypeDraftSchema>;
 export type AssignQrRequest = z.output<typeof assignQrRequestSchema>;
 export type AssignQrCommand = z.output<typeof assignQrCommandSchema>;
+export type SharedAssignRequest = z.output<typeof sharedAssignRequestSchema>;
+export type BulkAssignQrsRequest = z.output<typeof bulkAssignQrsRequestSchema>;
+export type BulkAssignQrsCommand = z.output<typeof bulkAssignQrsCommandSchema>;
+export type BulkEntityTarget = z.output<typeof bulkEntityTargetSchema>;
+export type BulkMoveEntitiesRequest = z.output<typeof bulkMoveEntitiesRequestSchema>;
+export type BulkMoveEntitiesCommand = z.output<typeof bulkMoveEntitiesCommandSchema>;
+export type BulkReverseIngestTarget = z.output<typeof bulkReverseIngestTargetSchema>;
+export type BulkReverseIngestRequest = z.output<typeof bulkReverseIngestRequestSchema>;
+export type BulkReverseIngestCommand = z.output<typeof bulkReverseIngestCommandSchema>;
 export type RecordEventRequest = z.output<typeof recordEventRequestSchema>;
 export type RecordEventCommand = z.output<typeof recordEventCommandSchema>;
 export type CorrectionEvent = z.output<typeof correctionEventSchema>;
@@ -889,11 +1343,19 @@ export type EditPartTypeDefinitionCommand = z.output<typeof editPartTypeDefiniti
 export type ReverseIngestAssignmentRequest = z.output<typeof reverseIngestAssignmentRequestSchema>;
 export type ReverseIngestAssignmentCommand = z.output<typeof reverseIngestAssignmentCommandSchema>;
 export type CorrectionHistoryQuery = z.output<typeof correctionHistoryQuerySchema>;
+export type CorrectionListQuery = z.output<typeof correctionListQuerySchema>;
+export type KnownLocationRequest = z.output<typeof knownLocationRequestSchema>;
+export type KnownCategoryRequest = z.output<typeof knownCategoryRequestSchema>;
 export type ReassignEntityPartTypeResponse = z.output<typeof reassignEntityPartTypeResponseSchema>;
 export type EditPartTypeDefinitionResponse = z.output<typeof editPartTypeDefinitionResponseSchema>;
 export type ReverseIngestAssignmentResponse = z.output<typeof reverseIngestAssignmentResponseSchema>;
+export type BulkAssignQrsResponse = z.output<typeof bulkAssignQrsResponseSchema>;
+export type BulkMoveEntitiesResponse = z.output<typeof bulkMoveEntitiesResponseSchema>;
+export type BulkReverseIngestResponse = z.output<typeof bulkReverseIngestResponseSchema>;
 export type MergePartTypesRequest = z.output<typeof mergePartTypesRequestSchema>;
 export type PartTypeSearchQuery = z.output<typeof partTypeSearchQuerySchema>;
+export type ScanRequest = z.output<typeof scanRequestSchema>;
+export type ScanOptionsQuery = z.output<typeof scanOptionsQuerySchema>;
 export type PartDbDiscoveredResources = z.output<typeof partDbDiscoveredResourcesSchema>;
 export type PartDbConnectionStatus = z.output<typeof partDbConnectionStatusSchema>;
 export type PartDbLookupSummary = z.output<typeof partDbLookupSummarySchema>;
@@ -901,6 +1363,7 @@ export type PartDbSyncStatusResponse = z.output<typeof partDbSyncStatusResponseS
 export type PartDbSyncFailure = z.output<typeof partDbSyncFailureSchema>;
 export type PartDbSyncDrainResponse = z.output<typeof partDbSyncDrainResponseSchema>;
 export type PartDbSyncBackfillResponse = z.output<typeof partDbSyncBackfillResponseSchema>;
+export type PartTypeArtBackfillResponse = z.output<typeof partTypeArtBackfillResponseSchema>;
 export type ApplicationErrorResponse = z.output<typeof applicationErrorResponseSchema>;
 export type ScanResponse = z.output<typeof scanResponseSchema>;
 
@@ -914,6 +1377,7 @@ export const configEnvironmentSchema = z
     PARTDB_PUBLIC_BASE_URL: normalizedOptionalString,
     PARTDB_API_TOKEN: normalizedOptionalString,
     PARTDB_SYNC_ENABLED: booleanEnvironmentSchema.default(false),
+    DEV_AUTH_BYPASS: booleanEnvironmentSchema.default(false),
     SESSION_COOKIE_SECRET: normalizedOptionalString,
     ZITADEL_ISSUER: normalizedOptionalString,
     ZITADEL_CLIENT_ID: normalizedOptionalString,

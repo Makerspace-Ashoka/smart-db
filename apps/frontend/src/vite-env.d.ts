@@ -1,5 +1,9 @@
 /// <reference types="vite/client" />
 
+interface ImportMetaEnv {
+  readonly VITE_DEV_AUTH_BYPASS?: string;
+}
+
 interface BarcodeDetectorOptions {
   formats?: string[];
 }
@@ -16,4 +20,3 @@ declare class BarcodeDetector {
   detect(source: ImageBitmapSource): Promise<DetectedBarcode[]>;
   static getSupportedFormats(): Promise<string[]>;
 }
-

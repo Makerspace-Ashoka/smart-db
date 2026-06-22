@@ -1,14 +1,22 @@
 import type { FastifyInstance, preHandlerAsyncHookHandler } from "fastify";
 import {
   assignQrRequestSchema,
+  bulkAssignQrsRequestSchema,
+  bulkMoveEntitiesRequestSchema,
   bulkSplitRequestSchema,
+  bulkReverseIngestRequestSchema,
   correctionHistoryQuerySchema,
+  correctionListQuerySchema,
   editPartTypeDefinitionRequestSchema,
+  knownCategoryRequestSchema,
+  knownLocationRequestSchema,
   mergePartTypesRequestSchema,
   parseWithSchema,
+  partTypeArtBackfillResponseSchema,
   partTypeSearchQuerySchema,
   reassignEntityPartTypeRequestSchema,
   recordEventRequestSchema,
+  scanOptionsQuerySchema,
   registerQrBatchRequestSchema,
   reverseIngestAssignmentRequestSchema,
   scanRequestSchema,
@@ -64,13 +72,9 @@ export async function registerInventoryRoutes(
   );
 
   app.post("/api/locations", authenticated, async (request) => {
-    const body = request.body as { path?: unknown };
-    const path = typeof body?.path === "string" ? body.path.trim() : "";
-    if (!path) {
-      throw new Error("path is required");
-    }
-    inventoryService.createKnownLocation(path);
-    return { path };
+    const body = parseWithSchema(knownLocationRequestSchema, request.body, "known location request");
+    inventoryService.createKnownLocation(body.path);
+    return body;
   });
 
   app.get("/api/categories", authenticated, async () =>
@@ -78,13 +82,9 @@ export async function registerInventoryRoutes(
   );
 
   app.post("/api/categories", authenticated, async (request) => {
-    const body = request.body as { path?: unknown };
-    const path = typeof body?.path === "string" ? body.path.trim() : "";
-    if (!path) {
-      throw new Error("path is required");
-    }
-    inventoryService.createKnownCategory(path);
-    return { path };
+    const body = parseWithSchema(knownCategoryRequestSchema, request.body, "known category request");
+    inventoryService.createKnownCategory(body.path);
+    return body;
   });
 
   app.get("/api/part-types/:id/items", authenticated, async (request) => {
@@ -99,6 +99,11 @@ export async function registerInventoryRoutes(
   app.get("/api/corrections/history", admin, async (request) => {
     const query = parseWithSchema(correctionHistoryQuerySchema, request.query, "correction history query");
     return inventoryService.getCorrectionHistory(query.targetType, query.targetId);
+  });
+
+  app.get("/api/corrections", admin, async (request) => {
+    const query = parseWithSchema(correctionListQuerySchema, request.query, "correction list query");
+    return inventoryService.listCorrectionEvents(query.limit);
   });
 
   app.post("/api/qr-batches", adminMutation, async (request) => {
@@ -129,15 +134,11 @@ export async function registerInventoryRoutes(
 
   app.post("/api/scan", authenticated, async (request) => {
     const command = parseWithSchema(scanRequestSchema, request.body, "scan request");
-    // Optional ?count=false disables auto-increment. ?amount=N sets increment amount (default 1).
-    const query = request.query as Record<string, string | undefined> | undefined;
-    const autoIncrement = query?.count !== "false";
-    const rawAmount = Number(query?.amount);
-    const incrementAmount = Number.isFinite(rawAmount) && rawAmount > 0 ? rawAmount : 1;
+    const query = parseWithSchema(scanOptionsQuerySchema, request.query, "scan options query");
     return inventoryService.scanCode(
       command.code,
       request.authContext?.session.username ?? null,
-      { autoIncrement, incrementAmount },
+      { autoIncrement: query.count, incrementAmount: query.amount },
     );
   });
 
@@ -149,9 +150,25 @@ export async function registerInventoryRoutes(
     });
   });
 
+  app.post("/api/bulk/assign", authenticatedMutation, async (request) => {
+    const command = parseWithSchema(bulkAssignQrsRequestSchema, request.body, "bulk assignment request");
+    return inventoryService.bulkAssignQrs({
+      ...command,
+      actor: request.authContext!.session.username,
+    });
+  });
+
   app.post("/api/events", authenticatedMutation, async (request) => {
     const command = parseWithSchema(recordEventRequestSchema, request.body, "stock event request");
     return inventoryService.recordEvent({
+      ...command,
+      actor: request.authContext!.session.username,
+    });
+  });
+
+  app.post("/api/bulk/move", authenticatedMutation, async (request) => {
+    const command = parseWithSchema(bulkMoveEntitiesRequestSchema, request.body, "bulk move request");
+    return inventoryService.bulkMoveEntities({
       ...command,
       actor: request.authContext!.session.username,
     });
@@ -190,6 +207,14 @@ export async function registerInventoryRoutes(
     return inventoryService.approvePartType(params.id);
   });
 
+  app.post("/api/part-types/art/backfill", adminMutation, async () =>
+    parseWithSchema(
+      partTypeArtBackfillResponseSchema,
+      inventoryService.backfillPartTypeArt(),
+      "part type art backfill response",
+    ),
+  );
+
   app.post("/api/corrections/reassign-part-type", adminMutation, async (request) => {
     const command = parseWithSchema(
       reassignEntityPartTypeRequestSchema,
@@ -221,6 +246,18 @@ export async function registerInventoryRoutes(
       "reverse ingest request",
     );
     return inventoryService.reverseIngestAssignment({
+      ...command,
+      actor: request.authContext!.session.username,
+    });
+  });
+
+  app.post("/api/bulk/reverse-ingest", adminMutation, async (request) => {
+    const command = parseWithSchema(
+      bulkReverseIngestRequestSchema,
+      request.body,
+      "bulk reverse ingest request",
+    );
+    return inventoryService.bulkReverseIngest({
       ...command,
       actor: request.authContext!.session.username,
     });

@@ -1,7 +1,11 @@
 import {
+  type BulkAssignQrsRequest,
+  type BulkMoveEntitiesRequest,
+  type BulkReverseIngestRequest,
+  type BulkEntityTarget,
+  type BulkReverseIngestTarget,
   hasSmartDbRole,
   type CorrectionEvent,
-  getMeasurementUnitBySymbol,
   sanitizeScannedCode,
   smartDbRoles,
   type AuthSession,
@@ -16,16 +20,28 @@ import {
   loginUrl,
 } from "../api";
 import {
+  createDevAuthSession,
+  isDevAuthSession,
+  isFrontendDevAuthBypassEnabled,
+} from "../dev-mode";
+import { createPwaInstallController } from "../pwa";
+import {
   actionLabel,
   errorMessage,
   formatCategoryPath,
+  getAssignFormIssues,
+  type SearchState,
 } from "./presentation-helpers";
 import { authMachine } from "./machines/auth-machine";
 import type { RewriteFailure } from "./errors";
+import { bulkQueueMachine } from "./machines/bulk-queue-machine";
 import { scanSessionMachine } from "./machines/scan-session-machine";
 import {
   parseAssignForm,
   parseBatchForm,
+  parseBulkAssignForm,
+  parseBulkDeleteForm,
+  parseBulkMoveForm,
   parseEditPartTypeDefinitionForm,
   type EventCommand,
   parseEventForm,
@@ -33,20 +49,38 @@ import {
   parseReassignPartTypeForm,
   parseReverseIngestForm,
 } from "./parsers";
-import { renderApp } from "./render";
+import { renderApp, formatActor } from "./render";
 import { CameraScannerService } from "./services/camera-scanner-service";
 import {
   defaultAssignForm,
   defaultBatchForm,
+  defaultBulkLabelForm,
+  defaultBulkQueueState,
   defaultCameraState,
-  defaultCorrectionUiState,
+  defaultInventoryReverseSelection,
+  defaultScanEditState,
+  defaultScanLocationsState,
+  defaultScanMode,
   defaultEventForm,
   defaultInventoryUiState,
   defaultPathPickerState,
   defaultSearchState,
+  makeReassignForm,
   type AuthViewState,
+  type BulkAssignedQueueRow,
+  type BulkDeleteEligibility,
+  type BulkQueueAction,
+  type BulkQueueRow,
+  type BulkUnlabeledQueueRow,
+  type BulkQueueUiState,
+  type OneByOneScanBehavior,
   type PendingAction,
   type RewriteUiState,
+  type ScanEditAction,
+  type ScanEditForm,
+  type ScanEditState,
+  type InventoryReverseTarget,
+  type ScanModeState,
   type TabId,
   type ToastRecord,
 } from "./ui-state";
@@ -56,6 +90,8 @@ import {
   findSharedTypeConflictCandidates,
   hasInProgressScanWork,
 } from "./view-helpers";
+import { patchFromUrl, urlFromState, urlsEqual, type UrlPatch } from "./routing";
+import type { MotionSnapshot } from "./motion";
 
 interface FocusSnapshot {
   readonly key: string;
@@ -67,9 +103,31 @@ type RewritePatch = {
   -readonly [K in keyof RewriteUiState]?: RewriteUiState[K];
 };
 
+type SearchSurface = "label" | "merge" | "bulkLabel" | "edit";
+
+let rewriteMotionModulePromise: Promise<typeof import("./motion")> | null = null;
+
+function loadRewriteMotionModule(): Promise<typeof import("./motion")> {
+  if (!rewriteMotionModulePromise) {
+    rewriteMotionModulePromise = import("./motion").catch((error) => {
+      rewriteMotionModulePromise = null;
+      throw error;
+    });
+  }
+
+  return rewriteMotionModulePromise;
+}
+
+export interface RewriteAppControllerOptions {
+  readonly devMode?: boolean;
+}
+
 export class RewriteAppController {
+  private readonly pwaInstallController = createPwaInstallController();
+
   private state: RewriteUiState = {
     theme: this.restoreTheme(),
+    devMode: isFrontendDevAuthBypassEnabled(),
     authState: {
       status: "checking",
       session: null,
@@ -85,7 +143,11 @@ export class RewriteAppController {
     knownCategories: [],
     inventorySummary: [],
     inventoryUi: defaultInventoryUiState,
-    correctionUi: defaultCorrectionUiState,
+    scanEdit: defaultScanEditState,
+    scanLocations: defaultScanLocationsState,
+    correctionLog: [],
+    correctionLogError: null,
+    inventoryReverseSelection: defaultInventoryReverseSelection,
     provisionalPartTypes: [],
     labelSearch: defaultSearchState,
     mergeSearch: defaultSearchState,
@@ -95,6 +157,7 @@ export class RewriteAppController {
     eventForm: defaultEventForm,
     scanCode: "",
     scanMode: this.restoreScanMode(),
+    bulkQueue: defaultBulkQueueState,
     scanHistory: [],
     lastAssignment: null,
     camera: defaultCameraState,
@@ -104,6 +167,7 @@ export class RewriteAppController {
     pendingAction: null,
     downloadingBatchId: null,
     activeTab: "scan",
+    pwaInstallPrompt: this.pwaInstallController.getSnapshot(),
     toasts: [],
     isOnline: typeof navigator === "undefined" ? true : navigator.onLine,
     sessionExpiringSoon: false,
@@ -114,17 +178,27 @@ export class RewriteAppController {
 
   private readonly authActor = createActor(authMachine, { input: {} });
   private readonly scanActor = createActor(scanSessionMachine, { input: {} });
+  private readonly bulkQueueActor = createActor(bulkQueueMachine, {
+    input: {
+      action: defaultBulkQueueState.action,
+    },
+  });
   private readonly authAbortController = new AbortController();
-  private readonly searchControllers: Record<"label" | "merge" | "correction", AbortController | null> = {
+  private readonly searchControllers: Record<SearchSurface, AbortController | null> = {
     label: null,
     merge: null,
-    correction: null,
+    bulkLabel: null,
+    edit: null,
   };
-  private readonly searchRequestIds: Record<"label" | "merge" | "correction", number> = {
+  private readonly searchRequestIds: Record<SearchSurface, number> = {
     label: 0,
     merge: 0,
-    correction: 0,
+    bulkLabel: 0,
+    edit: 0,
   };
+  private scanLocationsAbortController: AbortController | null = null;
+  private scanLocationsRequestId = 0;
+  private inventoryQueryRenderTimer: number | null = null;
   private renderSuppressed = false;
   private readonly cameraService = new CameraScannerService({
     onScan: (code) => {
@@ -133,13 +207,30 @@ export class RewriteAppController {
   });
   private scanAbortController: AbortController | null = null;
   private scanRequestId = 0;
+  private preferredOneByOneBehavior: OneByOneScanBehavior =
+    defaultScanMode.kind === "oneByOne" ? defaultScanMode.behavior : "viewOnly";
   private toastTimers = new Map<string, number>();
+  private pwaInstallUnsubscribe: (() => void) | null = null;
   private pollTimer: number | null = null;
   private sessionTimer: number | null = null;
+  private routingInstalled = false;
+  private applyingFromHistory = false;
+  private lastSyncedUrl: string | null = null;
+  private motionSnapshot: MotionSnapshot | null = null;
+  private motionRenderVersion = 0;
+  private disposed = false;
 
-  constructor(private readonly root: HTMLElement) {}
+  constructor(private readonly root: HTMLElement, options: RewriteAppControllerOptions = {}) {
+    if (options.devMode !== undefined) {
+      this.state = {
+        ...this.state,
+        devMode: options.devMode,
+      };
+    }
+  }
 
   start(): void {
+    this.disposed = false;
     this.authActor.subscribe((snapshot) => {
       this.patch({
         authState: this.mapAuthSnapshot(snapshot),
@@ -150,16 +241,49 @@ export class RewriteAppController {
         camera: snapshot,
       });
     });
+    this.pwaInstallUnsubscribe = this.pwaInstallController.subscribe((snapshot) => {
+      this.patch({
+        pwaInstallPrompt: snapshot,
+      });
+    });
+    this.bulkQueueActor.subscribe((snapshot) => {
+      const status = snapshot.matches("submitting")
+        ? "submitting"
+        : snapshot.matches("failed")
+          ? "failed"
+          : snapshot.matches("ready")
+            ? "ready"
+            : "empty";
+      this.patch({
+        bulkQueue: {
+          ...this.state.bulkQueue,
+          action: snapshot.context.action,
+          kind: snapshot.context.kind,
+          rows: snapshot.context.rows,
+          summary: summarizeBulkQueue(snapshot.context.rows),
+          failure: snapshot.context.failure,
+          status,
+        },
+      });
+    });
     this.authActor.start();
     this.scanActor.start();
+    this.bulkQueueActor.start();
 
     this.root.addEventListener("click", this.handleClick);
     this.root.addEventListener("submit", this.handleSubmit);
     this.root.addEventListener("input", this.handleInput);
     this.root.addEventListener("change", this.handleChange);
     this.root.addEventListener("keydown", this.handleKeyDown);
+    this.root.addEventListener("error", this.handleImageError, true);
     window.addEventListener("online", this.handleOnline);
     window.addEventListener("offline", this.handleOffline);
+    if (typeof window !== "undefined") {
+      window.addEventListener("popstate", this.handlePopState);
+      this.routingInstalled = true;
+      this.lastSyncedUrl = window.location.pathname;
+      this.hydrateStateFromUrlBeforeBoot();
+    }
 
     this.applyThemeToDOM(this.state.theme);
     this.render();
@@ -167,13 +291,26 @@ export class RewriteAppController {
   }
 
   dispose(): void {
+    this.disposed = true;
+    this.motionRenderVersion += 1;
     this.authAbortController.abort();
     this.cameraService.destroy();
     this.searchControllers.label?.abort();
     this.searchControllers.merge?.abort();
+    this.searchControllers.bulkLabel?.abort();
+    this.searchControllers.edit?.abort();
+    this.scanLocationsAbortController?.abort();
+    if (this.inventoryQueryRenderTimer !== null) {
+      window.clearTimeout(this.inventoryQueryRenderTimer);
+      this.inventoryQueryRenderTimer = null;
+    }
     this.scanAbortController?.abort();
     this.authActor.stop();
     this.scanActor.stop();
+    this.bulkQueueActor.stop();
+    this.pwaInstallUnsubscribe?.();
+    this.pwaInstallUnsubscribe = null;
+    this.pwaInstallController.destroy();
     if (this.pollTimer !== null) {
       window.clearInterval(this.pollTimer);
     }
@@ -188,8 +325,13 @@ export class RewriteAppController {
     this.root.removeEventListener("input", this.handleInput);
     this.root.removeEventListener("change", this.handleChange);
     this.root.removeEventListener("keydown", this.handleKeyDown);
+    this.root.removeEventListener("error", this.handleImageError, true);
     window.removeEventListener("online", this.handleOnline);
     window.removeEventListener("offline", this.handleOffline);
+    if (this.routingInstalled && typeof window !== "undefined") {
+      window.removeEventListener("popstate", this.handlePopState);
+      this.routingInstalled = false;
+    }
   }
 
   private readonly handleOnline = () => {
@@ -200,9 +342,103 @@ export class RewriteAppController {
     this.patch({ isOnline: false });
   };
 
+  private readonly handleImageError = (event: Event) => {
+    const target = event.target;
+    if (!(target instanceof HTMLImageElement)) return;
+    const wrap = target.closest(".part-art, .part-hero");
+    if (!wrap || wrap.classList.contains("has-broken-image")) return;
+    wrap.classList.add("has-broken-image");
+  };
+
+  private async handlePwaInstall(): Promise<void> {
+    const neverShowAgain = this.readPwaNeverShowChoice();
+    const result = await this.pwaInstallController.requestInstall();
+    if (neverShowAgain && result !== "accepted" && result !== "installed") {
+      this.pwaInstallController.dismiss({ neverShowAgain: true });
+    }
+  }
+
+  private readPwaNeverShowChoice(): boolean {
+    return this.root.querySelector<HTMLInputElement>("#pwa-install-never")?.checked === true;
+  }
+
+  private readonly handlePopState = () => {
+    if (this.state.authState.status !== "authenticated") return;
+    if (typeof window === "undefined") return;
+    const patch = patchFromUrl(window.location.pathname);
+    if (!patch) return;
+    this.applyingFromHistory = true;
+    try {
+      this.applyUrlPatch(patch);
+      this.lastSyncedUrl = window.location.pathname;
+    } finally {
+      this.applyingFromHistory = false;
+    }
+  };
+
+  private applyUrlPatch(patch: UrlPatch): void {
+    const nextInventoryUi = (patch.browsePath.length > 0 || patch.detailPartTypeId || patch.activeTab === "inventory")
+      ? {
+          ...this.state.inventoryUi,
+          browsePath: patch.browsePath,
+          detailPartTypeId: patch.detailPartTypeId,
+        }
+      : this.state.inventoryUi;
+
+    this.patch({
+      activeTab: patch.activeTab,
+      inventoryUi: nextInventoryUi,
+    });
+  }
+
+  private hydrateFromUrl(): void {
+    if (typeof window === "undefined") return;
+    const patch = patchFromUrl(window.location.pathname);
+    if (!patch) return;
+    this.applyingFromHistory = true;
+    try {
+      this.applyUrlPatch(patch);
+      this.lastSyncedUrl = window.location.pathname;
+    } finally {
+      this.applyingFromHistory = false;
+    }
+  }
+
+  private hydrateStateFromUrlBeforeBoot(): void {
+    if (typeof window === "undefined") return;
+    const patch = patchFromUrl(window.location.pathname);
+    if (!patch) return;
+    this.state = {
+      ...this.state,
+      activeTab: patch.activeTab,
+      inventoryUi: {
+        ...this.state.inventoryUi,
+        browsePath: patch.browsePath,
+        detailPartTypeId: patch.detailPartTypeId,
+      },
+    };
+    this.lastSyncedUrl = window.location.pathname;
+  }
+
+  private syncUrl(): void {
+    if (this.applyingFromHistory) return;
+    if (typeof window === "undefined") return;
+    if (this.state.authState.status !== "authenticated") return;
+    const next = urlFromState(this.state);
+    if (this.lastSyncedUrl !== null && urlsEqual(next, this.lastSyncedUrl)) {
+      return;
+    }
+    if (urlsEqual(next, window.location.pathname)) {
+      this.lastSyncedUrl = window.location.pathname;
+      return;
+    }
+    window.history.pushState(null, "", next);
+    this.lastSyncedUrl = next;
+  }
+
   private readonly handleClick = (event: Event) => {
     const target = event.target;
-    if (!(target instanceof HTMLElement)) {
+    if (!(target instanceof Element)) {
       return;
     }
 
@@ -228,6 +464,12 @@ export class RewriteAppController {
       case "toggle-theme":
         this.setTheme(this.state.theme === "dark" ? "light" : "dark");
         break;
+      case "pwa-install":
+        void this.handlePwaInstall();
+        break;
+      case "pwa-install-dismiss":
+        this.pwaInstallController.dismiss({ neverShowAgain: this.readPwaNeverShowChoice() });
+        break;
       case "dismiss-toast":
         if (actionEl.dataset.toastId) {
           this.dismissToast(actionEl.dataset.toastId);
@@ -235,7 +477,16 @@ export class RewriteAppController {
         break;
       case "change-tab":
         if (actionEl.dataset.tab) {
-          this.patch({ activeTab: actionEl.dataset.tab as TabId });
+          const nextTab = actionEl.dataset.tab as TabId;
+          // Leaving scan with an active camera would leak the MediaStream and
+          // leave the scan loop ticking against a soon-to-be-detached video
+          // element (renderScanTab() stops emitting #rewrite-camera-video
+          // outside the scan tab). Tear it down before the re-render.
+          if (nextTab !== "scan" && this.cameraService.getSnapshot().activeStream) {
+            this.cameraService.stop();
+            void this.cameraService.attachVideoElement(null);
+          }
+          this.patch({ activeTab: nextTab });
         }
         break;
       case "scan-next":
@@ -249,53 +500,24 @@ export class RewriteAppController {
       case "assign-same":
         void this.handleAssignSame();
         break;
-      case "set-scan-mode":
-        if (actionEl.dataset.scanMode === "increment" || actionEl.dataset.scanMode === "inspect") {
-          this.setScanMode(actionEl.dataset.scanMode);
+      case "set-scan-mode-kind":
+        if (actionEl.dataset.scanModeKind === "oneByOne" || actionEl.dataset.scanModeKind === "bulk") {
+          this.setTopLevelScanMode(actionEl.dataset.scanModeKind);
+        }
+        break;
+      case "set-scan-behavior":
+        if (actionEl.dataset.scanBehavior === "increment" || actionEl.dataset.scanBehavior === "viewOnly") {
+          this.setOneByOneBehavior(actionEl.dataset.scanBehavior);
+        }
+        break;
+      case "set-bulk-action":
+        if (actionEl.dataset.bulkAction === "label" || actionEl.dataset.bulkAction === "move" || actionEl.dataset.bulkAction === "delete") {
+          this.setBulkQueueAction(actionEl.dataset.bulkAction);
         }
         break;
       case "set-assign-mode":
         if (actionEl.dataset.assignMode === "existing" || actionEl.dataset.assignMode === "new") {
           this.setAssignMode(actionEl.dataset.assignMode);
-        }
-        break;
-      case "set-correction-action":
-        if (
-          actionEl.dataset.correctionAction === "reassign" ||
-          actionEl.dataset.correctionAction === "editShared" ||
-          actionEl.dataset.correctionAction === "reverseIngest"
-        ) {
-          this.setCorrectionAction(actionEl.dataset.correctionAction);
-        }
-        break;
-      case "select-correction-part":
-        if (actionEl.dataset.partId) {
-          this.patch({
-            correctionUi: {
-              ...this.state.correctionUi,
-              replacementPartTypeId: actionEl.dataset.partId,
-            },
-          });
-        }
-        break;
-      case "use-correction-match":
-        if (actionEl.dataset.partId) {
-          this.patch({
-            correctionUi: {
-              ...this.state.correctionUi,
-              action: "reassign",
-              replacementPartTypeId: actionEl.dataset.partId,
-              reason: "",
-              search: {
-                ...this.state.correctionUi.search,
-                query: actionEl.dataset.query ?? "",
-                results: [...this.state.catalogSuggestions],
-                status: "idle",
-                error: null,
-              },
-            },
-          });
-          void this.performSearch("correction", actionEl.dataset.query ?? "");
         }
         break;
       case "select-existing-part":
@@ -311,11 +533,6 @@ export class RewriteAppController {
       case "set-entity-kind":
         if (actionEl.dataset.entityKind === "instance" || actionEl.dataset.entityKind === "bulk") {
           this.setAssignEntityKind(actionEl.dataset.entityKind);
-        }
-        break;
-      case "set-bulk-countability":
-        if (actionEl.dataset.countable === "true" || actionEl.dataset.countable === "false") {
-          this.setBulkCountability(actionEl.dataset.countable === "true");
         }
         break;
       case "toggle-path-picker": {
@@ -418,6 +635,34 @@ export class RewriteAppController {
         }
         break;
       }
+      case "tree-pick-bulk-label-location":
+        this.patch({
+          bulkQueue: {
+            ...this.state.bulkQueue,
+            labelForm: {
+              ...this.state.bulkQueue.labelForm,
+              location: actionEl.dataset.location ?? "",
+            },
+          },
+        });
+        break;
+      case "tree-pick-scan-edit-category": {
+        const edit = this.state.scanEdit;
+        if (edit.status !== "open" || edit.form.action !== "editShared") {
+          break;
+        }
+        this.patch({
+          scanEdit: {
+            ...edit,
+            form: {
+              ...edit.form,
+              sharedCategory: actionEl.dataset.category ?? "",
+            },
+            dirty: true,
+          },
+        });
+        break;
+      }
       case "select-event-action":
         if (actionEl.dataset.event) {
           this.patch({
@@ -433,6 +678,23 @@ export class RewriteAppController {
           void this.toggleInventoryExpand(actionEl.dataset.partTypeId);
         }
         break;
+      case "inventory-reverse-toggle":
+        if (
+          actionEl.dataset.partTypeId &&
+          actionEl.dataset.id &&
+          actionEl.dataset.qrCode &&
+          (actionEl.dataset.kind === "instance" || actionEl.dataset.kind === "bulk")
+        ) {
+          this.toggleInventoryReverseTarget(actionEl.dataset.partTypeId, {
+            kind: actionEl.dataset.kind,
+            id: actionEl.dataset.id,
+            qrCode: actionEl.dataset.qrCode,
+          });
+        }
+        break;
+      case "inventory-reverse-clear":
+        this.patch({ inventoryReverseSelection: defaultInventoryReverseSelection });
+        break;
       case "open-part-detail":
         if (actionEl.dataset.partTypeId) {
           void this.openPartDetail(actionEl.dataset.partTypeId);
@@ -443,6 +705,22 @@ export class RewriteAppController {
           inventoryUi: { ...this.state.inventoryUi, detailPartTypeId: null },
         });
         break;
+      case "stock-toggle": {
+        const encoded = actionEl.dataset.categoryPath ?? "";
+        const target = encoded === ""
+          ? []
+          : encoded.split("/").map((seg) => {
+              try { return decodeURIComponent(seg); } catch { return seg; }
+            });
+        const current = this.state.inventoryUi.browsePath;
+        const isSamePath = target.length === current.length
+          && target.every((seg, i) => seg === current[i]);
+        const nextPath = isSamePath ? target.slice(0, -1) : target;
+        this.patch({
+          inventoryUi: { ...this.state.inventoryUi, browsePath: nextPath },
+        });
+        break;
+      }
       case "download-labels":
         void this.handleDownloadLatestBatchLabels();
         break;
@@ -479,8 +757,105 @@ export class RewriteAppController {
       case "camera-scan-next":
         this.handleCameraScanNext();
         break;
-      case "correction-clear":
-        this.patch({ correctionUi: defaultCorrectionUiState });
+      case "focus-scan-input":
+        this.focusScanInput();
+        break;
+      case "quick-bulk-increment":
+        this.handleQuickBulkDelta(1);
+        break;
+      case "quick-bulk-decrement":
+        this.handleQuickBulkDelta(-1);
+        break;
+      case "quick-instance-checkout-me":
+        this.handleQuickInstanceCheckoutMe();
+        break;
+      case "quick-instance-return":
+        this.handleQuickInstanceReturn();
+        break;
+      case "open-correction-on-scan":
+        if (actionEl.dataset.qrCode) {
+          void this.openCorrectionOnScan(actionEl.dataset.qrCode);
+        }
+        break;
+      case "scan-edit-open":
+        this.openScanEdit("reassign");
+        break;
+      case "scan-edit-open-reverse":
+        this.openScanEdit("reverseIngest");
+        break;
+      case "scan-edit-open-shared":
+        this.openScanEdit("editShared");
+        break;
+      case "scan-edit-close":
+        this.closeScanEdit();
+        break;
+      case "set-scan-edit-action":
+        if (
+          actionEl.dataset.scanEditAction === "reassign" ||
+          actionEl.dataset.scanEditAction === "editShared" ||
+          actionEl.dataset.scanEditAction === "reverseIngest"
+        ) {
+          this.setScanEditAction(actionEl.dataset.scanEditAction);
+        }
+        break;
+      case "select-scan-edit-part":
+        if (actionEl.dataset.partId) {
+          this.selectScanEditReplacementPart(actionEl.dataset.partId);
+        }
+        break;
+      case "bulk-queue-decrement":
+        if (actionEl.dataset.code) {
+          this.bulkQueueActor.send({ type: "QUEUE.ROW_DECREMENT_REQUESTED", code: actionEl.dataset.code });
+        }
+        break;
+      case "bulk-queue-remove":
+        if (actionEl.dataset.code) {
+          this.bulkQueueActor.send({ type: "QUEUE.ROW_REMOVE_REQUESTED", code: actionEl.dataset.code });
+        }
+        break;
+      case "bulk-queue-clear":
+        this.clearBulkQueue();
+        break;
+      case "set-bulk-label-mode":
+        if (actionEl.dataset.assignMode === "existing" || actionEl.dataset.assignMode === "new") {
+          this.setBulkLabelMode(actionEl.dataset.assignMode);
+        }
+        break;
+      case "select-bulk-label-part":
+        if (actionEl.dataset.partId) {
+          this.selectBulkLabelPartType(actionEl.dataset.partId);
+        }
+        break;
+      case "create-bulk-label-variant":
+        if (actionEl.dataset.partId) {
+          this.createBulkLabelVariant(actionEl.dataset.partId);
+        }
+        break;
+      case "pick-bulk-label-known-location":
+        if (actionEl.dataset.location) {
+          this.patch({
+            bulkQueue: {
+              ...this.state.bulkQueue,
+              labelForm: {
+                ...this.state.bulkQueue.labelForm,
+                location: actionEl.dataset.location,
+              },
+            },
+          });
+        }
+        break;
+      case "pick-bulk-label-known-category":
+        if (actionEl.dataset.category) {
+          this.patch({
+            bulkQueue: {
+              ...this.state.bulkQueue,
+              labelForm: {
+                ...this.state.bulkQueue.labelForm,
+                category: actionEl.dataset.category,
+              },
+            },
+          });
+        }
         break;
       default:
         break;
@@ -504,11 +879,17 @@ export class RewriteAppController {
       case "scan":
         void this.handleScan();
         break;
-      case "correction-scan":
-        void this.handleCorrectionScan();
-        break;
       case "assign":
         void this.handleAssign();
+        break;
+      case "bulk-label":
+        void this.handleBulkAssign();
+        break;
+      case "bulk-move":
+        void this.handleBulkMove();
+        break;
+      case "bulk-delete":
+        void this.handleBulkDelete();
         break;
       case "event":
         void this.handleRecordEvent();
@@ -516,14 +897,17 @@ export class RewriteAppController {
       case "batch":
         void this.handleRegisterBatch();
         break;
-      case "correction-reassign":
-        void this.handleCorrectionReassign();
+      case "scan-edit-reassign":
+        void this.handleScanEditReassign();
         break;
-      case "correction-edit-shared":
-        void this.handleCorrectionEditShared();
+      case "scan-edit-shared":
+        void this.handleScanEditEditShared();
         break;
-      case "correction-reverse-ingest":
-        void this.handleCorrectionReverseIngest();
+      case "scan-edit-reverse":
+        void this.handleScanEditReverseIngest();
+        break;
+      case "inventory-reverse":
+        void this.handleInventoryReverseIngest();
         break;
       default:
         break;
@@ -593,13 +977,17 @@ export class RewriteAppController {
       case "scanCode":
         this.patch({ scanCode: String(rawValue) });
         return;
-      case "correction.scanCode":
+      case "bulkLabelSearch.query":
         this.patch({
-          correctionUi: {
-            ...this.state.correctionUi,
-            scanCode: String(rawValue),
+          bulkQueue: {
+            ...this.state.bulkQueue,
+            labelSearch: {
+              ...this.state.bulkQueue.labelSearch,
+              query: String(rawValue),
+            },
           },
         });
+        void this.performSearch("bulkLabel", String(rawValue));
         return;
       case "labelSearch.query":
         this.patch({
@@ -619,26 +1007,32 @@ export class RewriteAppController {
         });
         void this.performSearch("merge", String(rawValue));
         return;
-      case "correctionSearch.query":
-        this.patch({
-          correctionUi: {
-            ...this.state.correctionUi,
-            search: {
-              ...this.state.correctionUi.search,
+      case "inventory.query": {
+        // Typing the inventory filter on a catalogue with 200+ part types
+        // used to rebuild the whole list DOM each keystroke. Update the state
+        // immediately (input stays responsive because focus is restored after
+        // render), but defer the actual re-render until typing settles so the
+        // expensive filter loop runs once per burst instead of per keypress.
+        this.renderSuppressed = true;
+        try {
+          this.patch({
+            inventoryUi: {
+              ...this.state.inventoryUi,
               query: String(rawValue),
             },
-          },
-        });
-        void this.performSearch("correction", String(rawValue));
+          });
+        } finally {
+          this.renderSuppressed = false;
+        }
+        if (this.inventoryQueryRenderTimer !== null) {
+          window.clearTimeout(this.inventoryQueryRenderTimer);
+        }
+        this.inventoryQueryRenderTimer = window.setTimeout(() => {
+          this.inventoryQueryRenderTimer = null;
+          this.render();
+        }, 150);
         return;
-      case "inventory.query":
-        this.patch({
-          inventoryUi: {
-            ...this.state.inventoryUi,
-            query: String(rawValue),
-          },
-        });
-        return;
+      }
       case "inventory.showEmpty":
         this.patch({
           inventoryUi: {
@@ -646,7 +1040,15 @@ export class RewriteAppController {
             showEmpty: Boolean(rawValue),
           },
         });
-        return;
+        break;
+      case "inventory.showAll":
+        this.patch({
+          inventoryUi: {
+            ...this.state.inventoryUi,
+            showAll: Boolean(rawValue),
+          },
+        });
+        break;
       case "pathPicker.category.query":
         this.patch({ categoryPicker: { ...this.state.categoryPicker, query: String(rawValue) } });
         return;
@@ -670,11 +1072,160 @@ export class RewriteAppController {
       default:
         if (name.startsWith("assign.")) {
           this.updateAssignForm(name, rawValue);
+        } else if (name.startsWith("bulkLabel.")) {
+          this.updateBulkLabelForm(name, rawValue);
+        } else if (name.startsWith("bulkMove.")) {
+          this.updateBulkMoveForm(name, rawValue);
+        } else if (name.startsWith("bulkDelete.")) {
+          this.updateBulkDeleteForm(name, rawValue);
         } else if (name.startsWith("event.")) {
           this.updateEventForm(name, rawValue);
-        } else if (name.startsWith("correction.")) {
-          this.updateCorrectionForm(name, rawValue);
+        } else if (name.startsWith("scanEdit.")) {
+          this.updateScanEditForm(name, rawValue);
+        } else if (name === "inventoryReverse.reason") {
+          this.patch({
+            inventoryReverseSelection: {
+              ...this.state.inventoryReverseSelection,
+              reason: String(rawValue),
+            },
+          });
         }
+    }
+  }
+
+  private toggleInventoryReverseTarget(partTypeId: string, target: InventoryReverseTarget): void {
+    const current = this.state.inventoryReverseSelection;
+    const basePartType = current.partTypeId === partTypeId ? partTypeId : partTypeId;
+    const baseTargets =
+      current.partTypeId === partTypeId ? current.targets : [];
+    const key = `${target.kind}:${target.id}`;
+    const exists = baseTargets.some((row) => `${row.kind}:${row.id}` === key);
+    const nextTargets = exists
+      ? baseTargets.filter((row) => `${row.kind}:${row.id}` !== key)
+      : [...baseTargets, target];
+    this.patch({
+      inventoryReverseSelection: {
+        partTypeId: nextTargets.length > 0 ? basePartType : null,
+        targets: nextTargets,
+        reason: current.partTypeId === partTypeId ? current.reason : "",
+      },
+    });
+  }
+
+  private async handleInventoryReverseIngest(): Promise<void> {
+    const selection = this.state.inventoryReverseSelection;
+    if (!selection.partTypeId || selection.targets.length === 0) {
+      return;
+    }
+    if (!selection.reason.trim()) {
+      this.addToast("Enter a reason before reversing.", "error");
+      return;
+    }
+    if (
+      typeof window !== "undefined" &&
+      !window.confirm(
+        selection.targets.length === 1
+          ? `Reverse ingest of ${selection.targets[0]!.qrCode}? The QR will return to printed.`
+          : `Reverse ingest of ${selection.targets.length} items? Each QR will return to printed.`,
+      )
+    ) {
+      return;
+    }
+
+    this.patch({ pendingAction: "correct" as PendingAction });
+    try {
+      await api.bulkReverseIngest({
+        targets: selection.targets.map((row) => ({
+          assignedKind: row.kind,
+          assignedId: row.id,
+          qrCode: row.qrCode,
+        })),
+        reason: selection.reason.trim(),
+      });
+      this.addToast(
+        selection.targets.length === 1
+          ? `Reversed ${selection.targets[0]!.qrCode}. The QR is back to printed.`
+          : `Reversed ${selection.targets.length} items. Their QRs are back to printed.`,
+        "success",
+      );
+      const expandedId = selection.partTypeId;
+      this.patch({ inventoryReverseSelection: defaultInventoryReverseSelection });
+      await this.loadAuthenticatedData();
+      if (expandedId && this.state.inventoryUi.expandedId === expandedId) {
+        await this.refreshInventoryDetail(expandedId);
+      }
+    } catch (caught) {
+      if (!this.handleApiFailure(caught)) {
+        this.addToast(errorMessage(caught), "error");
+      }
+    } finally {
+      this.patch({ pendingAction: null });
+    }
+  }
+
+  private async refreshInventoryDetail(partTypeId: string): Promise<void> {
+    try {
+      const data = await api.getPartTypeItems(partTypeId);
+      const nextItems = new Map(this.state.inventoryUi.expandedItems);
+      nextItems.set(partTypeId, data);
+      const nextErrors = new Map(this.state.inventoryUi.expandedErrors);
+      nextErrors.delete(partTypeId);
+      this.patch({
+        inventoryUi: {
+          ...this.state.inventoryUi,
+          expandedItems: nextItems,
+          expandedErrors: nextErrors,
+        },
+      });
+    } catch (caught) {
+      if (this.handleApiFailure(caught)) return;
+      const nextErrors = new Map(this.state.inventoryUi.expandedErrors);
+      nextErrors.set(partTypeId, errorMessage(caught));
+      this.patch({
+        inventoryUi: {
+          ...this.state.inventoryUi,
+          expandedErrors: nextErrors,
+        },
+      });
+    }
+  }
+
+  private updateScanEditForm(name: string, rawValue: string | boolean): void {
+    const edit = this.state.scanEdit;
+    if (edit.status !== "open") {
+      return;
+    }
+    const value = String(rawValue);
+
+    if (name === "scanEdit.reason") {
+      this.patchScanEditForm({ reason: value } as Partial<ScanEditForm>);
+      return;
+    }
+
+    if (edit.form.action === "reassign" && name === "scanEditSearch.query") {
+      this.patch({
+        scanEdit: {
+          ...edit,
+          form: {
+            ...edit.form,
+            search: { ...edit.form.search, query: value },
+          },
+          dirty: true,
+        },
+      });
+      void this.performSearch("edit", value);
+      return;
+    }
+
+    if (edit.form.action === "editShared") {
+      if (name === "scanEdit.sharedCanonicalName") {
+        this.patchScanEditForm({ sharedCanonicalName: value } as Partial<ScanEditForm>);
+        return;
+      }
+      if (name === "scanEdit.sharedCategory") {
+        this.patchScanEditForm({ sharedCategory: value } as Partial<ScanEditForm>);
+        return;
+      }
     }
   }
 
@@ -733,6 +1284,77 @@ export class RewriteAppController {
     this.patch({ assignForm: next });
   }
 
+  private updateBulkLabelForm(name: string, rawValue: string | boolean): void {
+    const value = String(rawValue);
+    const next = { ...this.state.bulkQueue.labelForm };
+    switch (name) {
+      case "bulkLabel.canonicalName":
+        next.canonicalName = value;
+        break;
+      case "bulkLabel.category":
+        next.category = value;
+        break;
+      case "bulkLabel.unitSymbol":
+        next.unitSymbol = value;
+        break;
+      case "bulkLabel.initialQuantity":
+        next.initialQuantity = value;
+        break;
+      case "bulkLabel.location":
+        next.location = value;
+        break;
+      case "bulkLabel.minimumQuantity":
+        next.minimumQuantity = value;
+        break;
+      case "bulkLabel.notes":
+        next.notes = value;
+        break;
+      case "bulkLabel.initialStatus":
+        next.initialStatus = value as typeof next.initialStatus;
+        break;
+      default:
+        return;
+    }
+    this.patch({
+      bulkQueue: {
+        ...this.state.bulkQueue,
+        labelForm: next,
+      },
+    });
+  }
+
+  private updateBulkMoveForm(name: string, rawValue: string | boolean): void {
+    const value = String(rawValue);
+    if (name !== "bulkMove.location" && name !== "bulkMove.notes") {
+      return;
+    }
+
+    this.patch({
+      bulkQueue: {
+        ...this.state.bulkQueue,
+        moveForm: {
+          ...this.state.bulkQueue.moveForm,
+          [name === "bulkMove.location" ? "location" : "notes"]: value,
+        },
+      },
+    });
+  }
+
+  private updateBulkDeleteForm(name: string, rawValue: string | boolean): void {
+    if (name !== "bulkDelete.reason") {
+      return;
+    }
+
+    this.patch({
+      bulkQueue: {
+        ...this.state.bulkQueue,
+        deleteForm: {
+          reason: String(rawValue),
+        },
+      },
+    });
+  }
+
   private updateEventForm(name: string, rawValue: string | boolean): void {
     const value = String(rawValue);
     const next = { ...this.state.eventForm };
@@ -761,25 +1383,6 @@ export class RewriteAppController {
     this.patch({ eventForm: next });
   }
 
-  private updateCorrectionForm(name: string, rawValue: string | boolean): void {
-    const value = String(rawValue);
-    const next = { ...this.state.correctionUi };
-    switch (name) {
-      case "correction.reason":
-        next.reason = value;
-        break;
-      case "correction.sharedCanonicalName":
-        next.sharedCanonicalName = value;
-        break;
-      case "correction.sharedCategory":
-        next.sharedCategory = value;
-        break;
-      default:
-        return;
-    }
-    this.patch({ correctionUi: next });
-  }
-
   private async restoreSession(signal: AbortSignal, authError: string | null): Promise<void> {
     this.authActor.send({ type: "SESSION.MISSING" });
     this.patch({
@@ -789,13 +1392,26 @@ export class RewriteAppController {
         error: null,
       },
     });
+    if (this.state.devMode) {
+      const session = createDevAuthSession();
+      this.authActor.send({ type: "SESSION.RESTORED", session });
+      await this.loadAuthenticatedData(session);
+      this.hydrateFromUrl();
+      this.startBackgroundTimers();
+      return;
+    }
     try {
       const session = await api.getSession(signal);
-      this.authActor.send({ type: "SESSION.RESTORED", session });
-      if (authError) {
-        this.addToast(authError, "error");
+      if (isDevAuthSession(session) && !this.state.devMode) {
+        this.patch({ devMode: true });
       }
+      this.authActor.send({ type: "SESSION.RESTORED", session });
+      // If the session restored, sign-in succeeded — do NOT surface a stale
+      // `authError` from a prior/redundant failed callback. Showing
+      // "Sign-in failed. Please try again." to an authenticated user is wrong
+      // and was the long-standing "even a successful sign-in says it failed" bug.
       await this.loadAuthenticatedData(session);
+      this.hydrateFromUrl();
       this.startBackgroundTimers();
     } catch (caught) {
       if (signal.aborted) {
@@ -861,7 +1477,11 @@ export class RewriteAppController {
     void this.cameraService.attachVideoElement(null);
     this.searchControllers.label?.abort();
     this.searchControllers.merge?.abort();
+    this.searchControllers.bulkLabel?.abort();
+    this.searchControllers.edit?.abort();
+    this.scanLocationsAbortController?.abort();
     this.scanAbortController?.abort();
+    this.bulkQueueActor.send({ type: "QUEUE.CLEAR_REQUESTED" });
     this.patch({
       dashboard: null,
       partDbStatus: null,
@@ -873,7 +1493,7 @@ export class RewriteAppController {
       knownCategories: [],
       inventorySummary: [],
       inventoryUi: defaultInventoryUiState,
-      correctionUi: defaultCorrectionUiState,
+      scanEdit: defaultScanEditState,
       provisionalPartTypes: [],
       labelSearch: defaultSearchState,
       mergeSearch: defaultSearchState,
@@ -882,6 +1502,14 @@ export class RewriteAppController {
       assignForm: defaultAssignForm,
       eventForm: defaultEventForm,
       scanCode: "",
+      scanMode: defaultScanMode,
+      bulkQueue: {
+        ...defaultBulkQueueState,
+        labelSearch: {
+          ...defaultSearchState,
+          results: [],
+        },
+      },
       scanHistory: [],
       lastAssignment: null,
       cameraLookupCode: null,
@@ -919,6 +1547,12 @@ export class RewriteAppController {
 
   private handleApiFailure(caught: unknown): boolean {
     if (caught instanceof ApiClientError && caught.code === "unauthenticated") {
+      if (this.state.devMode) {
+        this.patch({
+          refreshError: "Dev auth bypass is active in the app, but the API still requires auth. Start the middleware with DEV_AUTH_BYPASS=true.",
+        });
+        return true;
+      }
       this.handleAuthenticationFailure(caught);
       return true;
     }
@@ -940,6 +1574,7 @@ export class RewriteAppController {
       locationsResult,
       categoriesResult,
       inventoryResult,
+      correctionLogResult,
     ] = await Promise.allSettled([
       api.getDashboard(),
       api.getPartDbStatus(),
@@ -951,6 +1586,7 @@ export class RewriteAppController {
       api.getKnownLocations(),
       api.getKnownCategories(),
       api.getInventorySummary(),
+      canAccessAdmin ? api.listCorrectionEvents(50) : Promise.resolve([]),
     ]);
 
     for (const result of [
@@ -964,6 +1600,7 @@ export class RewriteAppController {
       locationsResult,
       categoriesResult,
       inventoryResult,
+      correctionLogResult,
     ]) {
       if (result.status === "rejected" && this.handleApiFailure(result.reason)) {
         return;
@@ -981,6 +1618,7 @@ export class RewriteAppController {
       locationsResult,
       categoriesResult,
       inventoryResult,
+      correctionLogResult,
     ].filter((result): result is PromiseRejectedResult => result.status === "rejected");
 
     const patch: RewritePatch = {};
@@ -1020,6 +1658,24 @@ export class RewriteAppController {
       patch.labelSearch = this.state.labelSearch.query
         ? this.state.labelSearch
         : { ...this.state.labelSearch, results: partTypesResult.value, status: "idle", error: null };
+      patch.bulkQueue = {
+        ...this.state.bulkQueue,
+        labelSearch: this.state.bulkQueue.labelSearch.query
+          ? this.state.bulkQueue.labelSearch
+          : {
+              ...this.state.bulkQueue.labelSearch,
+              results: partTypesResult.value,
+              status: "idle",
+              error: null,
+            },
+      };
+    }
+
+    if (correctionLogResult.status === "fulfilled") {
+      patch.correctionLog = correctionLogResult.value;
+      patch.correctionLogError = null;
+    } else {
+      patch.correctionLogError = errorMessage(correctionLogResult.reason);
     }
 
     patch.refreshError =
@@ -1055,6 +1711,10 @@ export class RewriteAppController {
   }
 
   private async handleLogout(): Promise<void> {
+    if (this.state.devMode) {
+      this.addToast("Dev auth bypass is active. Disable dev auth to sign out.", "info");
+      return;
+    }
     this.patch({ pendingAction: "logout" });
     this.authActor.send({ type: "LOGOUT.REQUESTED" });
     let loggedOut = false;
@@ -1103,69 +1763,25 @@ export class RewriteAppController {
     }
   }
 
-  private async performSearch(surface: "label" | "merge" | "correction", query: string): Promise<void> {
+  private async performSearch(surface: SearchSurface, query: string): Promise<void> {
     this.searchControllers[surface]?.abort();
     this.searchRequestIds[surface] += 1;
     const requestId = this.searchRequestIds[surface];
     const controller = new AbortController();
     this.searchControllers[surface] = controller;
 
-    const current =
-      surface === "label"
-        ? this.state.labelSearch
-        : surface === "merge"
-          ? this.state.mergeSearch
-          : this.state.correctionUi.search;
-    this.patch({
-      ...(surface === "correction"
-        ? {
-            correctionUi: {
-              ...this.state.correctionUi,
-              search: {
-                ...current,
-                query,
-                status: "loading",
-                error: null,
-              },
-            },
-          }
-        : {
-            [surface === "label" ? "labelSearch" : "mergeSearch"]: {
-              ...current,
-              query,
-              status: "loading",
-              error: null,
-            },
-          }),
-    } as Partial<RewriteUiState>);
+    const current = this.readSearchState(surface);
+    if (current === null) {
+      return;
+    }
+    this.writeSearchState(surface, { ...current, query, status: "loading", error: null });
 
     try {
       const results = await api.searchPartTypes(query, controller.signal);
       if (requestId !== this.searchRequestIds[surface]) {
         return;
       }
-      this.patch({
-        ...(surface === "correction"
-          ? {
-              correctionUi: {
-                ...this.state.correctionUi,
-                search: {
-                  query,
-                  results,
-                  status: "idle",
-                  error: null,
-                },
-              },
-            }
-          : {
-              [surface === "label" ? "labelSearch" : "mergeSearch"]: {
-                query,
-                results,
-                status: "idle",
-                error: null,
-              },
-            }),
-      } as Partial<RewriteUiState>);
+      this.writeSearchState(surface, { query, results, status: "idle", error: null });
     } catch (caught) {
       if (controller.signal.aborted) {
         return;
@@ -1173,29 +1789,58 @@ export class RewriteAppController {
       if (this.handleApiFailure(caught)) {
         return;
       }
-      this.patch({
-        ...(surface === "correction"
-          ? {
-              correctionUi: {
-                ...this.state.correctionUi,
-                search: {
-                  ...current,
-                  query,
-                  status: "error",
-                  error: errorMessage(caught),
-                },
-              },
-            }
-          : {
-              [surface === "label" ? "labelSearch" : "mergeSearch"]: {
-                ...current,
-                query,
-                status: "error",
-                error: errorMessage(caught),
-              },
-            }),
-      } as Partial<RewriteUiState>);
+      this.writeSearchState(surface, {
+        ...current,
+        query,
+        status: "error",
+        error: errorMessage(caught),
+      });
       this.addToast(errorMessage(caught), "error");
+    }
+  }
+
+  private readSearchState(surface: SearchSurface): SearchState | null {
+    switch (surface) {
+      case "label":
+        return this.state.labelSearch;
+      case "merge":
+        return this.state.mergeSearch;
+      case "bulkLabel":
+        return this.state.bulkQueue.labelSearch;
+      case "edit":
+        if (this.state.scanEdit.status !== "open" || this.state.scanEdit.form.action !== "reassign") {
+          return null;
+        }
+        return this.state.scanEdit.form.search;
+    }
+  }
+
+  private writeSearchState(surface: SearchSurface, next: SearchState): void {
+    switch (surface) {
+      case "label":
+        this.patch({ labelSearch: next });
+        return;
+      case "merge":
+        this.patch({ mergeSearch: next });
+        return;
+      case "bulkLabel":
+        this.patch({
+          bulkQueue: { ...this.state.bulkQueue, labelSearch: next },
+        });
+        return;
+      case "edit": {
+        const edit = this.state.scanEdit;
+        if (edit.status !== "open" || edit.form.action !== "reassign") {
+          return;
+        }
+        this.patch({
+          scanEdit: {
+            ...edit,
+            form: { ...edit.form, search: next },
+          },
+        });
+        return;
+      }
     }
   }
 
@@ -1219,7 +1864,9 @@ export class RewriteAppController {
     try {
       const scanOptions: { signal: AbortSignal; autoIncrement: boolean } = {
         signal: controller.signal,
-        autoIncrement: this.state.scanMode === "increment",
+        autoIncrement:
+          this.state.scanMode.kind === "oneByOne" &&
+          this.state.scanMode.behavior === "increment",
       };
       const response = await api.scan(code, scanOptions);
       if (requestId !== this.scanRequestId) {
@@ -1257,14 +1904,7 @@ export class RewriteAppController {
   }
 
   private applyScanResponse(response: ScanResponse, code: string): void {
-    const historyCode =
-      response.mode === "unknown"
-        ? response.code
-        : response.qrCode.code;
-    const nextHistory = [
-      { code: historyCode, mode: response.mode, timestamp: new Date().toISOString() },
-      ...this.state.scanHistory,
-    ].slice(0, 20);
+    const nextHistory = this.buildNextScanHistory(response);
     if (response.mode === "unknown") {
       this.scanActor.send({ type: "LOOKUP.UNKNOWN", code: response.code });
       this.patch({ scanResult: response, scanHistory: nextHistory });
@@ -1307,9 +1947,268 @@ export class RewriteAppController {
       scanHistory: nextHistory,
       eventForm: buildDefaultEventFormForEntity(response.entity),
     });
+    void this.loadScanLocations(response.entity.partType.id);
     if (response.entity.targetType === "bulk" && (response as { autoIncremented?: boolean }).autoIncremented) {
       this.addToast(`+1 ${response.entity.partType.canonicalName} (now ${response.entity.quantity ?? "?"})`, "success");
     }
+  }
+
+  private async loadScanLocations(partTypeId: string): Promise<void> {
+    this.scanLocationsAbortController?.abort();
+    const controller = new AbortController();
+    this.scanLocationsAbortController = controller;
+    this.scanLocationsRequestId += 1;
+    const requestId = this.scanLocationsRequestId;
+
+    this.patch({
+      scanLocations: { status: "loading", partTypeId },
+    });
+
+    try {
+      const data = await api.getPartTypeItems(partTypeId);
+      if (requestId !== this.scanLocationsRequestId) {
+        return;
+      }
+      this.patch({
+        scanLocations: { status: "ready", partTypeId, data },
+      });
+    } catch (caught) {
+      if (controller.signal.aborted) {
+        return;
+      }
+      if (requestId !== this.scanLocationsRequestId) {
+        return;
+      }
+      if (this.handleApiFailure(caught)) {
+        return;
+      }
+      this.patch({
+        scanLocations: {
+          status: "error",
+          partTypeId,
+          message: errorMessage(caught),
+        },
+      });
+    }
+  }
+
+  private async handleBulkQueueScan(
+    code: string,
+    options: { source?: "manual" | "camera" } = {},
+  ): Promise<void> {
+    const { source = "manual" } = options;
+    this.scanAbortController?.abort();
+    this.scanRequestId += 1;
+    const requestId = this.scanRequestId;
+    const controller = new AbortController();
+    this.scanAbortController = controller;
+
+    if (source === "camera") {
+      this.patch({ cameraLookupCode: code });
+    }
+    this.patch({ pendingAction: "scan" });
+
+    try {
+      const response = await api.scan(code, {
+        signal: controller.signal,
+        autoIncrement: false,
+      });
+      if (requestId !== this.scanRequestId) {
+        return;
+      }
+
+      this.applyBulkQueueScanResponse(response);
+    } catch (caught) {
+      if (controller.signal.aborted) {
+        return;
+      }
+      if (this.handleApiFailure(caught)) {
+        return;
+      }
+
+      const failure: RewriteFailure = {
+        kind: "unexpected",
+        operation: "bulk.collect",
+        message: errorMessage(caught),
+        retryability: "never",
+        details: { machine: "bulkQueue" },
+        cause: caught,
+      };
+      this.bulkQueueActor.send({ type: "QUEUE.ROW_REJECTED", failure });
+      this.addToast(failure.message, "error");
+    } finally {
+      if (source === "camera" && requestId === this.scanRequestId) {
+        this.patch({ cameraLookupCode: null });
+      }
+      if (requestId === this.scanRequestId) {
+        this.patch({ pendingAction: null });
+      }
+    }
+  }
+
+  private applyBulkQueueScanResponse(response: ScanResponse): void {
+    const nextHistory = this.buildNextScanHistory(response);
+    const accepted = this.buildBulkQueueRow(response);
+    if (!accepted.ok) {
+      this.bulkQueueActor.send({ type: "QUEUE.ROW_REJECTED", failure: accepted.error });
+      this.patch({ scanHistory: nextHistory });
+      this.addToast(accepted.error.message, "error");
+      return;
+    }
+
+    const duplicate = this.state.bulkQueue.rows.find((row) => row.code === accepted.value.code);
+    this.bulkQueueActor.send({ type: "QUEUE.ROW_ACCEPTED", row: accepted.value });
+    this.patch({ scanHistory: nextHistory });
+
+    this.addToast(
+      duplicate
+        ? `Collapsed duplicate scan for ${accepted.value.code} · ${duplicate.count + 1} scans`
+        : this.describeBulkQueueAcceptance(accepted.value),
+      duplicate ? "info" : "success",
+    );
+  }
+
+  private buildNextScanHistory(response: ScanResponse) {
+    const historyCode =
+      response.mode === "unknown"
+        ? response.code
+        : response.qrCode.code;
+    return [
+      { code: historyCode, mode: response.mode, timestamp: new Date().toISOString() },
+      ...this.state.scanHistory,
+    ].slice(0, 20);
+  }
+
+  private buildBulkQueueRow(response: ScanResponse): { ok: true; value: BulkQueueRow } | { ok: false; error: RewriteFailure } {
+    if (this.state.scanMode.kind !== "bulk") {
+      return {
+        ok: false,
+        error: this.createBulkQueueFailure("bulk_queue_mode_mismatch", "Bulk queueing is only available while bulk mode is active."),
+      };
+    }
+
+    const action = this.state.scanMode.action;
+    const timestamp = new Date().toISOString();
+
+    if (response.mode === "unknown") {
+      return {
+        ok: false,
+        error: this.createBulkQueueFailure(
+          "bulk_queue_mode_mismatch",
+          action === "label"
+            ? "Bulk label only accepts printed Smart DB labels."
+            : "Bulk move/delete only accepts already assigned Smart DB labels.",
+        ),
+      };
+    }
+
+    if (response.qrCode.batchId === "external") {
+      return {
+        ok: false,
+        error: this.createBulkQueueFailure(
+          "bulk_queue_external_unsupported",
+          "Bulk queue v1 only accepts Smart DB labels, not external/manufacturer barcodes.",
+        ),
+      };
+    }
+
+    if (action === "label") {
+      if (response.mode !== "label") {
+        return {
+          ok: false,
+          error: this.createBulkQueueFailure("bulk_queue_mode_mismatch", "Bulk label only accepts printed, unassigned Smart DB labels."),
+        };
+      }
+      if (this.state.bulkQueue.kind && this.state.bulkQueue.kind !== "unlabeled") {
+        return {
+          ok: false,
+          error: this.createBulkQueueFailure("bulk_queue_mixed_kind", "This queue already contains assigned items. Clear it before bulk labeling."),
+        };
+      }
+
+      return {
+        ok: true,
+        value: {
+          kind: "unlabeled",
+          code: response.qrCode.code,
+          batchId: response.qrCode.batchId,
+          count: 1,
+          firstSeenAt: timestamp,
+          lastSeenAt: timestamp,
+        } satisfies BulkUnlabeledQueueRow,
+      };
+    }
+
+    if (response.mode !== "interact") {
+      return {
+        ok: false,
+        error: this.createBulkQueueFailure("bulk_queue_mode_mismatch", "Bulk move/delete only accepts assigned Smart DB labels."),
+      };
+    }
+
+    if (this.state.bulkQueue.kind && this.state.bulkQueue.kind !== "assigned") {
+      return {
+        ok: false,
+        error: this.createBulkQueueFailure("bulk_queue_mixed_kind", "This queue already contains unlabeled items. Clear it before bulk moving or deleting."),
+      };
+    }
+
+    const deleteEligibility = this.getBulkDeleteEligibility(response);
+    if (action === "delete" && deleteEligibility.status === "ineligible") {
+      return {
+        ok: false,
+        error: this.createBulkQueueFailure("bulk_queue_ineligible", deleteEligibility.reason),
+      };
+    }
+
+    return {
+      ok: true,
+      value: {
+        kind: "assigned",
+        code: response.qrCode.code,
+        count: 1,
+        firstSeenAt: timestamp,
+        lastSeenAt: timestamp,
+        targetType: response.entity.targetType,
+        targetId: response.entity.id,
+        partTypeId: response.entity.partType.id,
+        partTypeName: response.entity.partType.canonicalName,
+        location: response.entity.location,
+        deleteEligibility,
+      } satisfies BulkAssignedQueueRow,
+    };
+  }
+
+  private getBulkDeleteEligibility(
+    response: Extract<ScanResponse, { mode: "interact" }>,
+  ): BulkDeleteEligibility {
+    return response.recentEvents.length === 1 && response.recentEvents[0]?.event === "labeled"
+      ? { status: "eligible" }
+      : {
+          status: "ineligible",
+          reason: "Bulk delete only supports fresh ingests whose history is still just the original labeled event.",
+        };
+  }
+
+  private createBulkQueueFailure(code: Extract<RewriteFailure, { kind: "domain" }>["code"], message: string): RewriteFailure {
+    return {
+      kind: "domain",
+      operation: "bulk.collect",
+      code,
+      message,
+      retryability: "never",
+      details: {
+        machine: "bulkQueue",
+        state: this.state.bulkQueue.status,
+      },
+    };
+  }
+
+  private describeBulkQueueAcceptance(row: BulkQueueRow): string {
+    if (row.kind === "unlabeled") {
+      return `${row.code} queued for bulk label`;
+    }
+    return `${row.code} queued for bulk ${this.state.bulkQueue.action}`;
   }
 
   private async handleRegisterBatch(): Promise<void> {
@@ -1405,24 +2304,25 @@ export class RewriteAppController {
     const code = sanitizeScannedCode(this.state.scanCode);
     if (!code) return;
     this.patch({ scanCode: "" });
+    if (this.state.scanMode.kind === "bulk") {
+      await this.handleBulkQueueScan(code);
+      return;
+    }
     await this.performScan(code);
   }
 
   private handleScanNext(): void {
-    this.cameraService.stop();
-    this.patch({
-      cameraLookupCode: null,
-      scanCode: "",
-      scanResult: null,
-      assignForm: defaultAssignForm,
-      eventForm: defaultEventForm,
-      labelSearch: defaultSearchState,
-    });
+    this.clearCurrentScanWorkspace();
   }
 
   private handleCameraScanNext(): void {
     this.handleScanNext();
     void this.startCamera();
+  }
+
+  private focusScanInput(): void {
+    const input = this.root.querySelector<HTMLInputElement>("#scan-code-input");
+    input?.focus();
   }
 
   private async handleCameraScan(code: string): Promise<void> {
@@ -1431,13 +2331,21 @@ export class RewriteAppController {
       return;
     }
 
-    if (hasInProgressScanWork(
-      this.state.scanResult,
-      this.state.assignForm,
-      this.state.labelSearch.query,
-      this.state.eventForm,
-    )) {
+    if (
+      this.state.scanMode.kind === "oneByOne" &&
+      hasInProgressScanWork(
+        this.state.scanResult,
+        this.state.assignForm,
+        this.state.labelSearch.query,
+        this.state.eventForm,
+      )
+    ) {
       this.addToast("Clear the current scan first", "error");
+      return;
+    }
+
+    if (this.state.scanMode.kind === "bulk") {
+      await this.handleBulkQueueScan(code, { source: "camera" });
       return;
     }
 
@@ -1467,141 +2375,241 @@ export class RewriteAppController {
     // Render once with final camera state. This creates the video element.
     this.render();
 
-    // Attach the fresh video element and bind the stream.
-    // Use a microtask to ensure the DOM has settled.
+    // Yield a microtask so the new innerHTML is observable before we query
+    // for #rewrite-camera-video. Without this, the querySelector can race
+    // the DOM mutation on some render stacks and return null, leaving the
+    // stream running with no sink attached.
+    await Promise.resolve();
+
     const video = this.root.querySelector<HTMLVideoElement>("#rewrite-camera-video");
     if (video && this.cameraService.getSnapshot().activeStream) {
       await this.cameraService.attachVideoElement(video);
     }
   }
 
-  private setCorrectionAction(action: "reassign" | "editShared" | "reverseIngest"): void {
+  private interactTarget(): Extract<ScanResponse, { mode: "interact" }> | null {
+    const scanResult = this.state.scanResult;
+    if (!scanResult || scanResult.mode !== "interact") {
+      return null;
+    }
+    return scanResult;
+  }
+
+  private async openCorrectionOnScan(qrCode: string): Promise<void> {
     this.patch({
-      correctionUi: {
-        ...this.state.correctionUi,
-        action,
-        reason: "",
+      activeTab: "scan",
+      scanEdit: defaultScanEditState,
+      scanCode: qrCode,
+    });
+    await this.performScan(qrCode, { silent: false });
+  }
+
+  private openScanEdit(action: ScanEditAction = "reassign"): void {
+    const target = this.interactTarget();
+    if (!target) {
+      return;
+    }
+    if (action === "reverseIngest" && "canReverseIngest" in target && !target.canReverseIngest) {
+      return;
+    }
+    if (action === "editShared" && "canEditSharedType" in target && !target.canEditSharedType) {
+      return;
+    }
+
+    const form = this.buildScanEditForm(action, target);
+    this.scanActor.send({ type: "EDIT.OPEN", editKind: action });
+    this.patch({
+      scanEdit: {
+        status: "open",
+        form,
+        history: [],
+        historyError: null,
+        dirty: false,
+      },
+    });
+    void this.loadScanEditHistory(target.entity.targetType, target.entity.id);
+  }
+
+  private buildScanEditForm(
+    action: ScanEditAction,
+    target: Extract<ScanResponse, { mode: "interact" }>,
+  ): ScanEditForm {
+    if (action === "reassign") {
+      return {
+        action: "reassign",
+        search: {
+          query: "",
+          results: [...this.state.catalogSuggestions],
+          status: "idle",
+          error: null,
+        },
         replacementPartTypeId: "",
-        search:
-          action === "reassign"
-            ? {
-                ...this.state.correctionUi.search,
-                query: "",
-                results: [...this.state.catalogSuggestions],
-                status: "idle",
-                error: null,
-              }
-            : this.state.correctionUi.search,
+        reason: "",
+      };
+    }
+    if (action === "editShared") {
+      return {
+        action: "editShared",
+        sharedCanonicalName: target.entity.partType.canonicalName,
+        sharedCategory: formatCategoryPath(target.entity.partType.categoryPath),
+        sharedExpectedUpdatedAt: target.entity.partType.updatedAt,
+        reason: "",
+      };
+    }
+    return { action: "reverseIngest", reason: "" };
+  }
+
+  private closeScanEdit(): void {
+    this.searchControllers.edit?.abort();
+    if (this.state.scanEdit.status === "open") {
+      this.scanActor.send({ type: "EDIT.CLOSE" });
+    }
+    this.patch({ scanEdit: defaultScanEditState });
+  }
+
+  private setScanEditAction(action: ScanEditAction): void {
+    const edit = this.state.scanEdit;
+    const target = this.interactTarget();
+    if (edit.status !== "open" || !target) {
+      return;
+    }
+
+    let form: ScanEditForm;
+    if (action === "reassign") {
+      form = {
+        action: "reassign",
+        search: {
+          query: "",
+          results: [...this.state.catalogSuggestions],
+          status: "idle",
+          error: null,
+        },
+        replacementPartTypeId: "",
+        reason: "",
+      };
+    } else if (action === "editShared") {
+      form = {
+        action: "editShared",
+        sharedCanonicalName: target.entity.partType.canonicalName,
+        sharedCategory: formatCategoryPath(target.entity.partType.categoryPath),
+        sharedExpectedUpdatedAt: target.entity.partType.updatedAt,
+        reason: "",
+      };
+    } else {
+      form = {
+        action: "reverseIngest",
+        reason: "",
+      };
+    }
+
+    this.patch({
+      scanEdit: {
+        status: "open",
+        form,
+        history: edit.history,
+        historyError: edit.historyError,
+        dirty: false,
       },
     });
   }
 
-  private async handleCorrectionScan(): Promise<void> {
-    const code = sanitizeScannedCode(this.state.correctionUi.scanCode);
-    if (!code) {
+  private selectScanEditReplacementPart(partId: string): void {
+    const edit = this.state.scanEdit;
+    if (edit.status !== "open" || edit.form.action !== "reassign") {
       return;
     }
+    this.patch({
+      scanEdit: {
+        ...edit,
+        form: { ...edit.form, replacementPartTypeId: partId },
+        dirty: true,
+      },
+    });
+  }
 
+  private patchScanEditForm(update: Partial<ScanEditForm>): void {
+    const edit = this.state.scanEdit;
+    if (edit.status !== "open") {
+      return;
+    }
+    const merged = { ...edit.form, ...update } as ScanEditForm;
+    this.patch({
+      scanEdit: {
+        ...edit,
+        form: merged,
+        dirty: true,
+      },
+    });
+  }
+
+  private async loadScanEditHistory(targetType: "instance" | "bulk", targetId: string): Promise<void> {
     try {
-      const response = await api.scan(code, { autoIncrement: false });
-      if (response.mode !== "interact") {
-        this.patch({
-          correctionUi: {
-            ...defaultCorrectionUiState,
-            scanCode: code,
-            targetError: "Only already-ingested assigned items can be corrected.",
-          },
-        });
+      const history = await api.getCorrectionHistory({ targetType, targetId });
+      const edit = this.state.scanEdit;
+      if (edit.status !== "open") {
         return;
       }
-
-      const history = await api.getCorrectionHistory({
-        targetType: response.entity.targetType,
-        targetId: response.entity.id,
-      }).catch((caught) => {
-        return this.handleApiFailure(caught)
-          ? []
-          : (() => {
-              this.addToast(errorMessage(caught), "error");
-              return [];
-            })();
-      });
-
       this.patch({
-        correctionUi: {
-          ...defaultCorrectionUiState,
-          scanCode: code,
-          target: response,
-          history,
-          action: "reassign",
-          search: {
-            query: "",
-            results: [...this.state.catalogSuggestions],
-            status: "idle",
-            error: null,
-          },
-          sharedCanonicalName: response.entity.partType.canonicalName,
-          sharedCategory: formatCategoryPath(response.entity.partType.categoryPath),
-          sharedExpectedUpdatedAt: response.entity.partType.updatedAt,
-        },
+        scanEdit: { ...edit, history, historyError: null },
       });
     } catch (caught) {
-      if (!this.handleApiFailure(caught)) {
-        this.patch({
-          correctionUi: {
-            ...defaultCorrectionUiState,
-            scanCode: code,
-            targetError: errorMessage(caught),
-          },
-        });
+      if (this.handleApiFailure(caught)) {
+        return;
       }
+      const edit = this.state.scanEdit;
+      if (edit.status !== "open") {
+        return;
+      }
+      this.patch({
+        scanEdit: { ...edit, history: [], historyError: errorMessage(caught) },
+      });
     }
   }
 
-  private async handleCorrectionReassign(): Promise<void> {
-    const target = this.state.correctionUi.target;
-    if (!target) {
+  private async handleScanEditReassign(): Promise<void> {
+    const target = this.interactTarget();
+    const edit = this.state.scanEdit;
+    if (!target || edit.status !== "open" || edit.form.action !== "reassign") {
       this.addToast("Scan an ingested item first.", "error");
       return;
     }
 
+    const parsed = parseReassignPartTypeForm({
+      targetType: target.entity.targetType,
+      targetId: target.entity.id,
+      fromPartTypeId: target.entity.partType.id,
+      toPartTypeId: edit.form.replacementPartTypeId,
+      reason: edit.form.reason,
+    });
+    if (!parsed.ok) {
+      this.addToast(this.failureMessage(parsed.error), "error");
+      return;
+    }
+
+    this.scanActor.send({ type: "EDIT.SUBMIT_REQUESTED" });
     this.patch({ pendingAction: "correct" as PendingAction });
     try {
-      const parsed = parseReassignPartTypeForm({
-        targetType: target.entity.targetType,
-        targetId: target.entity.id,
-        fromPartTypeId: target.entity.partType.id,
-        toPartTypeId: this.state.correctionUi.replacementPartTypeId,
-        reason: this.state.correctionUi.reason,
-      });
-      if (!parsed.ok) {
-        this.addToast(this.failureMessage(parsed.error), "error");
-        return;
-      }
-
-      const response = await api.reassignEntityPartType(parsed.value);
-      const refreshedTarget = await api.scan(target.qrCode.code, { autoIncrement: false });
-      const history = await api.getCorrectionHistory({
-        targetType: target.entity.targetType,
-        targetId: target.entity.id,
-      });
-
+      await api.reassignEntityPartType(parsed.value);
+      this.scanActor.send({ type: "EDIT.SUCCEEDED", editKind: "reassign" });
+      const refreshed = await api.scan(target.qrCode.code, { autoIncrement: false });
       this.patch({
-        correctionUi: {
-          ...this.state.correctionUi,
-          target: refreshedTarget.mode === "interact" ? refreshedTarget : this.state.correctionUi.target,
-          history,
-          action: null,
-          reason: "",
-          replacementPartTypeId: "",
-          sharedCanonicalName: response.entity.partType.canonicalName,
-          sharedCategory: formatCategoryPath(response.entity.partType.categoryPath),
-          sharedExpectedUpdatedAt: response.entity.partType.updatedAt,
-        },
+        scanResult: refreshed,
+        scanEdit: defaultScanEditState,
       });
       this.addToast("Item corrected to the replacement part type.", "success");
       await this.loadAuthenticatedData();
     } catch (caught) {
+      this.scanActor.send({
+        type: "EDIT.FAILED",
+        failure: {
+          kind: "unexpected",
+          operation: "correction.reassignEntityPartType",
+          message: errorMessage(caught),
+          retryability: "never",
+          details: { machine: "scanSession" },
+          cause: caught,
+        },
+      });
       if (!this.handleApiFailure(caught)) {
         this.addToast(errorMessage(caught), "error");
       }
@@ -1610,65 +2618,77 @@ export class RewriteAppController {
     }
   }
 
-  private async handleCorrectionEditShared(): Promise<void> {
-    const target = this.state.correctionUi.target;
-    if (!target) {
+  private async handleScanEditEditShared(): Promise<void> {
+    const target = this.interactTarget();
+    const edit = this.state.scanEdit;
+    if (!target || edit.status !== "open" || edit.form.action !== "editShared") {
       this.addToast("Scan an ingested item first.", "error");
       return;
     }
 
+    const parsed = parseEditPartTypeDefinitionForm({
+      partTypeId: target.entity.partType.id,
+      expectedUpdatedAt: edit.form.sharedExpectedUpdatedAt,
+      canonicalName: edit.form.sharedCanonicalName,
+      category: edit.form.sharedCategory,
+      reason: edit.form.reason,
+    });
+    if (!parsed.ok) {
+      this.addToast(this.failureMessage(parsed.error), "error");
+      return;
+    }
+
+    const conflicts = findSharedTypeConflictCandidates(
+      this.state.inventorySummary,
+      target.entity.partType.id,
+      edit.form.sharedCanonicalName,
+      edit.form.sharedCategory,
+    );
+    if (conflicts.length > 0) {
+      this.addToast(
+        `A part type named '${conflicts[0]!.canonicalName}' already exists in ${conflicts[0]!.categoryPath.join(" / ")}. Use 'Fix this item only' to reassign this scan instead of renaming the shared type.`,
+        "error",
+      );
+      return;
+    }
+
+    const usage = this.state.inventorySummary.find((row) => row.id === target.entity.partType.id);
+    const linkedCount = (usage?.bins ?? 0) + (usage?.instanceCount ?? 0);
+    if (
+      typeof window !== "undefined" &&
+      !window.confirm(
+        linkedCount > 0
+          ? `Rename the shared type '${target.entity.partType.canonicalName}' for ${linkedCount} linked inventory rows? This is not item-only.`
+          : `Rename the shared type '${target.entity.partType.canonicalName}'? This changes the catalog definition itself, not just the scanned item.`,
+      )
+    ) {
+      return;
+    }
+
+    this.scanActor.send({ type: "EDIT.SUBMIT_REQUESTED" });
     this.patch({ pendingAction: "correct" as PendingAction });
     try {
-      const parsed = parseEditPartTypeDefinitionForm({
-        partTypeId: target.entity.partType.id,
-        expectedUpdatedAt: this.state.correctionUi.sharedExpectedUpdatedAt,
-        canonicalName: this.state.correctionUi.sharedCanonicalName,
-        category: this.state.correctionUi.sharedCategory,
-        reason: this.state.correctionUi.reason,
-      });
-      if (!parsed.ok) {
-        this.addToast(this.failureMessage(parsed.error), "error");
-        return;
-      }
-
-      const conflicts = this.findCorrectionSharedEditConflicts();
-      if (conflicts.length > 0) {
-        this.addToast(
-          `A part type named '${conflicts[0]!.canonicalName}' already exists in ${conflicts[0]!.categoryPath.join(" / ")}. Use 'Fix this item/bin only' to reassign this scanned item instead of renaming the shared type.`,
-          "error",
-        );
-        return;
-      }
-
-      const usage = this.state.inventorySummary.find((row) => row.id === target.entity.partType.id);
-      const linkedCount = (usage?.bins ?? 0) + (usage?.instanceCount ?? 0);
-      if (
-        typeof window !== "undefined" &&
-        !window.confirm(
-          linkedCount > 0
-            ? `Rename the shared type '${target.entity.partType.canonicalName}' for ${linkedCount} linked inventory rows? This is not item-only.`
-            : `Rename the shared type '${target.entity.partType.canonicalName}'? This changes the catalog definition itself, not just the scanned item.`,
-        )
-      ) {
-        return;
-      }
-
-      const response = await api.editPartTypeDefinition(parsed.value);
-      const refreshedTarget = await api.scan(target.qrCode.code, { autoIncrement: false });
+      await api.editPartTypeDefinition(parsed.value);
+      this.scanActor.send({ type: "EDIT.SUCCEEDED", editKind: "editShared" });
+      const refreshed = await api.scan(target.qrCode.code, { autoIncrement: false });
       this.patch({
-        correctionUi: {
-          ...this.state.correctionUi,
-          target: refreshedTarget.mode === "interact" ? refreshedTarget : this.state.correctionUi.target,
-          action: null,
-          reason: "",
-          sharedCanonicalName: response.partType.canonicalName,
-          sharedCategory: formatCategoryPath(response.partType.categoryPath),
-          sharedExpectedUpdatedAt: response.partType.updatedAt,
-        },
+        scanResult: refreshed,
+        scanEdit: defaultScanEditState,
       });
       this.addToast("Shared part type updated.", "success");
       await this.loadAuthenticatedData();
     } catch (caught) {
+      this.scanActor.send({
+        type: "EDIT.FAILED",
+        failure: {
+          kind: "unexpected",
+          operation: "correction.editPartTypeDefinition",
+          message: errorMessage(caught),
+          retryability: "never",
+          details: { machine: "scanSession" },
+          cause: caught,
+        },
+      });
       if (!this.handleApiFailure(caught)) {
         this.addToast(errorMessage(caught), "error");
       }
@@ -1677,40 +2697,194 @@ export class RewriteAppController {
     }
   }
 
-  private async handleCorrectionReverseIngest(): Promise<void> {
-    const target = this.state.correctionUi.target;
-    if (!target) {
+  private async handleScanEditReverseIngest(): Promise<void> {
+    const target = this.interactTarget();
+    const edit = this.state.scanEdit;
+    if (!target || edit.status !== "open" || edit.form.action !== "reverseIngest") {
       this.addToast("Scan an ingested item first.", "error");
       return;
     }
-    if (typeof window !== "undefined" && !window.confirm("Reverse this ingest? The QR/Data Matrix will return to printed state, while the correction audit remains.")) {
+    if (
+      typeof window !== "undefined" &&
+      !window.confirm("Reverse this ingest? The QR/Data Matrix will return to printed state, while the correction audit remains.")
+    ) {
       return;
     }
 
+    const parsed = parseReverseIngestForm({
+      qrCode: target.qrCode.code,
+      assignedKind: target.entity.targetType,
+      assignedId: target.entity.id,
+      reason: edit.form.reason,
+    });
+    if (!parsed.ok) {
+      this.addToast(this.failureMessage(parsed.error), "error");
+      return;
+    }
+
+    this.scanActor.send({ type: "EDIT.SUBMIT_REQUESTED" });
     this.patch({ pendingAction: "correct" as PendingAction });
     try {
-      const parsed = parseReverseIngestForm({
-        qrCode: target.qrCode.code,
-        assignedKind: target.entity.targetType,
-        assignedId: target.entity.id,
-        reason: this.state.correctionUi.reason,
-      });
-      if (!parsed.ok) {
-        this.addToast(this.failureMessage(parsed.error), "error");
-        return;
-      }
-
       await api.reverseIngestAssignment(parsed.value);
-      this.patch({ correctionUi: defaultCorrectionUiState });
+      this.scanActor.send({ type: "EDIT.SUCCEEDED", editKind: "reverseIngest" });
+      this.patch({
+        scanResult: null,
+        scanEdit: defaultScanEditState,
+      });
       this.addToast("Ingest reversed. The item is no longer assigned.", "success");
       await this.loadAuthenticatedData();
     } catch (caught) {
+      this.scanActor.send({
+        type: "EDIT.FAILED",
+        failure: {
+          kind: "unexpected",
+          operation: "correction.reverseIngest",
+          message: errorMessage(caught),
+          retryability: "never",
+          details: { machine: "scanSession" },
+          cause: caught,
+        },
+      });
       if (!this.handleApiFailure(caught)) {
         this.addToast(errorMessage(caught), "error");
       }
     } finally {
       this.patch({ pendingAction: null });
     }
+  }
+
+  private async submitQuickEvent(
+    input: Record<string, unknown>,
+    targetType: "instance" | "bulk",
+    successToast: string,
+  ): Promise<void> {
+    const target = this.interactTarget();
+    if (!target) {
+      return;
+    }
+    const parsed = parseEventForm(input);
+    if (!parsed.ok) {
+      this.addToast(this.failureMessage(parsed.error), "error");
+      return;
+    }
+    if (parsed.value.kind !== "record") {
+      this.addToast("Quick action cannot emit a split.", "error");
+      return;
+    }
+
+    this.scanActor.send({
+      type: "EVENT.PARSE_REQUESTED",
+      targetType,
+    });
+    this.scanActor.send({
+      type: "EVENT.SUBMIT_REQUESTED",
+      targetType,
+    });
+    this.patch({ pendingAction: "event" as PendingAction });
+    try {
+      await api.recordEvent(parsed.value.request);
+      this.scanActor.send({
+        type: "EVENT.SUCCEEDED",
+        targetType,
+        qrCode: target.qrCode.code,
+        targetId: target.entity.id,
+      });
+      this.addToast(successToast, "success");
+      if (targetType === "instance") {
+        // Check out / return returns to the scan-ready view for the next item.
+        this.scanActor.send({ type: "SCAN.NEXT_REQUESTED" });
+        this.clearCurrentScanWorkspace();
+      } else {
+        // Bulk +1/-1 keeps the bin on screen so the count can be tapped rapidly.
+        const refreshed = await api.scan(target.qrCode.code, { autoIncrement: false });
+        this.patch({ scanResult: refreshed });
+        void this.loadScanLocations(refreshed.mode === "interact"
+          ? refreshed.entity.partType.id
+          : target.entity.partType.id);
+      }
+      await this.loadAuthenticatedData();
+    } catch (caught) {
+      this.scanActor.send({
+        type: "EVENT.FAILED",
+        failure: {
+          kind: "unexpected",
+          operation: "scan.recordEvent",
+          message: errorMessage(caught),
+          retryability: "never",
+          details: { machine: "scanSession" },
+          cause: caught,
+        },
+      });
+      if (!this.handleApiFailure(caught)) {
+        this.addToast(errorMessage(caught), "error");
+      }
+    } finally {
+      this.patch({ pendingAction: null });
+    }
+  }
+
+  private handleQuickBulkDelta(direction: 1 | -1): void {
+    const target = this.interactTarget();
+    if (!target || target.entity.targetType !== "bulk") {
+      return;
+    }
+    const event = direction === 1 ? "restocked" : "consumed";
+    const nextQty =
+      direction === 1
+        ? (target.entity.quantity ?? 0) + 1
+        : (target.entity.quantity ?? 0) - 1;
+    const symbol = target.entity.partType.unit.symbol;
+    void this.submitQuickEvent(
+      {
+        targetType: "bulk",
+        targetId: target.entity.id,
+        event,
+        quantityDelta: 1,
+      },
+      "bulk",
+      `${direction === 1 ? "+1" : "-1"} ${target.entity.partType.canonicalName} (now ${nextQty} ${symbol})`,
+    );
+  }
+
+  private handleQuickInstanceCheckoutMe(): void {
+    const target = this.interactTarget();
+    if (!target || target.entity.targetType !== "instance") {
+      return;
+    }
+    const session =
+      this.state.authState.status === "authenticated"
+        ? this.state.authState.session
+        : null;
+    if (!session) {
+      this.addToast("Sign in to check this out.", "error");
+      return;
+    }
+    void this.submitQuickEvent(
+      {
+        targetType: "instance",
+        targetId: target.entity.id,
+        event: "checked_out",
+        assignee: session.username,
+      },
+      "instance",
+      `Checked out to ${formatActor(session.username)}.`,
+    );
+  }
+
+  private handleQuickInstanceReturn(): void {
+    const target = this.interactTarget();
+    if (!target || target.entity.targetType !== "instance") {
+      return;
+    }
+    void this.submitQuickEvent(
+      {
+        targetType: "instance",
+        targetId: target.entity.id,
+        event: "returned",
+      },
+      "instance",
+      `Returned.`,
+    );
   }
 
   private handleRegisterUnknown(code: string): void {
@@ -1866,6 +3040,125 @@ export class RewriteAppController {
     }
   }
 
+  private async handleBulkAssign(): Promise<void> {
+    if (this.state.scanMode.kind !== "bulk" || this.state.scanMode.action !== "label") {
+      this.addToast("Switch to bulk label before submitting a bulk label batch.", "error");
+      return;
+    }
+
+    this.patch({ pendingAction: "bulk" });
+    this.bulkQueueActor.send({ type: "QUEUE.SUBMIT_REQUESTED" });
+    try {
+      const parsed = parseBulkAssignForm({
+        ...this.state.bulkQueue.labelForm,
+        qrs: this.state.bulkQueue.rows.map((row) => row.code),
+      });
+      if (!parsed.ok) {
+        this.bulkQueueActor.send({ type: "QUEUE.SUBMIT_FAILED", failure: parsed.error });
+        this.addToast(this.failureMessage(parsed.error), "error");
+        return;
+      }
+
+      const response = await api.bulkAssignQrs(parsed.value);
+      this.bulkQueueActor.send({ type: "QUEUE.SUBMIT_SUCCEEDED" });
+      this.clearBulkQueue("label");
+      this.addToast(`Bulk labeled ${response.processedCount} Smart DB labels.`, "success");
+      await this.loadAuthenticatedData();
+    } catch (caught) {
+      const failure = this.createBulkSubmitFailure("bulk.assign", caught);
+      this.bulkQueueActor.send({ type: "QUEUE.SUBMIT_FAILED", failure });
+      if (!this.handleApiFailure(caught)) {
+        this.addToast(failure.message, "error");
+      }
+    } finally {
+      this.patch({ pendingAction: null });
+    }
+  }
+
+  private async handleBulkMove(): Promise<void> {
+    if (this.state.scanMode.kind !== "bulk" || this.state.scanMode.action !== "move") {
+      this.addToast("Switch to bulk move before submitting a bulk move batch.", "error");
+      return;
+    }
+
+    this.patch({ pendingAction: "bulk" });
+    this.bulkQueueActor.send({ type: "QUEUE.SUBMIT_REQUESTED" });
+    try {
+      const parsed = parseBulkMoveForm({
+        targets: this.buildBulkMoveTargets(),
+        location: this.state.bulkQueue.moveForm.location,
+        notes: this.state.bulkQueue.moveForm.notes,
+      });
+      if (!parsed.ok) {
+        this.bulkQueueActor.send({ type: "QUEUE.SUBMIT_FAILED", failure: parsed.error });
+        this.addToast(this.failureMessage(parsed.error), "error");
+        return;
+      }
+
+      const response = await api.bulkMoveEntities(parsed.value);
+      this.bulkQueueActor.send({ type: "QUEUE.SUBMIT_SUCCEEDED" });
+      this.clearBulkQueue("move");
+      this.addToast(`Bulk moved ${response.processedCount} Smart DB labels.`, "success");
+      await this.loadAuthenticatedData();
+    } catch (caught) {
+      const failure = this.createBulkSubmitFailure("bulk.move", caught);
+      this.bulkQueueActor.send({ type: "QUEUE.SUBMIT_FAILED", failure });
+      if (!this.handleApiFailure(caught)) {
+        this.addToast(failure.message, "error");
+      }
+    } finally {
+      this.patch({ pendingAction: null });
+    }
+  }
+
+  private async handleBulkDelete(): Promise<void> {
+    if (this.state.scanMode.kind !== "bulk" || this.state.scanMode.action !== "delete") {
+      this.addToast("Switch to bulk delete before submitting a bulk delete batch.", "error");
+      return;
+    }
+    if (
+      this.state.authState.status !== "authenticated" ||
+      !hasSmartDbRole(this.state.authState.session.roles, smartDbRoles.admin)
+    ) {
+      this.addToast("Bulk delete requires Smart DB admin access.", "error");
+      return;
+    }
+    if (
+      typeof window !== "undefined" &&
+      !window.confirm("Reverse every eligible ingest in this bulk queue? The correction audit will be preserved.")
+    ) {
+      return;
+    }
+
+    this.patch({ pendingAction: "bulk" });
+    this.bulkQueueActor.send({ type: "QUEUE.SUBMIT_REQUESTED" });
+    try {
+      const parsed = parseBulkDeleteForm({
+        targets: this.buildBulkDeleteTargets(),
+        reason: this.state.bulkQueue.deleteForm.reason,
+      });
+      if (!parsed.ok) {
+        this.bulkQueueActor.send({ type: "QUEUE.SUBMIT_FAILED", failure: parsed.error });
+        this.addToast(this.failureMessage(parsed.error), "error");
+        return;
+      }
+
+      const response = await api.bulkReverseIngest(parsed.value);
+      this.bulkQueueActor.send({ type: "QUEUE.SUBMIT_SUCCEEDED" });
+      this.clearBulkQueue("delete");
+      this.addToast(`Bulk deleted ${response.processedCount} fresh ingests.`, "success");
+      await this.loadAuthenticatedData();
+    } catch (caught) {
+      const failure = this.createBulkSubmitFailure("bulk.delete", caught);
+      this.bulkQueueActor.send({ type: "QUEUE.SUBMIT_FAILED", failure });
+      if (!this.handleApiFailure(caught)) {
+        this.addToast(failure.message, "error");
+      }
+    } finally {
+      this.patch({ pendingAction: null });
+    }
+  }
+
   private async handleRecordEvent(): Promise<void> {
     this.patch({ pendingAction: "event" });
     this.scanActor.send({ type: "EVENT.PARSE_REQUESTED", targetType: this.state.eventForm.targetType });
@@ -1907,7 +3200,16 @@ export class RewriteAppController {
         this.addToast(`${actionLabel(response.event)} recorded`, "success");
       }
 
-      if (this.state.scanResult?.mode === "interact") {
+      const wasInstanceEvent =
+        parsedCommand.kind === "record" && parsedCommand.request.targetType === "instance";
+      if (wasInstanceEvent) {
+        // Instance actions (check out, return, move, mark damaged/lost/consumed)
+        // return to the scan-ready view so the next item can be scanned, instead
+        // of lingering on the item that was just acted on.
+        this.scanActor.send({ type: "SCAN.NEXT_REQUESTED" });
+        this.clearCurrentScanWorkspace();
+      } else if (this.state.scanResult?.mode === "interact") {
+        // Bulk bins stay on screen so repeated restock/consume/adjust stays fast.
         await this.performScan(this.state.scanResult.qrCode.code, { silent: true });
       }
       await this.loadAuthenticatedData();
@@ -2092,21 +3394,7 @@ export class RewriteAppController {
       assignForm: {
         ...this.state.assignForm,
         entityKind: kind,
-        countable: kind === "instance" ? true : this.state.assignForm.countable,
-      },
-    });
-  }
-
-  private setBulkCountability(countable: boolean): void {
-    const nextUnit = countable && !getMeasurementUnitBySymbol(this.state.assignForm.unitSymbol)?.isInteger
-      ? "pcs"
-      : this.state.assignForm.unitSymbol;
-    this.patch({
-      assignForm: {
-        ...this.state.assignForm,
-        entityKind: "bulk",
-        countable,
-        unitSymbol: nextUnit,
+        countable: kind === "instance",
       },
     });
   }
@@ -2121,9 +3409,7 @@ export class RewriteAppController {
     this.patch({
       assignForm: {
         ...this.state.assignForm,
-        entityKind: selected.countable
-          ? this.state.assignForm.entityKind
-          : "bulk",
+        entityKind: selected.countable ? "instance" : "bulk",
         partTypeMode: "existing",
         existingPartTypeId: selected.id,
         canonicalName: "",
@@ -2152,22 +3438,209 @@ export class RewriteAppController {
         canonicalName: selected.canonicalName,
         category: formatCategoryPath(selected.categoryPath),
         countable: selected.countable,
-        entityKind: selected.countable ? this.state.assignForm.entityKind : "bulk",
+        entityKind: selected.countable ? "instance" : "bulk",
         unitSymbol: selected.unit.symbol,
       },
     });
   }
 
-  private setScanMode(mode: "increment" | "inspect"): void {
-    try {
-      localStorage.setItem("smartdb:scanMode", mode);
-    } catch {}
-    this.patch({ scanMode: mode });
+  private setBulkLabelMode(mode: "existing" | "new"): void {
+    if (mode === "existing") {
+      this.patch({
+        bulkQueue: {
+          ...this.state.bulkQueue,
+          labelForm: {
+            ...this.state.bulkQueue.labelForm,
+            partTypeMode: "existing",
+            canonicalName: "",
+            category: "",
+          },
+        },
+      });
+      return;
+    }
+
+    this.patch({
+      bulkQueue: {
+        ...this.state.bulkQueue,
+        labelForm: {
+          ...this.state.bulkQueue.labelForm,
+          partTypeMode: "new",
+          existingPartTypeId: "",
+        },
+      },
+    });
   }
 
-  private restoreScanMode(): "increment" | "inspect" {
-    // Always start in view-only mode. User opts into auto-count per session.
-    return "inspect";
+  private selectBulkLabelPartType(partId: string): void {
+    const selected = this.state.bulkQueue.labelSearch.results.find((partType) => partType.id === partId) ??
+      this.state.catalogSuggestions.find((partType) => partType.id === partId);
+    if (!selected) {
+      return;
+    }
+
+    this.patch({
+      bulkQueue: {
+        ...this.state.bulkQueue,
+        labelForm: {
+          ...this.state.bulkQueue.labelForm,
+          entityKind: selected.countable ? "instance" : "bulk",
+          partTypeMode: "existing",
+          existingPartTypeId: selected.id,
+          canonicalName: "",
+          category: formatCategoryPath(selected.categoryPath),
+          countable: selected.countable,
+          unitSymbol: selected.unit.symbol,
+          initialStatus: "available",
+          initialQuantity: "1",
+          minimumQuantity: "",
+        },
+      },
+    });
+  }
+
+  private createBulkLabelVariant(partId: string): void {
+    const selected = this.state.bulkQueue.labelSearch.results.find((partType) => partType.id === partId) ??
+      this.state.catalogSuggestions.find((partType) => partType.id === partId);
+    if (!selected) {
+      return;
+    }
+
+    this.patch({
+      bulkQueue: {
+        ...this.state.bulkQueue,
+        labelForm: {
+          ...this.state.bulkQueue.labelForm,
+          partTypeMode: "new",
+          existingPartTypeId: "",
+          canonicalName: selected.canonicalName,
+          category: formatCategoryPath(selected.categoryPath),
+          countable: selected.countable,
+          entityKind: selected.countable ? "instance" : "bulk",
+          unitSymbol: selected.unit.symbol,
+        },
+      },
+    });
+  }
+
+  private setTopLevelScanMode(kind: "oneByOne" | "bulk"): void {
+    if (kind === "oneByOne") {
+      this.clearBulkQueue();
+      this.patch({
+        scanMode: {
+          kind: "oneByOne",
+          behavior: this.preferredOneByOneBehavior,
+        },
+      });
+      return;
+    }
+
+    this.clearCurrentScanWorkspace();
+    this.patch({
+      scanMode: {
+        kind: "bulk",
+        action: this.state.bulkQueue.action,
+      },
+    });
+  }
+
+  private setOneByOneBehavior(behavior: OneByOneScanBehavior): void {
+    this.preferredOneByOneBehavior = behavior;
+    this.patch({
+      scanMode: {
+        kind: "oneByOne",
+        behavior,
+      },
+    });
+  }
+
+  private setBulkQueueAction(action: BulkQueueAction): void {
+    this.clearBulkQueue(action);
+    this.patch({
+      scanMode: {
+        kind: "bulk",
+        action,
+      },
+    });
+  }
+
+  private restoreScanMode(): ScanModeState {
+    return defaultScanMode;
+  }
+
+  private clearCurrentScanWorkspace(): void {
+    this.cameraService.stop();
+    this.patch({
+      cameraLookupCode: null,
+      scanCode: "",
+      scanResult: null,
+      assignForm: defaultAssignForm,
+      eventForm: defaultEventForm,
+      labelSearch: defaultSearchState,
+    });
+  }
+
+  private clearBulkQueue(action: BulkQueueAction = this.state.bulkQueue.action): void {
+    this.bulkQueueActor.send({ type: "QUEUE.ACTION_CHANGED", action });
+    this.patch({
+      bulkQueue: {
+        ...defaultBulkQueueState,
+        action,
+        labelSearch: {
+          ...defaultSearchState,
+          results: [...this.state.catalogSuggestions],
+        },
+      },
+    });
+  }
+
+  private buildBulkMoveTargets(): BulkEntityTarget[] {
+    return this.state.bulkQueue.rows
+      .filter((row): row is BulkAssignedQueueRow => row.kind === "assigned")
+      .map((row) => ({
+        targetType: row.targetType,
+        targetId: row.targetId,
+        qrCode: row.code,
+      }));
+  }
+
+  private buildBulkDeleteTargets(): BulkReverseIngestTarget[] {
+    return this.state.bulkQueue.rows
+      .filter((row): row is BulkAssignedQueueRow => row.kind === "assigned")
+      .map((row) => ({
+        assignedKind: row.targetType,
+        assignedId: row.targetId,
+        qrCode: row.code,
+      }));
+  }
+
+  private createBulkSubmitFailure(
+    operation: "bulk.assign" | "bulk.move" | "bulk.delete",
+    caught: unknown,
+  ): RewriteFailure {
+    if (caught instanceof ApiClientError && caught.code === "conflict") {
+      return {
+        kind: "conflict",
+        operation,
+        code: "stale_state",
+        message: errorMessage(caught),
+        retryability: "after-user-action",
+        details: {
+          targetId: null,
+        },
+      };
+    }
+
+    return {
+      kind: "unexpected",
+      operation,
+      message: errorMessage(caught),
+      retryability: "never",
+      details: {
+        machine: "bulkQueue",
+      },
+      cause: caught,
+    };
   }
 
 
@@ -2248,20 +3721,6 @@ export class RewriteAppController {
       : failure.message;
   }
 
-  private findCorrectionSharedEditConflicts() {
-    const target = this.state.correctionUi.target;
-    if (!target) {
-      return [];
-    }
-
-    return findSharedTypeConflictCandidates(
-      this.state.inventorySummary,
-      target.entity.partType.id,
-      this.state.correctionUi.sharedCanonicalName,
-      this.state.correctionUi.sharedCategory,
-    );
-  }
-
   private patch(nextPatch: Partial<RewriteUiState>): void {
     this.state = {
       ...this.state,
@@ -2293,6 +3752,59 @@ export class RewriteAppController {
     }
 
     this.restoreFocus(focusSnapshot);
+    this.autofocusScanInput(focusSnapshot);
+    this.syncUrl();
+    this.schedulePostRenderMotion();
+  }
+
+  private schedulePostRenderMotion(): void {
+    const version = this.motionRenderVersion + 1;
+    this.motionRenderVersion = version;
+    if (this.state.authState.status !== "authenticated") {
+      this.motionSnapshot = null;
+      return;
+    }
+
+    const root = this.root;
+    const previous = this.motionSnapshot;
+    const state = this.state;
+
+    void loadRewriteMotionModule()
+      .then(({ runPostRenderMotion }) => {
+        if (this.disposed || version !== this.motionRenderVersion || root !== this.root) {
+          return;
+        }
+        this.motionSnapshot = runPostRenderMotion(root, previous, state);
+      })
+      .catch(() => {
+        // Motion is decorative; render and workflows must remain unaffected.
+      });
+  }
+
+  private autofocusScanInput(previousFocus: FocusSnapshot | null): void {
+    if (previousFocus) {
+      return;
+    }
+    if (this.state.activeTab !== "scan") {
+      return;
+    }
+    // On touch devices, focusing the input on render pops the on-screen
+    // keyboard and swallows half the screen the moment the scan tab loads.
+    // Autofocus only helps desktop wedge scanners (which type into the focused
+    // field), so skip it when the primary pointer is coarse (phones/tablets).
+    if (
+      typeof window !== "undefined" &&
+      typeof window.matchMedia === "function" &&
+      window.matchMedia("(pointer: coarse)").matches
+    ) {
+      return;
+    }
+    const input = this.root.querySelector<HTMLInputElement>("#scan-code-input");
+    if (!input || document.activeElement === input) {
+      return;
+    }
+    input.focus();
+    input.select();
   }
 
   private captureFocus(): FocusSnapshot | null {
@@ -2319,7 +3831,11 @@ export class RewriteAppController {
     if (!(target instanceof HTMLInputElement || target instanceof HTMLTextAreaElement || target instanceof HTMLSelectElement)) {
       return;
     }
-    target.focus();
+    try {
+      target.focus({ preventScroll: true });
+    } catch {
+      target.focus();
+    }
     if ((target instanceof HTMLInputElement || target instanceof HTMLTextAreaElement) && snapshot.selectionStart !== null && snapshot.selectionEnd !== null) {
       try {
         target.setSelectionRange(snapshot.selectionStart, snapshot.selectionEnd);
@@ -2328,8 +3844,17 @@ export class RewriteAppController {
   }
 }
 
-export function startRewriteApp(root: HTMLElement): RewriteAppController {
-  const controller = new RewriteAppController(root);
+export function startRewriteApp(root: HTMLElement, options: RewriteAppControllerOptions = {}): RewriteAppController {
+  const controller = new RewriteAppController(root, options);
   controller.start();
   return controller;
+}
+
+function summarizeBulkQueue(rows: readonly BulkQueueRow[]) {
+  const totalScanCount = rows.reduce((sum, row) => sum + row.count, 0);
+  return {
+    uniqueLabelCount: rows.length,
+    totalScanCount,
+    duplicateScanCount: totalScanCount - rows.length,
+  };
 }

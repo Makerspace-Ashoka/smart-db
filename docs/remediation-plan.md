@@ -1,5 +1,8 @@
 # SmartDB Remediation Plan
 
+Historical note:
+- This was the remediation plan for the pre-v1 rewrite. Some findings have since been addressed; use the current code, tests, and README for present-day behavior.
+
 ## Intent
 
 This plan combines the live-host audit, code audit, UX audit, and failure-mode review into a single execution program.
@@ -9,7 +12,7 @@ The plan is intentionally systems-first:
 - Make illegal states unrepresentable.
 - Prefer explicit command models over loose request bags.
 - Fix root causes before UI band-aids.
-- Keep tests authoritative and exhaustive around the FSM and failure modes.
+- Keep tests authoritative and exhaustive around domain transitions and failure modes.
 - Avoid heuristic patches that leave contradictory types or hidden runtime fallbacks in place.
 
 ## Non-Negotiable Principles
@@ -20,7 +23,7 @@ The plan is intentionally systems-first:
 2. Shared contracts must encode business invariants.
    Contradictory defaults like `nextStatus: "available"` for `checked_out` requests are forbidden.
 
-3. FSM transitions must be typed, total where legal, and impossible where illegal.
+3. Domain transitions must be typed, total where legal, and impossible where illegal.
    The action surface, command shape, transition table, and stored state must agree.
 
 4. Authn, authz, and replay protection must compose safely.
