@@ -90,7 +90,7 @@ import {
   hasInProgressScanWork,
 } from "./view-helpers";
 import { patchFromUrl, urlFromState, urlsEqual, type UrlPatch } from "./routing";
-import { runPostRenderMotion, type MotionSnapshot } from "./motion";
+import type { MotionSnapshot } from "./motion";
 
 interface FocusSnapshot {
   readonly key: string;
@@ -103,6 +103,19 @@ type RewritePatch = {
 };
 
 type SearchSurface = "label" | "merge" | "bulkLabel" | "edit";
+
+let rewriteMotionModulePromise: Promise<typeof import("./motion")> | null = null;
+
+function loadRewriteMotionModule(): Promise<typeof import("./motion")> {
+  if (!rewriteMotionModulePromise) {
+    rewriteMotionModulePromise = import("./motion").catch((error) => {
+      rewriteMotionModulePromise = null;
+      throw error;
+    });
+  }
+
+  return rewriteMotionModulePromise;
+}
 
 export interface RewriteAppControllerOptions {
   readonly devMode?: boolean;
@@ -199,6 +212,8 @@ export class RewriteAppController {
   private applyingFromHistory = false;
   private lastSyncedUrl: string | null = null;
   private motionSnapshot: MotionSnapshot | null = null;
+  private motionRenderVersion = 0;
+  private disposed = false;
 
   constructor(private readonly root: HTMLElement, options: RewriteAppControllerOptions = {}) {
     if (options.devMode !== undefined) {
@@ -210,6 +225,7 @@ export class RewriteAppController {
   }
 
   start(): void {
+    this.disposed = false;
     this.authActor.subscribe((snapshot) => {
       this.patch({
         authState: this.mapAuthSnapshot(snapshot),
@@ -265,6 +281,8 @@ export class RewriteAppController {
   }
 
   dispose(): void {
+    this.disposed = true;
+    this.motionRenderVersion += 1;
     this.authAbortController.abort();
     this.cameraService.destroy();
     this.searchControllers.label?.abort();
@@ -3705,7 +3723,31 @@ export class RewriteAppController {
     this.restoreFocus(focusSnapshot);
     this.autofocusScanInput(focusSnapshot);
     this.syncUrl();
-    this.motionSnapshot = runPostRenderMotion(this.root, this.motionSnapshot, this.state);
+    this.schedulePostRenderMotion();
+  }
+
+  private schedulePostRenderMotion(): void {
+    const version = this.motionRenderVersion + 1;
+    this.motionRenderVersion = version;
+    if (this.state.authState.status !== "authenticated") {
+      this.motionSnapshot = null;
+      return;
+    }
+
+    const root = this.root;
+    const previous = this.motionSnapshot;
+    const state = this.state;
+
+    void loadRewriteMotionModule()
+      .then(({ runPostRenderMotion }) => {
+        if (this.disposed || version !== this.motionRenderVersion || root !== this.root) {
+          return;
+        }
+        this.motionSnapshot = runPostRenderMotion(root, previous, state);
+      })
+      .catch(() => {
+        // Motion is decorative; render and workflows must remain unaffected.
+      });
   }
 
   private autofocusScanInput(previousFocus: FocusSnapshot | null): void {

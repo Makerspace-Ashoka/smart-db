@@ -14,7 +14,6 @@ const appShellPublicUrls = [
   "icons/icon-512.png",
   "icons/icon-maskable-512.png",
   "icons/apple-touch-icon.png",
-  "zxing_reader.wasm",
 ];
 
 function smartDbPwaServiceWorker(): Plugin {
@@ -22,8 +21,14 @@ function smartDbPwaServiceWorker(): Plugin {
     name: "smart-db-pwa-service-worker",
     apply: "build",
     generateBundle(_options, bundle) {
-      const emittedAssetUrls = Object.keys(bundle)
-        .filter((fileName) => fileName.startsWith("assets/"))
+      const emittedAssetUrls = Object.entries(bundle)
+        .filter(([fileName, output]) => {
+          if (!fileName.startsWith("assets/")) {
+            return false;
+          }
+          return output.type === "asset" || output.isEntry;
+        })
+        .map(([fileName]) => fileName)
         .sort();
       const appShellUrls = Array.from(new Set([...appShellPublicUrls, ...emittedAssetUrls]));
       const template = readFileSync(serviceWorkerTemplatePath, "utf8");
