@@ -63,12 +63,15 @@ describe("schemas", () => {
       PARTDB_PUBLIC_BASE_URL: null,
       PARTDB_API_TOKEN: null,
       PARTDB_SYNC_ENABLED: false,
+      DEV_AUTH_BYPASS: false,
       SESSION_COOKIE_SECRET: null,
       ZITADEL_ISSUER: null,
       ZITADEL_CLIENT_ID: null,
       ZITADEL_CLIENT_SECRET: null,
       ZITADEL_ROLE_CLAIM: null,
     });
+
+    expect(configEnvironmentSchema.parse({ DEV_AUTH_BYPASS: "true" }).DEV_AUTH_BYPASS).toBe(true);
   });
 
   it("parses category paths and measurement units with bounded structure", () => {

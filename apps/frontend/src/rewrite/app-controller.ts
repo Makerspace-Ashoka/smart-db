@@ -20,6 +20,11 @@ import {
   loginUrl,
 } from "../api";
 import {
+  createDevAuthSession,
+  isDevAuthSession,
+  isFrontendDevAuthBypassEnabled,
+} from "../dev-mode";
+import {
   actionLabel,
   errorMessage,
   formatCategoryPath,
@@ -85,7 +90,7 @@ import {
   hasInProgressScanWork,
 } from "./view-helpers";
 import { patchFromUrl, urlFromState, urlsEqual, type UrlPatch } from "./routing";
-import { runPostRenderMotion, type MotionSnapshot } from "./motion";
+import type { MotionSnapshot } from "./motion";
 
 interface FocusSnapshot {
   readonly key: string;
@@ -99,9 +104,27 @@ type RewritePatch = {
 
 type SearchSurface = "label" | "merge" | "bulkLabel" | "edit";
 
+let rewriteMotionModulePromise: Promise<typeof import("./motion")> | null = null;
+
+function loadRewriteMotionModule(): Promise<typeof import("./motion")> {
+  if (!rewriteMotionModulePromise) {
+    rewriteMotionModulePromise = import("./motion").catch((error) => {
+      rewriteMotionModulePromise = null;
+      throw error;
+    });
+  }
+
+  return rewriteMotionModulePromise;
+}
+
+export interface RewriteAppControllerOptions {
+  readonly devMode?: boolean;
+}
+
 export class RewriteAppController {
   private state: RewriteUiState = {
     theme: this.restoreTheme(),
+    devMode: isFrontendDevAuthBypassEnabled(),
     authState: {
       status: "checking",
       session: null,
@@ -189,10 +212,20 @@ export class RewriteAppController {
   private applyingFromHistory = false;
   private lastSyncedUrl: string | null = null;
   private motionSnapshot: MotionSnapshot | null = null;
+  private motionRenderVersion = 0;
+  private disposed = false;
 
-  constructor(private readonly root: HTMLElement) {}
+  constructor(private readonly root: HTMLElement, options: RewriteAppControllerOptions = {}) {
+    if (options.devMode !== undefined) {
+      this.state = {
+        ...this.state,
+        devMode: options.devMode,
+      };
+    }
+  }
 
   start(): void {
+    this.disposed = false;
     this.authActor.subscribe((snapshot) => {
       this.patch({
         authState: this.mapAuthSnapshot(snapshot),
@@ -248,6 +281,8 @@ export class RewriteAppController {
   }
 
   dispose(): void {
+    this.disposed = true;
+    this.motionRenderVersion += 1;
     this.authAbortController.abort();
     this.cameraService.destroy();
     this.searchControllers.label?.abort();
@@ -690,6 +725,9 @@ export class RewriteAppController {
         break;
       case "camera-scan-next":
         this.handleCameraScanNext();
+        break;
+      case "focus-scan-input":
+        this.focusScanInput();
         break;
       case "quick-bulk-increment":
         this.handleQuickBulkDelta(1);
@@ -1323,8 +1361,19 @@ export class RewriteAppController {
         error: null,
       },
     });
+    if (this.state.devMode) {
+      const session = createDevAuthSession();
+      this.authActor.send({ type: "SESSION.RESTORED", session });
+      await this.loadAuthenticatedData(session);
+      this.hydrateFromUrl();
+      this.startBackgroundTimers();
+      return;
+    }
     try {
       const session = await api.getSession(signal);
+      if (isDevAuthSession(session) && !this.state.devMode) {
+        this.patch({ devMode: true });
+      }
       this.authActor.send({ type: "SESSION.RESTORED", session });
       // If the session restored, sign-in succeeded — do NOT surface a stale
       // `authError` from a prior/redundant failed callback. Showing
@@ -1467,6 +1516,12 @@ export class RewriteAppController {
 
   private handleApiFailure(caught: unknown): boolean {
     if (caught instanceof ApiClientError && caught.code === "unauthenticated") {
+      if (this.state.devMode) {
+        this.patch({
+          refreshError: "Dev auth bypass is active in the app, but the API still requires auth. Start the middleware with DEV_AUTH_BYPASS=true.",
+        });
+        return true;
+      }
       this.handleAuthenticationFailure(caught);
       return true;
     }
@@ -1625,6 +1680,10 @@ export class RewriteAppController {
   }
 
   private async handleLogout(): Promise<void> {
+    if (this.state.devMode) {
+      this.addToast("Dev auth bypass is active. Disable dev auth to sign out.", "info");
+      return;
+    }
     this.patch({ pendingAction: "logout" });
     this.authActor.send({ type: "LOGOUT.REQUESTED" });
     let loggedOut = false;
@@ -2228,6 +2287,11 @@ export class RewriteAppController {
   private handleCameraScanNext(): void {
     this.handleScanNext();
     void this.startCamera();
+  }
+
+  private focusScanInput(): void {
+    const input = this.root.querySelector<HTMLInputElement>("#scan-code-input");
+    input?.focus();
   }
 
   private async handleCameraScan(code: string): Promise<void> {
@@ -3659,7 +3723,31 @@ export class RewriteAppController {
     this.restoreFocus(focusSnapshot);
     this.autofocusScanInput(focusSnapshot);
     this.syncUrl();
-    this.motionSnapshot = runPostRenderMotion(this.root, this.motionSnapshot, this.state);
+    this.schedulePostRenderMotion();
+  }
+
+  private schedulePostRenderMotion(): void {
+    const version = this.motionRenderVersion + 1;
+    this.motionRenderVersion = version;
+    if (this.state.authState.status !== "authenticated") {
+      this.motionSnapshot = null;
+      return;
+    }
+
+    const root = this.root;
+    const previous = this.motionSnapshot;
+    const state = this.state;
+
+    void loadRewriteMotionModule()
+      .then(({ runPostRenderMotion }) => {
+        if (this.disposed || version !== this.motionRenderVersion || root !== this.root) {
+          return;
+        }
+        this.motionSnapshot = runPostRenderMotion(root, previous, state);
+      })
+      .catch(() => {
+        // Motion is decorative; render and workflows must remain unaffected.
+      });
   }
 
   private autofocusScanInput(previousFocus: FocusSnapshot | null): void {
@@ -3725,8 +3813,8 @@ export class RewriteAppController {
   }
 }
 
-export function startRewriteApp(root: HTMLElement): RewriteAppController {
-  const controller = new RewriteAppController(root);
+export function startRewriteApp(root: HTMLElement, options: RewriteAppControllerOptions = {}): RewriteAppController {
+  const controller = new RewriteAppController(root, options);
   controller.start();
   return controller;
 }

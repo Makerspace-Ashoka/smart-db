@@ -5,6 +5,7 @@ import { defaultInventoryUiState } from "./ui-state";
 
 function makeState(overrides: Partial<RewriteUiState>): RewriteUiState {
   return {
+    devMode: false,
     activeTab: "scan",
     inventoryUi: defaultInventoryUiState,
     authState: { status: "authenticated", session: {

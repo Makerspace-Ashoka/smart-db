@@ -1377,6 +1377,7 @@ export const configEnvironmentSchema = z
     PARTDB_PUBLIC_BASE_URL: normalizedOptionalString,
     PARTDB_API_TOKEN: normalizedOptionalString,
     PARTDB_SYNC_ENABLED: booleanEnvironmentSchema.default(false),
+    DEV_AUTH_BYPASS: booleanEnvironmentSchema.default(false),
     SESSION_COOKIE_SECRET: normalizedOptionalString,
     ZITADEL_ISSUER: normalizedOptionalString,
     ZITADEL_CLIENT_ID: normalizedOptionalString,

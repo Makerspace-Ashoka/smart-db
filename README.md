@@ -101,6 +101,11 @@ pnpm typecheck        # tsc --noEmit, strict mode
 pnpm test             # state/failure-focused test suite
 ```
 
+For local development without SSO, set `DEV_AUTH_BYPASS=true` in
+`apps/middleware/.env` and `VITE_DEV_AUTH_BYPASS=true` in
+`apps/frontend/.env`. The bypass is localhost-only and the UI shows a
+persistent DEV MODE auth-bypass banner.
+
 TypeScript strict mode with `noUncheckedIndexedAccess` and `exactOptionalPropertyTypes`. Zod validation at all system boundaries.
 
 ## Deployment

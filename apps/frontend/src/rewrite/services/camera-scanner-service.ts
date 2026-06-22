@@ -1,4 +1,3 @@
-import jsQR from "jsqr";
 import { sanitizeScannedCode, scanLookupCompactKey } from "@smart-db/contracts";
 
 type HTMLVideoElementWithFocusHandler = HTMLVideoElement & {
@@ -128,6 +127,7 @@ interface BarcodeDetectorLike {
 }
 
 type BarcodeDetectorConstructor = new (options?: { readonly formats?: readonly string[] }) => BarcodeDetectorLike;
+type JsQrDecoder = typeof import("jsqr").default;
 
 export interface CameraScannerServiceOptions {
   readonly onScan: (code: string) => void;
@@ -141,7 +141,8 @@ export interface CameraScannerServiceOptions {
   readonly clearInterval?: (handle: number) => void;
   readonly createCanvas?: () => CameraScannerCanvasLike;
   readonly loadBarcodeDetectorClass?: () => Promise<BarcodeDetectorConstructor>;
-  readonly jsqr?: typeof jsQR;
+  readonly loadJsQr?: () => Promise<JsQrDecoder>;
+  readonly jsqr?: JsQrDecoder;
   readonly logger?: Pick<Console, "warn" | "error">;
   readonly observeVisibility?: boolean;
 }
@@ -185,6 +186,7 @@ const DEFAULT_VIDEO_CONSTRAINTS: MediaStreamConstraints = {
 };
 
 let defaultDetectorClassPromise: Promise<BarcodeDetectorConstructor> | null = null;
+let defaultJsQrPromise: Promise<JsQrDecoder> | null = null;
 
 function loadDefaultBarcodeDetectorClass(): Promise<BarcodeDetectorConstructor> {
   if (!defaultDetectorClassPromise) {
@@ -197,6 +199,14 @@ function loadDefaultBarcodeDetectorClass(): Promise<BarcodeDetectorConstructor> 
   }
 
   return defaultDetectorClassPromise;
+}
+
+function loadDefaultJsQr(): Promise<JsQrDecoder> {
+  if (!defaultJsQrPromise) {
+    defaultJsQrPromise = import("jsqr").then((module) => module.default);
+  }
+
+  return defaultJsQrPromise;
 }
 
 function readSecureContext(): boolean | null {
@@ -405,7 +415,8 @@ export class CameraScannerService {
   private readonly clearIntervalFn: (handle: number) => void;
   private readonly createCanvas: () => CameraScannerCanvasLike;
   private readonly loadBarcodeDetectorClass: () => Promise<BarcodeDetectorConstructor>;
-  private readonly jsqr: typeof jsQR;
+  private readonly loadJsQr: () => Promise<JsQrDecoder>;
+  private readonly jsqr: JsQrDecoder | null;
   private readonly logger: Pick<Console, "warn" | "error">;
   private readonly observeVisibility: boolean;
 
@@ -417,6 +428,7 @@ export class CameraScannerService {
   private stream: MediaStream | null = null;
   private detector: BarcodeDetectorLike | null = null;
   private detectorPromise: Promise<BarcodeDetectorLike | null> | null = null;
+  private jsqrPromise: Promise<JsQrDecoder | null> | null = null;
   private timerHandle: number | null = null;
   private inFlight = false;
   private sessionToken = 0;
@@ -448,7 +460,8 @@ export class CameraScannerService {
       } as CameraScannerCanvasLike;
     });
     this.loadBarcodeDetectorClass = options.loadBarcodeDetectorClass ?? loadDefaultBarcodeDetectorClass;
-    this.jsqr = options.jsqr ?? jsQR;
+    this.loadJsQr = options.loadJsQr ?? loadDefaultJsQr;
+    this.jsqr = options.jsqr ?? null;
     this.logger = options.logger ?? console;
     this.observeVisibility = options.observeVisibility ?? true;
     this.isSupported = Boolean(mediaDevices?.getUserMedia);
@@ -602,6 +615,7 @@ export class CameraScannerService {
     });
 
     void this.ensureBarcodeDetector();
+    void this.ensureJsQr();
 
     if (this.videoElement) {
       const result = await this.bindStreamToVideo(this.videoElement, token);
@@ -786,16 +800,22 @@ export class CameraScannerService {
 
       try {
         const imageData = context.getImageData(0, 0, width, height);
-        // attemptBoth is jsQR's default and the only sensible production setting:
-        // many printed QRs and any code captured under changing light land in the
-        // inverted orientation from jsQR's perspective, and skipping the second
-        // pass means the decoder quietly refuses valid codes. The "dontInvert"
-        // CPU optimisation this replaces was the root cause of scans failing
-        // on laptop webcams.
-        const result = this.jsqr(imageData.data, width, height, { inversionAttempts: "attemptBoth" });
-        if (result?.data) {
-          this.acceptCode(result.data);
+        const jsqr = await this.ensureJsQr();
+        if (this.destroyed || this.snapshot.phase !== "scanning") {
           return;
+        }
+        if (jsqr) {
+          // attemptBoth is jsQR's default and the only sensible production setting:
+          // many printed QRs and any code captured under changing light land in the
+          // inverted orientation from jsQR's perspective, and skipping the second
+          // pass means the decoder quietly refuses valid codes. The "dontInvert"
+          // CPU optimisation this replaces was the root cause of scans failing
+          // on laptop webcams.
+          const result = jsqr(imageData.data, width, height, { inversionAttempts: "attemptBoth" });
+          if (result?.data) {
+            this.acceptCode(result.data);
+            return;
+          }
         }
       } catch (error) {
         if (error instanceof Error || typeof error === "object") {
@@ -884,6 +904,21 @@ export class CameraScannerService {
     }
 
     return this.detectorPromise;
+  }
+
+  private async ensureJsQr(): Promise<JsQrDecoder | null> {
+    if (this.jsqr) {
+      return this.jsqr;
+    }
+
+    if (!this.jsqrPromise) {
+      this.jsqrPromise = this.loadJsQr().catch((error) => {
+        this.logger.warn("CameraScannerService jsQR load failed; barcode detector fallback remains enabled.", error);
+        return null;
+      });
+    }
+
+    return this.jsqrPromise;
   }
 
   private stopInternal(options: { readonly preserveLastResult: boolean; readonly preserveVideoBinding?: boolean }): void {
