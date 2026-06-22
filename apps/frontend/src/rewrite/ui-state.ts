@@ -12,6 +12,7 @@ import type {
 } from "@smart-db/contracts";
 export type ScanEditAction = "reassign" | "editShared" | "reverseIngest";
 import type { InventorySummaryRow, PartTypeItemsResponse } from "../api";
+import type { PwaInstallPromptState } from "../pwa";
 import type { CameraScannerSnapshot } from "./services/camera-scanner-service";
 import type {
   AssignFormState,
@@ -268,6 +269,7 @@ export interface RewriteUiState {
   readonly pendingAction: PendingAction;
   readonly downloadingBatchId: string | null;
   readonly activeTab: TabId;
+  readonly pwaInstallPrompt: PwaInstallPromptState;
   readonly toasts: readonly ToastRecord[];
   readonly isOnline: boolean;
   readonly sessionExpiringSoon: boolean;

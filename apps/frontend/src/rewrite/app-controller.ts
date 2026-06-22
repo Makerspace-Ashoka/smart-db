@@ -24,6 +24,7 @@ import {
   isDevAuthSession,
   isFrontendDevAuthBypassEnabled,
 } from "../dev-mode";
+import { createPwaInstallController } from "../pwa";
 import {
   actionLabel,
   errorMessage,
@@ -122,6 +123,8 @@ export interface RewriteAppControllerOptions {
 }
 
 export class RewriteAppController {
+  private readonly pwaInstallController = createPwaInstallController();
+
   private state: RewriteUiState = {
     theme: this.restoreTheme(),
     devMode: isFrontendDevAuthBypassEnabled(),
@@ -164,6 +167,7 @@ export class RewriteAppController {
     pendingAction: null,
     downloadingBatchId: null,
     activeTab: "scan",
+    pwaInstallPrompt: this.pwaInstallController.getSnapshot(),
     toasts: [],
     isOnline: typeof navigator === "undefined" ? true : navigator.onLine,
     sessionExpiringSoon: false,
@@ -206,6 +210,7 @@ export class RewriteAppController {
   private preferredOneByOneBehavior: OneByOneScanBehavior =
     defaultScanMode.kind === "oneByOne" ? defaultScanMode.behavior : "viewOnly";
   private toastTimers = new Map<string, number>();
+  private pwaInstallUnsubscribe: (() => void) | null = null;
   private pollTimer: number | null = null;
   private sessionTimer: number | null = null;
   private routingInstalled = false;
@@ -234,6 +239,11 @@ export class RewriteAppController {
     this.cameraService.subscribe((snapshot) => {
       this.patch({
         camera: snapshot,
+      });
+    });
+    this.pwaInstallUnsubscribe = this.pwaInstallController.subscribe((snapshot) => {
+      this.patch({
+        pwaInstallPrompt: snapshot,
       });
     });
     this.bulkQueueActor.subscribe((snapshot) => {
@@ -298,6 +308,9 @@ export class RewriteAppController {
     this.authActor.stop();
     this.scanActor.stop();
     this.bulkQueueActor.stop();
+    this.pwaInstallUnsubscribe?.();
+    this.pwaInstallUnsubscribe = null;
+    this.pwaInstallController.destroy();
     if (this.pollTimer !== null) {
       window.clearInterval(this.pollTimer);
     }
@@ -336,6 +349,18 @@ export class RewriteAppController {
     if (!wrap || wrap.classList.contains("has-broken-image")) return;
     wrap.classList.add("has-broken-image");
   };
+
+  private async handlePwaInstall(): Promise<void> {
+    const neverShowAgain = this.readPwaNeverShowChoice();
+    const result = await this.pwaInstallController.requestInstall();
+    if (neverShowAgain && result !== "accepted" && result !== "installed") {
+      this.pwaInstallController.dismiss({ neverShowAgain: true });
+    }
+  }
+
+  private readPwaNeverShowChoice(): boolean {
+    return this.root.querySelector<HTMLInputElement>("#pwa-install-never")?.checked === true;
+  }
 
   private readonly handlePopState = () => {
     if (this.state.authState.status !== "authenticated") return;
@@ -438,6 +463,12 @@ export class RewriteAppController {
         break;
       case "toggle-theme":
         this.setTheme(this.state.theme === "dark" ? "light" : "dark");
+        break;
+      case "pwa-install":
+        void this.handlePwaInstall();
+        break;
+      case "pwa-install-dismiss":
+        this.pwaInstallController.dismiss({ neverShowAgain: this.readPwaNeverShowChoice() });
         break;
       case "dismiss-toast":
         if (actionEl.dataset.toastId) {

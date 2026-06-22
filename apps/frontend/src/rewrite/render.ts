@@ -104,6 +104,7 @@ export function renderApp(state: RewriteUiState): string {
       ${renderToasts(state.toasts)}
 
       <div class="global-banners">
+        ${renderPwaInstallBanner(state.pwaInstallPrompt)}
         ${state.devMode ? `<p class="banner dev-mode-banner"><strong>DEV MODE</strong> Auth bypass is active. Local admin access is unlocked.</p>` : ""}
         ${!state.isOnline ? `<p class="banner error">You appear to be offline.</p>` : ""}
         ${state.sessionExpiringSoon ? `<p class="banner error">Session expires soon.</p>` : ""}
@@ -120,6 +121,46 @@ export function renderApp(state: RewriteUiState): string {
 
       ${renderTabBar(state.activeTab, isAdmin ? ["dashboard", "inventory", "scan", "activity", "admin"] : ["dashboard", "inventory", "scan", "activity"])}
     </div>
+  `;
+}
+
+function renderPwaInstallBanner(prompt: RewriteUiState["pwaInstallPrompt"]): string {
+  if (!prompt.visible) {
+    return "";
+  }
+
+  const copy = prompt.device === "ios"
+    ? "Add from Safari Share for a full-screen app icon."
+    : prompt.device === "android"
+      ? "Add it to your home screen for faster scan work."
+      : "Install it as a focused desktop app window.";
+  const secondary = prompt.canPrompt ? "" : `<span class="pwa-install-tip">Share, then Add</span>`;
+
+  return `
+    <section class="banner pwa-install-banner" aria-label="Install Smart DB">
+      <span class="pwa-install-mark" aria-hidden="true">
+        <svg viewBox="0 0 24 24" fill="none">
+          <rect x="7" y="3" width="10" height="18" rx="2.2"/>
+          <path d="M10 18h4M9.5 6h5"/>
+        </svg>
+      </span>
+      <div class="pwa-install-copy">
+        <strong>Install Smart DB</strong>
+        <span>${escapeHtml(copy)}</span>
+      </div>
+      <label class="pwa-install-never" for="pwa-install-never">
+        <input id="pwa-install-never" type="checkbox">
+        <span>Never show again</span>
+      </label>
+      ${prompt.canPrompt
+        ? `<button type="button" class="pwa-install-action" data-action="pwa-install" ${disabled(prompt.installing)}>${prompt.installing ? "Installing" : "Install"}</button>`
+        : secondary}
+      <button type="button" class="pwa-install-dismiss" data-action="pwa-install-dismiss" aria-label="Dismiss install banner" title="Dismiss">
+        <svg viewBox="0 0 24 24" fill="none" aria-hidden="true" focusable="false">
+          <path d="M7 7l10 10M17 7 7 17"/>
+        </svg>
+      </button>
+    </section>
   `;
 }
 
