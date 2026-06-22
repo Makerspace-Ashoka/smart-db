@@ -1,0 +1,41 @@
+name: Delete Dev Topic Branch
+
+on:
+  pull_request:
+    branches: [dev]
+    types: [closed]
+
+permissions:
+  contents: write
+  pull-requests: read
+
+jobs:
+  delete:
+    name: Delete merged topic branch
+    if: github.event.pull_request.merged == true && github.event.pull_request.head.repo.full_name == github.repository
+    runs-on: ubuntu-latest
+    steps:
+      - name: Delete eligible head branch
+        env:
+          GH_TOKEN: ${{ github.token }}
+          REPOSITORY: ${{ github.repository }}
+          HEAD_REF: ${{ github.event.pull_request.head.ref }}
+        run: |
+          set -euo pipefail
+
+          case "$HEAD_REF" in
+            main|dev|prod|production|staging|release|release/*|hotfix|hotfix/*)
+              echo "Keeping long-lived branch: $HEAD_REF"
+              exit 0
+              ;;
+            codex/*|feature/*|feat/*|fix/*|impr/*|docs/*|style/*|refactor/*|perf/*|test/*|build/*|ci/*|chore/*|revert/*|dependabot/*)
+              echo "Deleting merged topic branch: $HEAD_REF"
+              ;;
+            *)
+              echo "Branch does not match the topic-branch delete allowlist: $HEAD_REF"
+              echo "Keeping it. Rename ordinary work branches with a conventional prefix to opt into auto-delete."
+              exit 0
+              ;;
+          esac
+
+          gh api --method DELETE "repos/${REPOSITORY}/git/refs/heads/${HEAD_REF}"

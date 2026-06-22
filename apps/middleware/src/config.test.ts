@@ -13,6 +13,7 @@ describe("parseConfig", () => {
       publicBaseUrl: "http://localhost:4000",
       dataPath: expect.stringMatching(/data\/smart\.db$/),
       sessionCookieName: "smartdb_session",
+      devAuthBypass: false,
       partDb: {
         baseUrl: null,
         publicBaseUrl: null,
@@ -39,6 +40,12 @@ describe("parseConfig", () => {
     expect(() =>
       parseConfig({
         PARTDB_SYNC_ENABLED: "not-a-bool",
+      }),
+    ).toThrowError(ParseInputError);
+
+    expect(() =>
+      parseConfig({
+        DEV_AUTH_BYPASS: "not-a-bool",
       }),
     ).toThrowError(ParseInputError);
   });

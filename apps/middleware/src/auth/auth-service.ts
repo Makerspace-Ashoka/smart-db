@@ -76,7 +76,7 @@ export class AuthService {
   }
 
   async completeLogin(
-    query: { code?: string; state?: string },
+    query: { code?: string | undefined; state?: string | undefined },
     encodedAuthRequest: string | undefined,
   ): Promise<LoginCompletionResult> {
     const code = query.code?.trim();
@@ -131,16 +131,18 @@ export class AuthService {
   }
 
   async logout(sessionId: string | undefined): Promise<LogoutResult> {
-    if (!sessionId) {
-      return { redirectUrl: null };
+    if (sessionId) {
+      this.sessions.delete(sessionId);
     }
 
-    const existing = this.sessions.get(sessionId);
-    this.sessions.delete(sessionId);
-
-    return {
-      redirectUrl: await this.identityProvider.logoutUrl(existing?.idToken ?? null),
-    };
+    // App-only logout: delete the local session (the route handler also clears
+    // the session cookie) and let the client return to the in-app SmartDB login
+    // screen. We intentionally do NOT redirect to the Zitadel end-session page —
+    // landing users on the IdP's screen is counter-intuitive. The IdP SSO
+    // session persists, so the next sign-in is fast. (To switch to a full
+    // single-logout, return identityProvider.logoutUrl(idToken) here and ensure
+    // a post_logout_redirect_uri back to the app is registered in Zitadel.)
+    return { redirectUrl: null };
   }
 
   private requireSecret(): string {

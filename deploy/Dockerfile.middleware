@@ -8,6 +8,7 @@ RUN corepack enable
 WORKDIR /workspace
 
 COPY package.json pnpm-lock.yaml pnpm-workspace.yaml tsconfig.base.json ./
+COPY apps/frontend/public/art apps/frontend/public/art
 COPY apps/middleware apps/middleware
 COPY packages/contracts packages/contracts
 

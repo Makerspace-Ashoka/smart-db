@@ -18,97 +18,100 @@ import {
 } from "./presentation-helpers";
 import { attr, checked, disabled, escapeHtml, joinHtml, selected } from "./html";
 import type { RewriteUiState, TabId, ToastRecord } from "./ui-state";
-import { findSharedTypeConflictCandidates, getPartDbHealthPill, getPartDbSyncPill } from "./view-helpers";
+import { findSharedTypeConflictCandidates } from "./view-helpers";
+import { buildTreePickerView } from "./tree-picker";
 
 export function renderApp(state: RewriteUiState): string {
   if (state.authState.status === "checking") {
     return `
-      <div class="shell">
-        <p class="eyebrow">Smart DB</p>
-        <p class="muted-copy">Checking session...</p>
+      <div class="shell shell-auth" data-art-zone="auth">
+        <div class="auth-wait" data-motion-surface="auth-wait">
+          <p class="eyebrow">Smart DB</p>
+          <h1>Checking session</h1>
+          <p class="muted-copy">Restoring your inventory workspace.</p>
+        </div>
       </div>
     `;
   }
 
   if (state.authState.status !== "authenticated") {
     return `
-      <div class="shell">
-        <header class="hero">
-          <div>
-            <p class="eyebrow">Smart DB</p>
-            <h1>Sign In With Makerspace SSO</h1>
-            <p class="lede">
-              Smart DB authenticates through your Makerspace identity provider
-              and keeps inventory credentials out of the browser.
-            </p>
+      <div class="shell shell-auth" data-art-zone="auth">
+        <div class="auth-corner auth-corner-tl" aria-hidden="true"></div>
+        <div class="auth-corner auth-corner-tr" aria-hidden="true"></div>
+        <div class="auth-corner auth-corner-bl" aria-hidden="true"></div>
+        <div class="auth-corner auth-corner-br" aria-hidden="true"></div>
+        <section class="auth-masthead" data-motion-surface="auth-masthead">
+          <h1 class="display-title">SMART DB</h1>
+          <p class="display-sub">MAKERSPACE&nbsp;·&nbsp;INVENTORY</p>
+          <div class="auth-meta">
+            <p class="auth-meta-label">Sign in with SSO</p>
+            <p class="auth-meta-org">Ashoka University</p>
           </div>
-          <div class="status-card">
-            <div class="pill warn">Authentication Required</div>
-            <p>
-              You will be redirected to Zitadel and returned here with a secure
-              session.
-            </p>
-          </div>
-        </header>
-
-        ${state.authState.error ? `<p class="banner error">${escapeHtml(state.authState.error)}</p>` : ""}
-        ${renderToasts(state.toasts)}
-
-        <section class="panel">
-          ${renderPanelTitle(
-            "Makerspace Login",
-            "Use your Makerspace SSO account. Smart DB uses a server-side session cookie instead of storing bearer tokens in the browser.",
-          )}
-          <div class="stack">
-            <a
-              class="button-link"
-              data-action="login"
-              href="#"
-            >
-              Continue With SSO
-            </a>
-          </div>
+          <a class="auth-sso" data-action="login" href="#">
+            <span class="auth-sso-mark" aria-hidden="true"></span>
+            <span class="auth-sso-label">Continue with Ashoka SSO</span>
+          </a>
+          <p class="auth-footnote">Secure · Session cookie only · No bearer tokens</p>
         </section>
+        ${state.authState.error ? `<p class="banner error auth-banner">${escapeHtml(state.authState.error)}</p>` : ""}
+        ${renderToasts(state.toasts)}
       </div>
     `;
   }
 
   const isAdmin = hasSmartDbRole(state.authState.session.roles, smartDbRoles.admin);
-  const partDbHealth = getPartDbHealthPill(state.partDbStatus);
-  const partDbSync = isAdmin ? getPartDbSyncPill(state.partDbSyncStatus) : null;
 
   return `
-    <div class="shell">
-      <header class="header-bar">
-        <strong class="header-brand">Smart DB</strong>
-        <div class="header-status">
-          <span class="header-user">${escapeHtml(state.authState.session.username)}</span>
-          ${partDbHealth ? `<div class="pill ${partDbHealth.tone}">${escapeHtml(partDbHealth.label)}</div>` : ""}
-          ${partDbSync ? `<div class="pill ${partDbSync.tone}">${escapeHtml(partDbSync.label)}</div>` : ""}
+    <div class="shell app-shell app-shell-${state.activeTab} ${state.devMode ? "app-shell-dev-mode" : ""}" data-art-zone="app-shell" data-active-tab="${state.activeTab}">
+      <header class="app-masthead" data-motion-surface="masthead">
+        <div class="app-masthead-row">
+          <button type="button" class="app-masthead-brand" data-action="change-tab" data-tab="scan" aria-label="Smart DB — go to scan">
+            <strong class="header-brand">SMART DB</strong>
+            <span class="header-eyebrow">Makerspace · Inventory</span>
+            ${state.devMode ? `<span class="dev-mode-pill">DEV MODE · AUTH BYPASS</span>` : ""}
+          </button>
+          <div class="app-masthead-menu">
+            <button
+              type="button"
+              class="icon-btn"
+              data-action="toggle-theme"
+              aria-label="${state.theme === "dark" ? "Switch to light mode" : "Switch to dark mode"}"
+              aria-pressed="${state.theme === "dark" ? "true" : "false"}"
+              title="${state.theme === "dark" ? "Light mode" : "Dark mode"}"
+            >${renderThemeToggleIcon(state.theme)}</button>
+            ${state.devMode
+              ? `<span class="dev-mode-session" title="Dev auth bypass is active">Dev session</span>`
+              : `<button
+                  type="button"
+                  class="logout-btn"
+                  data-action="logout"
+                  ${disabled(state.pendingAction === "logout")}
+                  aria-label="Log out"
+                  title="Log out"
+                >
+                  <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+                    <path d="M15 17l5-5-5-5"/>
+                    <line x1="20" y1="12" x2="9" y2="12"/>
+                    <path d="M9 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h4"/>
+                  </svg>
+                  <span>Log out</span>
+                </button>`}
+          </div>
         </div>
-        <button
-          type="button"
-          data-action="toggle-theme"
-          class="theme-toggle"
-          aria-label="${state.theme === "dark" ? "Switch to light mode" : "Switch to dark mode"}"
-          aria-pressed="${state.theme === "dark" ? "true" : "false"}"
-        >${state.theme === "dark" ? "◑ light" : "◐ dark"}</button>
-        <button
-          type="button"
-          data-action="logout"
-          ${disabled(state.pendingAction === "logout")}
-        >
-          ${state.pendingAction === "logout" ? "..." : "Logout"}
-        </button>
       </header>
 
       ${renderToasts(state.toasts)}
 
-      ${!state.isOnline ? `<p class="banner error">You appear to be offline.</p>` : ""}
-      ${state.sessionExpiringSoon ? `<p class="banner error">Session expires soon.</p>` : ""}
-      ${state.refreshError ? `<p class="banner error">${escapeHtml(state.refreshError)}</p>` : ""}
+      <div class="global-banners">
+        ${renderPwaInstallBanner(state.pwaInstallPrompt)}
+        ${state.devMode ? `<p class="banner dev-mode-banner"><strong>DEV MODE</strong> Auth bypass is active. Local admin access is unlocked.</p>` : ""}
+        ${!state.isOnline ? `<p class="banner error">You appear to be offline.</p>` : ""}
+        ${state.sessionExpiringSoon ? `<p class="banner error">Session expires soon.</p>` : ""}
+        ${state.refreshError ? `<p class="banner error">${escapeHtml(state.refreshError)}</p>` : ""}
+      </div>
 
-      <main class="layout">
+      <main class="layout app-layout app-layout-${state.activeTab}" data-motion-surface="workspace">
         ${state.activeTab === "scan" ? renderScanTab(state) : ""}
         ${state.activeTab === "inventory" ? renderInventoryTab(state) : ""}
         ${state.activeTab === "activity" ? renderActivityTab(state) : ""}
@@ -116,16 +119,182 @@ export function renderApp(state: RewriteUiState): string {
         ${state.activeTab === "admin" && isAdmin ? renderAdminTab(state) : ""}
       </main>
 
-      ${renderTabBar(state.activeTab, isAdmin ? ["dashboard", "scan", "inventory", "activity", "admin"] : ["dashboard", "scan", "inventory", "activity"])}
+      ${renderTabBar(state.activeTab, isAdmin ? ["dashboard", "inventory", "scan", "activity", "admin"] : ["dashboard", "inventory", "scan", "activity"])}
     </div>
   `;
 }
 
-function renderPanelTitle(title: string, copy: string): string {
+function renderPwaInstallBanner(prompt: RewriteUiState["pwaInstallPrompt"]): string {
+  if (!prompt.visible) {
+    return "";
+  }
+
+  const copy = prompt.device === "ios"
+    ? "Add from Safari Share for a full-screen app icon."
+    : prompt.device === "android"
+      ? "Add it to your home screen for faster scan work."
+      : "Install it as a focused desktop app window.";
+  const secondary = prompt.canPrompt ? "" : `<span class="pwa-install-tip">Share, then Add</span>`;
+
+  return `
+    <section class="banner pwa-install-banner" aria-label="Install Smart DB">
+      <span class="pwa-install-mark" aria-hidden="true">
+        <svg viewBox="0 0 24 24" fill="none">
+          <rect x="7" y="3" width="10" height="18" rx="2.2"/>
+          <path d="M10 18h4M9.5 6h5"/>
+        </svg>
+      </span>
+      <div class="pwa-install-copy">
+        <strong>Install Smart DB</strong>
+        <span>${escapeHtml(copy)}</span>
+      </div>
+      <label class="pwa-install-never" for="pwa-install-never">
+        <input id="pwa-install-never" type="checkbox">
+        <span>Never show again</span>
+      </label>
+      ${prompt.canPrompt
+        ? `<button type="button" class="pwa-install-action" data-action="pwa-install" ${disabled(prompt.installing)}>${prompt.installing ? "Installing" : "Install"}</button>`
+        : secondary}
+      <button type="button" class="pwa-install-dismiss" data-action="pwa-install-dismiss" aria-label="Dismiss install banner" title="Dismiss">
+        <svg viewBox="0 0 24 24" fill="none" aria-hidden="true" focusable="false">
+          <path d="M7 7l10 10M17 7 7 17"/>
+        </svg>
+      </button>
+    </section>
+  `;
+}
+
+function renderPanelTitle(title: string, copy: string, iconId?: string): string {
   return `
     <div class="panel-title">
-      <h2>${escapeHtml(title)}</h2>
+      <div class="panel-title-main">
+        ${iconId ? renderIconSlot(iconId, title) : ""}
+        <h2>${escapeHtml(title)}</h2>
+      </div>
       <p>${escapeHtml(copy)}</p>
+    </div>
+  `;
+}
+
+function renderThemeToggleIcon(theme: RewriteUiState["theme"]): string {
+  if (theme === "dark") {
+    return `
+      <svg class="theme-toggle-icon" viewBox="0 0 24 24" fill="none" aria-hidden="true" focusable="false">
+        <circle cx="12" cy="12" r="4.2"/>
+        <path d="M12 2.8v2.1M12 19.1v2.1M4.9 4.9l1.5 1.5M17.6 17.6l1.5 1.5M2.8 12h2.1M19.1 12h2.1M4.9 19.1l1.5-1.5M17.6 6.4l1.5-1.5"/>
+      </svg>
+    `;
+  }
+  return `
+    <svg class="theme-toggle-icon theme-toggle-icon-moon" viewBox="0 0 24 24" fill="none" aria-hidden="true" focusable="false">
+      <path class="theme-toggle-fill" d="M19.1 14.9A7.9 7.9 0 0 1 9.1 4.9 8.1 8.1 0 1 0 19.1 14.9Z"/>
+      <path d="M16.8 4.2l0.5 1.2 1.2 0.5-1.2 0.5-0.5 1.2-0.5-1.2-1.2-0.5 1.2-0.5 0.5-1.2Z"/>
+    </svg>
+  `;
+}
+
+function renderWorkspaceHeader(title: string, copy: string, kicker: string): string {
+  return `
+    <header class="workspace-head">
+      <div>
+        <p class="eyebrow">${escapeHtml(kicker)}</p>
+        <h2>${escapeHtml(title)}</h2>
+      </div>
+      <p class="workspace-copy">${escapeHtml(copy)}</p>
+    </header>
+  `;
+}
+
+function renderIconPaths(iconId: string): string {
+  switch (iconId) {
+    case "scan":
+      return `<path d="M7 4H5a1 1 0 0 0-1 1v2M17 4h2a1 1 0 0 1 1 1v2M7 20H5a1 1 0 0 1-1-1v-2M17 20h2a1 1 0 0 0 1-1v-2M7 12h10"/>`;
+    case "qr":
+      return `<rect x="5" y="5" width="5" height="5" rx="1"/><rect x="14" y="5" width="5" height="5" rx="1"/><rect x="5" y="14" width="5" height="5" rx="1"/><path d="M14 14h2v2h-2zM18 14h1v5h-5v-1M14 18h2"/>`;
+    case "sync":
+      return `<path d="M4 12a8 8 0 0 1 13.5-5.8L20 9"/><path d="M20 4v5h-5"/><path d="M20 12a8 8 0 0 1-13.5 5.8L4 15"/><path d="M4 20v-5h5"/>`;
+    case "inventory":
+      return `<rect x="4" y="6" width="16" height="12" rx="2"/><path d="M4 10h16M8 6v12"/>`;
+    case "activity":
+      return `<path d="M4 14h4l2-5 4 9 2-4h4"/>`;
+    case "batch":
+      return `<rect x="4" y="5" width="8" height="6" rx="1"/><rect x="12" y="13" width="8" height="6" rx="1"/><path d="M12 8h3a2 2 0 0 1 2 2v3"/>`;
+    case "chip":
+      return `<rect x="7" y="7" width="10" height="10" rx="1.5"/><path d="M7 9H4M7 12H4M7 15H4M20 9h-3M20 12h-3M20 15h-3M9 7V4M12 7V4M15 7V4M9 20v-3M12 20v-3M15 20v-3"/>`;
+    case "resistor":
+      return `<path d="M3 12h4l2-4 3 8 3-8 2 4h4"/>`;
+    case "bearing":
+      return `<circle cx="12" cy="12" r="7"/><circle cx="12" cy="12" r="2.5"/><path d="M7 7 17 17"/>`;
+    case "spool":
+      return `<rect x="7" y="4" width="10" height="16"/><ellipse cx="12" cy="12" rx="3.5" ry="8"/>`;
+    case "connector":
+      return `<path d="M8 7h6a4 4 0 1 1 0 8H8"/><path d="M8 10H4M8 14H4"/>`;
+    case "capacitor":
+      return `<path d="M12 4v16M16 4v16M8 12h12"/>`;
+    case "pcb":
+      return `<rect x="5" y="6" width="14" height="12" rx="2"/><circle cx="9" cy="10" r="1.5"/><path d="M11 10h4M11 14h6M9 18v2M13 18v2M17 18v2M9 4v2M13 4v2M17 4v2"/>`;
+    case "actuator":
+      return `<circle cx="6" cy="12" r="2"/><path d="M8 12h4l2-3h4M14 12h4l2 3"/><rect x="10" y="10.5" width="4" height="3" rx="0.5"/>`;
+    default:
+      return `<rect x="4" y="6" width="16" height="12" rx="2"/><path d="M4 10h16M8 6v12"/>`;
+  }
+}
+
+function iconIdForPart(name: string, categoryPath: readonly string[]): string {
+  const blob = foldSearchText(`${name} ${categoryPath.join(" ")}`);
+  if (blob.includes("camera")) return "scan";
+  if (blob.includes("motor") || blob.includes("actuator") || blob.includes("servo")) return "actuator";
+  if (blob.includes("resistor")) return "resistor";
+  if (blob.includes("bearing")) return "bearing";
+  if (blob.includes("capacitor")) return "capacitor";
+  if (blob.includes("connector") || blob.includes("jst") || blob.includes("adapter")) return "connector";
+  if (blob.includes("pcb") || blob.includes("perf board") || blob.includes("proto-board")) return "pcb";
+  if (blob.includes("filament") || blob.includes("vinyl") || blob.includes("resin")) return "spool";
+  if (blob.includes("storage") || blob.includes("bin") || blob.includes("box")) return "inventory";
+  if (blob.includes("electronics") || blob.includes("compute") || blob.includes("sensor")) return "chip";
+  return "inventory";
+}
+
+function renderIconSlot(iconId: string, label: string): string {
+  return `
+    <span class="ui-icon-slot" aria-hidden="true" title="${attr(label)}">
+      <svg class="ui-icon" viewBox="0 0 24 24" fill="none">
+        ${renderIconPaths(iconId)}
+      </svg>
+    </span>
+  `;
+}
+
+type PartVisualData = Pick<PartType, "canonicalName" | "categoryPath" | "imageUrl">;
+
+function renderPartTileArt(part: PartVisualData, variant: "picker" | "inventory"): string {
+  const iconHtml = renderIconSlot(iconIdForPart(part.canonicalName, part.categoryPath), part.canonicalName);
+  if (!part.imageUrl) {
+    return iconHtml;
+  }
+
+  return `
+    <span class="part-art part-art-${variant}" aria-hidden="true">
+      <img src="${attr(part.imageUrl)}" alt="" loading="lazy" decoding="async" />
+      <span class="part-art-fallback">${iconHtml}</span>
+    </span>
+  `;
+}
+
+function renderPartHero(part: PartVisualData, variant: "detail" | "scan"): string {
+  const iconHtml = renderIconSlot(iconIdForPart(part.canonicalName, part.categoryPath), part.canonicalName);
+  if (part.imageUrl) {
+    return `
+      <div class="part-hero part-hero-${variant}" aria-hidden="true">
+        <img src="${attr(part.imageUrl)}" alt="" decoding="async" />
+        <span class="part-hero-fallback">${iconHtml}</span>
+      </div>
+    `;
+  }
+
+  return `
+    <div class="part-hero part-hero-${variant} is-fallback" aria-hidden="true">
+      ${iconHtml}
     </div>
   `;
 }
@@ -136,6 +305,22 @@ function renderMetric(label: string, value: number): string {
       <span>${escapeHtml(label)}</span>
       <strong>${escapeHtml(value)}</strong>
     </article>
+  `;
+}
+
+function renderShellSummary(state: RewriteUiState): string {
+  if (state.dashboard === null) {
+    return "";
+  }
+
+  return `
+    <section class="shell-summary" aria-label="Inventory overview">
+      ${renderMetric("Part types", state.dashboard.partTypeCount)}
+      ${renderMetric("Instances", state.dashboard.instanceCount)}
+      ${renderMetric("Bulk bins", state.dashboard.bulkStockCount)}
+      ${renderMetric("Provisional", state.dashboard.provisionalCount)}
+      ${renderMetric("Unassigned QRs", state.dashboard.unassignedQrCount)}
+    </section>
   `;
 }
 
@@ -157,13 +342,42 @@ function renderToasts(toasts: readonly ToastRecord[]): string {
   `;
 }
 
+function renderScanEmptyState(state: RewriteUiState): string {
+  const iconId = state.scanMode.kind === "bulk" ? "batch" : "qr";
+  return `
+    <div class="result-card result-card-empty" data-motion-surface="scan-empty">
+      <div class="result-card-headline">
+        ${renderIconSlot(iconId, state.scanMode.kind === "bulk" ? "Bulk queue" : "QR code")}
+        <div>
+          <p class="eyebrow">Ready</p>
+          <h3>${escapeHtml(state.scanMode.kind === "bulk" ? "Build a bulk queue" : "Open a label or QR code")}</h3>
+          <p>
+            ${escapeHtml(
+              state.scanMode.kind === "bulk"
+                ? "Scan printed or assigned labels to build a stable batch action queue."
+                : "Start with a printed Smart DB sticker, or type a code to look it up manually.",
+            )}
+          </p>
+        </div>
+      </div>
+    </div>
+  `;
+}
+
 function renderTabBar(activeTab: TabId, tabs: readonly TabId[]): string {
   const labels: Record<TabId, string> = {
     scan: "Scan",
-    inventory: "Assets",
+    inventory: "Stock",
     activity: "Activity",
     dashboard: "Dashboard",
     admin: "Admin",
+  };
+  const icons: Record<TabId, string> = {
+    dashboard: "inventory",
+    scan: "scan",
+    inventory: "inventory",
+    activity: "activity",
+    admin: "batch",
   };
 
   return `
@@ -173,14 +387,15 @@ function renderTabBar(activeTab: TabId, tabs: readonly TabId[]): string {
           type="button"
           role="tab"
           id="tab-${tab}"
-          class="${activeTab === tab ? "active" : ""}"
+          class="${activeTab === tab ? "active" : ""}${tab === "scan" ? " tab-scan" : ""}"
           aria-selected="${String(activeTab === tab)}"
           aria-controls="panel-${tab}"
           tabIndex="${activeTab === tab ? "0" : "-1"}"
           data-action="change-tab"
           data-tab="${tab}"
         >
-          ${labels[tab]}
+          <span class="tab-icon" aria-hidden="true"><svg viewBox="0 0 24 24" fill="none">${renderIconPaths(icons[tab])}</svg></span>
+          <span class="tab-label">${labels[tab]}</span>
         </button>
       `).join("")}
     </nav>
@@ -189,19 +404,25 @@ function renderTabBar(activeTab: TabId, tabs: readonly TabId[]): string {
 
 function renderScanTab(state: RewriteUiState): string {
   const assignIssues = getAssignFormIssues(state.assignForm);
+  const bulkAssignIssues = getAssignFormIssues({
+    ...state.bulkQueue.labelForm,
+    qrCode: "__bulk__",
+  });
   const eventIssues = getEventFormIssues(state.eventForm);
   const cameraBlockedReason =
     state.pendingAction !== null
       ? "Finish the current action before scanning another item."
-      : state.scanResult
-        ? "Finish or clear the current scan form before scanning another item."
-        : null;
+      : null;
   const labelOptions =
     state.labelSearch.query.trim() || state.labelSearch.results.length > 0
       ? state.labelSearch.results
       : state.scanResult?.mode === "label"
         ? state.scanResult.suggestions
         : state.catalogSuggestions;
+  const bulkLabelOptions =
+    state.bulkQueue.labelSearch.query.trim() || state.bulkQueue.labelSearch.results.length > 0
+      ? state.bulkQueue.labelSearch.results
+      : state.catalogSuggestions;
   const selectedMeasurementUnit =
     measurementUnitCatalog.find((unit) => unit.symbol === state.assignForm.unitSymbol) ??
     measurementUnitCatalog[0];
@@ -214,45 +435,167 @@ function renderScanTab(state: RewriteUiState): string {
       ? quantityInputStep(state.scanResult.entity.partType.unit.isInteger)
       : quantityInputStep(selectedMeasurementUnit.isInteger);
 
-  return `
-    <section id="panel-scan" role="tabpanel" aria-labelledby="tab-scan" class="panel">
-      ${renderPanelTitle("Scan", "Scan a sticker to assign it, update it, or look up what it belongs to.")}
-      ${renderScanner(state, state.cameraLookupCode !== null, cameraBlockedReason)}
-      <form class="scan-form" data-form="scan">
-        <label class="sr-only" for="scan-code-input">Scan or type a QR / barcode</label>
-        <input
-          id="scan-code-input"
-          name="scanCode"
-          aria-label="Scan or type a QR / barcode"
-          placeholder="Scan or type a QR / barcode"
-          value="${attr(state.scanCode)}"
-          autocomplete="off"
-        />
-        <button type="submit" ${disabled(state.pendingAction !== null)}>
-          ${state.pendingAction === "scan" ? "Opening..." : "Open"}
-        </button>
-      </form>
-
-      <div aria-live="polite">
-        ${state.scanResult?.mode === "unknown" ? `
-          <div class="result-card">
-            <h3>${escapeHtml(state.scanResult.code)} is unknown to Smart DB</h3>
-            <p>
-              Register this barcode to start tracking it. Future scans will
-              automatically increment the quantity on hand.
-            </p>
-            <button type="button" data-action="register-unknown" data-code="${attr(state.scanResult.code)}" ${disabled(state.pendingAction !== null)} style="margin-top:0.75rem;">
-              Register this barcode
+  const detailMarkup = state.scanMode.kind === "oneByOne"
+    ? state.scanResult?.mode === "unknown"
+      ? `
+        <div class="result-card result-card-unknown" data-motion-surface="scan-result" data-scan-result-mode="unknown">
+          <header class="result-card-head">
+            <h3>Scan Result</h3>
+          </header>
+          <span class="status-pill is-unknown">UNKNOWN</span>
+          <p class="result-code">${escapeHtml(state.scanResult.code)}</p>
+          <p class="result-sub">Not found in Smart DB</p>
+          <div class="result-divider" aria-hidden="true"></div>
+          <p class="result-meta-label">WHAT NEXT?</p>
+          <p class="result-body">This QR code is not recognized.</p>
+          <div class="result-actions">
+            <button type="button" class="btn-primary" data-action="register-unknown" data-code="${attr(state.scanResult.code)}" ${disabled(state.pendingAction !== null)}>Assign to existing part</button>
+            <button type="button" class="btn-outline btn-scan-next" data-action="scan-next" ${disabled(state.pendingAction !== null)}>
+              <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+                <path d="M4 8V6a2 2 0 0 1 2-2h2"/><path d="M20 8V6a2 2 0 0 0-2-2h-2"/>
+                <path d="M4 16v2a2 2 0 0 0 2 2h2"/><path d="M20 16v2a2 2 0 0 1-2 2h-2"/>
+              </svg>
+              Scan next
             </button>
-            <small style="display:block;margin-top:0.5rem">${escapeHtml(state.scanResult.partDb.message)}</small>
           </div>
+          ${state.scanResult.partDb.message ? `<small class="result-footer">${escapeHtml(state.scanResult.partDb.message)}</small>` : ""}
+        </div>
+      `
+      : state.scanResult?.mode === "label"
+        ? renderLabelCard(state, labelOptions, assignIssues)
+        : state.scanResult?.mode === "interact"
+          ? renderInteractCard(state, eventIssues, bulkQuantityStep, bulkUnitSymbol)
+          : ""
+    : renderBulkQueueCard(state, bulkLabelOptions, bulkAssignIssues);
+
+  const isBulk = state.scanMode.kind === "bulk";
+  const isAutoCount = state.scanMode.kind === "oneByOne" && state.scanMode.behavior === "increment";
+  const queueCount = state.bulkQueue.rows.length;
+  const hasCamera = state.camera.supported;
+  const cameraLive = Boolean(state.camera.activeStream);
+  const cameraDenied = state.camera.phase === "denied" || state.camera.permissionState === "denied";
+  const hasResult = state.scanMode.kind === "oneByOne" && Boolean(state.scanResult);
+  const scannerIsTappable = !cameraLive && hasCamera && !cameraDenied;
+
+  const scannerBlock = `
+    <div class="scan-viewfinder ${cameraLive ? "is-live" : ""} ${scannerIsTappable ? "is-tappable" : ""}" data-art-zone="scan-idle-mark" data-motion-surface="scan-viewfinder" data-camera-supported="${String(hasCamera)}"${scannerIsTappable ? ' data-action="camera-start" aria-label="Start camera"' : ""}>
+      ${!cameraLive ? renderScanIdleMark(cameraDenied) : ""}
+      ${hasCamera ? renderScanner(state, state.cameraLookupCode !== null, cameraBlockedReason) : ""}
+      ${!cameraLive ? `
+        <span class="scan-trace-line trace-a" aria-hidden="true"></span>
+        <span class="scan-trace-line trace-b" aria-hidden="true"></span>
+        <span class="scan-trace-line trace-c" aria-hidden="true"></span>
+        <span class="scan-viewfinder-corner tl" aria-hidden="true"></span>
+        <span class="scan-viewfinder-corner tr" aria-hidden="true"></span>
+        <span class="scan-viewfinder-corner bl" aria-hidden="true"></span>
+        <span class="scan-viewfinder-corner br" aria-hidden="true"></span>
+        <p class="scan-viewfinder-label">Aim at QR code to scan</p>
+      ` : ""}
+    </div>
+
+    <form class="scan-input-row" data-form="scan">
+      <label class="sr-only" for="scan-code-input">Scan or type a QR / barcode</label>
+      <input
+        id="scan-code-input"
+        name="scanCode"
+        aria-label="Scan or type a QR / barcode"
+        placeholder="Scan or type a QR / barcode"
+        value="${attr(state.scanCode)}"
+        autocomplete="off"
+      />
+      <button type="submit" class="scan-input-submit" aria-label="Submit code" ${disabled(state.pendingAction !== null)}>
+        Open
+      </button>
+    </form>
+
+    <button
+      type="button"
+      class="scan-queue-btn ${isBulk ? "is-active" : ""}"
+      data-action="set-scan-mode-kind"
+      data-scan-mode-kind="${isBulk ? "oneByOne" : "bulk"}"
+    >
+      ${isBulk ? "CLOSE SCAN QUEUE" : "OPEN SCAN QUEUE"} (${queueCount})
+    </button>
+
+    ${!isBulk ? `
+      <div class="scan-mode-row" role="group" aria-label="Scan behavior">
+        <button
+          type="button"
+          class="scan-mode-pill ${!isAutoCount ? "is-on" : ""}"
+          data-action="set-scan-behavior"
+          data-scan-behavior="viewOnly"
+          aria-pressed="${String(!isAutoCount)}"
+        >View only</button>
+        <button
+          type="button"
+          class="scan-mode-pill ${isAutoCount ? "is-on" : ""}"
+          data-action="set-scan-behavior"
+          data-scan-behavior="increment"
+          aria-pressed="${String(isAutoCount)}"
+        >+1 Auto-count</button>
+      </div>
+    ` : ""}
+  `;
+
+  const processPane = hasResult || isBulk
+    ? `<div class="scan-detail" aria-live="polite">${detailMarkup}</div>`
+    : `
+      <div class="scan-detail scan-detail-idle" aria-live="polite">
+        <p class="scan-detail-hint">Scan or type a QR to see item details here.</p>
+      </div>
+    `;
+
+  const mobileMode = hasResult ? "result" : isBulk ? "bulk" : "idle";
+
+  return `
+    <section
+      id="panel-scan"
+      role="tabpanel"
+      aria-labelledby="tab-scan"
+      class="panel panel-scan"
+      data-scan-mode="${mobileMode}"
+    >
+      <header class="scan-head">
+        <h2>${isBulk ? "Bulk queue" : "Scan"}</h2>
+        ${hasResult ? `
+          <button
+            type="button"
+            class="scan-result-back"
+            data-action="scan-next"
+            ${disabled(state.pendingAction !== null)}
+            aria-label="Scan next item"
+          >
+            <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+              <line x1="19" y1="12" x2="5" y2="12"/>
+              <polyline points="12 19 5 12 12 5"/>
+            </svg>
+            <span>Scan next</span>
+          </button>
         ` : ""}
-
-        ${state.scanResult?.mode === "label" ? renderLabelCard(state, labelOptions, assignIssues) : ""}
-        ${state.scanResult?.mode === "interact" ? renderInteractCard(state, eventIssues, bulkQuantityStep, bulkUnitSymbol) : ""}
-
+      </header>
+      <div class="scan-layout">
+        <div class="scan-pane scan-pane-scanner">
+          ${scannerBlock}
+        </div>
+        <div class="scan-pane scan-pane-process">
+          ${processPane}
+        </div>
       </div>
     </section>
+  `;
+}
+
+function renderScanIdleMark(cameraDenied = false): string {
+  return `
+    <div class="scan-idle-mark" aria-hidden="true">
+      <span class="scan-idle-device">
+        <span class="scan-idle-lens"></span>
+        <span class="scan-idle-code">
+          <span></span><span></span><span></span><span></span>
+        </span>
+      </span>
+      <span class="scan-idle-copy">${cameraDenied ? "Use manual input below" : "Tap to start camera · or type below"}</span>
+    </div>
   `;
 }
 
@@ -261,46 +604,109 @@ function renderScanner(state: RewriteUiState, isLookingUp: boolean, blockedReaso
     return "";
   }
 
+  const cameraDenied = state.camera.phase === "denied" || state.camera.permissionState === "denied";
+
   return `
     <div class="qr-scanner">
       ${blockedReason ? `<p class="banner error">${escapeHtml(blockedReason)}</p>` : ""}
-      ${state.camera.phase === "denied" || state.camera.phase === "failure" ? `<p class="banner error">${escapeHtml(state.camera.failure?.message ?? "Camera unavailable. Use manual input instead.")}</p>` : ""}
+      ${cameraDenied ? `
+        <div class="camera-recovery" role="status">
+          <p class="camera-recovery-title">Camera blocked</p>
+          <p>${escapeHtml(`${state.camera.failure?.message ?? "Camera permission was denied."} Type the code below, or allow camera access in browser settings and retry.`)}</p>
+          <div class="camera-recovery-actions">
+            <button type="button" class="camera-recovery-primary" data-action="focus-scan-input">Use manual input</button>
+            <button type="button" class="camera-recovery-secondary" data-action="camera-start" ${disabled(Boolean(blockedReason) || isLookingUp)}>Retry camera</button>
+          </div>
+        </div>
+      ` : ""}
+      ${!cameraDenied && state.camera.phase === "failure" ? `<p class="banner error">${escapeHtml(state.camera.failure?.message ?? "Camera unavailable. Use manual input instead.")}</p>` : ""}
       ${!state.camera.activeStream && state.camera.lastResult ? `
         <div class="scan-status" aria-live="polite">
           <strong>Detected ${escapeHtml(state.camera.lastResult)}</strong>
           <p>${escapeHtml(isLookingUp ? `Looking up ${state.camera.lastResult}...` : "Ready to scan the next item.")}</p>
         </div>
       ` : ""}
-      ${!state.camera.activeStream && (state.camera.permissionState !== "granted" || !state.camera.lastResult) ? `
-        <button
-          type="button"
-          class="camera-btn"
-          data-action="camera-start"
-          ${disabled(Boolean(blockedReason) || isLookingUp)}
-        >
-          <span class="camera-ascii" aria-hidden="true">┌──────────┐
-│  ◉  ▣▣  │
-└──────────┘</span>
-          <span>${state.camera.permissionState === "granted" ? "Switch to camera" : "Tap to scan"}</span>
-        </button>
-      ` : ""}
       <div class="viewfinder"${state.camera.activeStream ? "" : " hidden"}>
         <video id="rewrite-camera-video" playsinline muted autoplay></video>
         <div class="viewfinder-guide"></div>
+        ${state.camera.activeStream ? `<div class="viewfinder-hint" aria-hidden="true">Camera scanning</div>` : ""}
         ${state.camera.lastResult && state.camera.activeStream ? `<div class="scan-flash"></div>` : ""}
       </div>
-      ${state.camera.activeStream ? `<button type="button" data-action="camera-stop">Switch to manual input</button>` : ""}
+      ${state.camera.activeStream ? `<button type="button" class="camera-live-stop" data-action="camera-stop" aria-label="Stop camera scanner">Stop camera</button>` : ""}
       ${!state.camera.activeStream && state.camera.lastResult && !isLookingUp ? `
-        <button type="button" data-action="camera-scan-next" ${disabled(Boolean(blockedReason))}>Scan next</button>
+        <button type="button" class="camera-next-btn" data-action="camera-scan-next" ${disabled(Boolean(blockedReason))}>Scan next</button>
       ` : ""}
     </div>
   `;
 }
 
-function renderEntityKindSwitch(state: RewriteUiState, locked: boolean): string {
-  const isBulk = state.assignForm.entityKind === "bulk";
+function renderBulkQueueCard(
+  state: RewriteUiState,
+  labelOptions: readonly PartType[],
+  assignIssues: ReturnType<typeof getAssignFormIssues>,
+): string {
+  const summary = state.bulkQueue.summary;
+
+  const actionHeading = state.bulkQueue.action === "label"
+    ? "Label Queue"
+    : state.bulkQueue.action === "move"
+      ? "Move Queue"
+      : "Reverse Ingest";
+  const countSubtitle = `${summary.uniqueLabelCount} unique item${summary.uniqueLabelCount === 1 ? "" : "s"} · ${summary.totalScanCount} scan${summary.totalScanCount === 1 ? "" : "s"}`;
+
+  const modeTab = (mode: "label" | "move" | "delete", label: string) =>
+    `<button type="button" role="tab" aria-selected="${String(state.bulkQueue.action === mode)}" class="queue-mode-tab ${state.bulkQueue.action === mode ? "is-active" : ""}" data-action="set-bulk-action" data-bulk-action="${mode}">${escapeHtml(label)}</button>`;
+
   return `
-    <div class="entity-switch ${locked ? "locked" : ""}" role="radiogroup" aria-label="Inventory entry type">
+    <div class="result-card result-card-queue" data-motion-surface="bulk-queue" data-bulk-action="${attr(state.bulkQueue.action)}">
+      <header class="queue-head">
+        <h3>${escapeHtml(actionHeading)}</h3>
+        <button type="button" class="queue-clear" data-action="bulk-queue-clear" ${disabled(state.pendingAction !== null || state.bulkQueue.rows.length === 0)}>Clear</button>
+      </header>
+      <div class="queue-mode-tabs" role="tablist" aria-label="Queue action">
+        ${modeTab("label", "Label")}
+        ${modeTab("move", "Move")}
+        ${modeTab("delete", "Reverse")}
+      </div>
+      <p class="queue-count">${escapeHtml(countSubtitle)}</p>
+      ${state.bulkQueue.failure ? `<p class="banner error">${escapeHtml(state.bulkQueue.failure.message)}</p>` : ""}
+      ${state.bulkQueue.rows.length === 0 ? `
+        <p class="muted-copy">${escapeHtml(emptyBulkQueueCopy(state.bulkQueue.action))}</p>
+      ` : `
+        <ul class="queue-list">
+          ${state.bulkQueue.rows.map((row) => `
+            <li class="queue-row" data-queue-code="${attr(row.code)}" data-row-kind="${row.kind}">
+              <div class="queue-row-main">
+                <span class="queue-row-code">${escapeHtml(row.code)}</span>
+                <span class="queue-row-meta">${row.kind === "unlabeled"
+                  ? escapeHtml(`Printed · batch ${row.batchId}`)
+                  : escapeHtml(`${row.partTypeName} · ${row.location}`)}</span>
+              </div>
+              <div class="queue-row-stepper">
+                <button type="button" class="stepper-minus" data-action="bulk-queue-decrement" data-code="${attr(row.code)}" aria-label="Decrement">−</button>
+                <span class="stepper-value">${escapeHtml(String(row.count))}</span>
+                <button type="button" class="stepper-remove" data-action="bulk-queue-remove" data-code="${attr(row.code)}" aria-label="Remove">×</button>
+              </div>
+            </li>
+          `).join("")}
+        </ul>
+      `}
+      ${state.bulkQueue.action === "label" ? renderBulkLabelForm(state, labelOptions, assignIssues) : ""}
+      ${state.bulkQueue.action === "move" ? renderBulkMoveForm(state) : ""}
+      ${state.bulkQueue.action === "delete" ? renderBulkDeleteForm(state) : ""}
+    </div>
+  `;
+}
+
+function renderEntityKindSwitch(
+  state: RewriteUiState,
+  lockedKind: "instance" | "bulk" | null,
+): string {
+  const isBulk = state.assignForm.entityKind === "bulk";
+  const instanceDisabled = lockedKind === "bulk";
+  const bulkDisabled = lockedKind === "instance";
+  return `
+    <div class="entity-switch ${lockedKind ? "locked" : ""}" role="radiogroup" aria-label="Inventory entry type" title="Countable items are tracked one piece at a time (e.g. an Arduino). Measured items are tracked by quantity (e.g. grams of PLA).">
       <button
         type="button"
         role="radio"
@@ -308,8 +714,8 @@ function renderEntityKindSwitch(state: RewriteUiState, locked: boolean): string 
         class="entity-switch-option ${!isBulk ? "active" : ""}"
         data-action="set-entity-kind"
         data-entity-kind="instance"
-        ${locked ? "disabled" : ""}
-      >Add Item</button>
+        ${instanceDisabled ? "disabled" : ""}
+      >Countable</button>
       <button
         type="button"
         role="radio"
@@ -317,8 +723,177 @@ function renderEntityKindSwitch(state: RewriteUiState, locked: boolean): string 
         class="entity-switch-option ${isBulk ? "active" : ""}"
         data-action="set-entity-kind"
         data-entity-kind="bulk"
-      >Bulk Item</button>
+        ${bulkDisabled ? "disabled" : ""}
+      >Measured</button>
     </div>
+  `;
+}
+
+function renderBulkLabelForm(
+  state: RewriteUiState,
+  labelOptions: readonly PartType[],
+  assignIssues: ReturnType<typeof getAssignFormIssues>,
+): string {
+  const form = state.bulkQueue.labelForm;
+  const selectedPartType =
+    labelOptions.find((partType) => partType.id === form.existingPartTypeId) ??
+    state.catalogSuggestions.find((partType) => partType.id === form.existingPartTypeId);
+  const pickerOptions = selectedPartType
+    ? [
+      selectedPartType,
+      ...labelOptions.filter((partType) => partType.id !== selectedPartType.id),
+    ]
+    : labelOptions;
+
+  return `
+    <form class="form-grid bulk-action-form" data-form="bulk-label">
+      <div class="wide mode-toggle" role="radiogroup" aria-label="Bulk label type mode">
+        <button type="button" role="radio" class="${form.partTypeMode === "existing" ? "selected" : ""}" aria-checked="${String(form.partTypeMode === "existing")}" data-action="set-bulk-label-mode" data-assign-mode="existing">Use existing type</button>
+        <button type="button" role="radio" class="${form.partTypeMode === "new" ? "selected" : ""}" aria-checked="${String(form.partTypeMode === "new")}" data-action="set-bulk-label-mode" data-assign-mode="new">Create new type</button>
+      </div>
+      ${form.partTypeMode === "existing" ? `
+        <label class="wide">
+          Search existing part types
+          <input name="bulkLabelSearch.query" value="${attr(state.bulkQueue.labelSearch.query)}" placeholder="Arduino, JST, PLA, cotton..." />
+        </label>
+        ${state.bulkQueue.labelSearch.error ? `<p class="banner error wide">${escapeHtml(state.bulkQueue.labelSearch.error)}</p>` : ""}
+        ${assignIssues.existingPartTypeId ? `<p class="field-error wide">${escapeHtml(assignIssues.existingPartTypeId)}</p>` : ""}
+        <div class="wide picker label-suggestion-picker bulk-label-suggestion-picker" role="radiogroup" aria-label="Existing part types">
+          ${pickerOptions.length > 0 ? pickerOptions.map((partType) => `
+            <button
+              type="button"
+              role="radio"
+            aria-checked="${String(form.existingPartTypeId === partType.id)}"
+            class="${form.existingPartTypeId === partType.id ? "selected" : ""}"
+            data-action="select-bulk-label-part"
+            data-part-id="${attr(partType.id)}"
+          >
+              ${renderPartTileArt(partType, "picker")}
+              <span class="picker-copy">
+                <strong>${escapeHtml(partType.canonicalName)}</strong>
+                <span>${escapeHtml(formatCategoryPath(partType.categoryPath))}</span>
+              </span>
+            </button>
+          `).join("") : `<p class="muted-copy">No matching part types yet.</p>`}
+        </div>
+        ${selectedPartType ? `
+          <button type="button" class="disclosure wide" data-action="create-bulk-label-variant" data-part-id="${attr(selectedPartType.id)}">
+            Create a variant of "${escapeHtml(selectedPartType.canonicalName)}"
+          </button>
+        ` : ""}
+      ` : `
+        <label class="wide">
+          New canonical name
+          <input name="bulkLabel.canonicalName" value="${attr(form.canonicalName)}" placeholder="Arduino Uno R3" />
+          ${assignIssues.canonicalName ? `<span class="field-error">${escapeHtml(assignIssues.canonicalName)}</span>` : ""}
+        </label>
+        <label class="wide">
+          Category path
+          <input name="bulkLabel.category" value="${attr(form.category)}" placeholder="Electronics / Resistors / SMD 0603" />
+          ${assignIssues.category ? `<span class="field-error">${escapeHtml(assignIssues.category)}</span>` : ""}
+        </label>
+      `}
+      <label class="wide">
+        Location
+        <input name="bulkLabel.location" value="${attr(form.location)}" placeholder="Shelf A / Bin 7" />
+        ${assignIssues.location ? `<span class="field-error">${escapeHtml(assignIssues.location)}</span>` : ""}
+      </label>
+      ${renderLocationTreePicker(state.knownLocations, form.location, "tree-pick-bulk-label-location")}
+      <label class="wide">
+        Notes
+        <textarea name="bulkLabel.notes">${escapeHtml(form.notes)}</textarea>
+      </label>
+      ${form.entityKind === "instance" ? `
+        <label>
+          Initial status
+          <select name="bulkLabel.initialStatus">
+            ${instanceStatuses.map((status) => `<option value="${status}"${selected(status === form.initialStatus)}>${escapeHtml(status)}</option>`).join("")}
+          </select>
+        </label>
+      ` : `
+        <label>
+          Unit of measure
+          <select name="bulkLabel.unitSymbol">
+            ${measurementUnitCatalog.map((unit) => `
+              <option value="${attr(unit.symbol)}"${selected(unit.symbol === form.unitSymbol)}>${escapeHtml(unit.name)} (${escapeHtml(unit.symbol)})</option>
+            `).join("")}
+          </select>
+        </label>
+        <label>
+          Starting quantity
+          <input type="number" min="${(measurementUnitCatalog.find((unit) => unit.symbol === form.unitSymbol) ?? measurementUnitCatalog[0]).isInteger ? "1" : "0.000001"}" inputmode="decimal" name="bulkLabel.initialQuantity" value="${attr(form.initialQuantity)}" step="${quantityInputStep((measurementUnitCatalog.find((unit) => unit.symbol === form.unitSymbol) ?? measurementUnitCatalog[0]).isInteger)}" placeholder="${(measurementUnitCatalog.find((unit) => unit.symbol === form.unitSymbol) ?? measurementUnitCatalog[0]).isInteger ? "1" : "0.1"}" />
+          ${assignIssues.initialQuantity ? `<span class="field-error">${escapeHtml(assignIssues.initialQuantity)}</span>` : ""}
+        </label>
+        <label>
+          Low-stock threshold
+          <input type="number" min="0" inputmode="decimal" name="bulkLabel.minimumQuantity" value="${attr(form.minimumQuantity)}" step="${quantityInputStep((measurementUnitCatalog.find((unit) => unit.symbol === form.unitSymbol) ?? measurementUnitCatalog[0]).isInteger)}" placeholder="Optional" />
+          ${assignIssues.minimumQuantity ? `<span class="field-error">${escapeHtml(assignIssues.minimumQuantity)}</span>` : ""}
+        </label>
+      `}
+      <button type="submit" ${disabled(state.pendingAction !== null || state.bulkQueue.rows.length === 0 || Object.keys(assignIssues).length > 0)}>
+        ${state.pendingAction === "bulk" ? "Labeling..." : `Label ${state.bulkQueue.summary.uniqueLabelCount} labels`}
+      </button>
+    </form>
+  `;
+}
+
+function deriveSourceLocations(state: RewriteUiState): string[] {
+  const locs = new Set<string>();
+  for (const row of state.bulkQueue.rows) {
+    if (row.kind !== "unlabeled" && row.location) locs.add(row.location);
+  }
+  return Array.from(locs);
+}
+
+function renderFromCard(locations: string[]): string {
+  if (locations.length === 0) return "";
+  const single = locations.length === 1;
+  return `
+    <div class="location-card location-card-from">
+      <span class="location-card-label">From</span>
+      <span class="location-card-value">${escapeHtml(single ? (locations[0] ?? "") : `${locations.length} locations`)}</span>
+    </div>
+  `;
+}
+
+function renderBulkMoveForm(state: RewriteUiState): string {
+  const sourceLocations = deriveSourceLocations(state);
+  return `
+    <form class="form-grid bulk-action-form" data-form="bulk-move">
+      <div class="location-card-pair wide">
+        ${renderFromCard(sourceLocations)}
+        <div class="location-card location-card-to">
+          <span class="location-card-label">To</span>
+          <label class="location-card-input">
+            <input name="bulkMove.location" value="${attr(state.bulkQueue.moveForm.location)}" placeholder="Destination location" />
+          </label>
+        </div>
+      </div>
+      <label class="wide">
+        Notes
+        <textarea name="bulkMove.notes">${escapeHtml(state.bulkQueue.moveForm.notes)}</textarea>
+      </label>
+      <button type="submit" class="primary-uppercase wide" ${disabled(state.pendingAction !== null || state.bulkQueue.rows.length === 0 || state.bulkQueue.moveForm.location.trim().length === 0)}>
+        ${state.pendingAction === "bulk" ? "Moving..." : `Move ${state.bulkQueue.summary.uniqueLabelCount} items`}
+      </button>
+    </form>
+  `;
+}
+
+function renderBulkDeleteForm(state: RewriteUiState): string {
+  const sourceLocations = deriveSourceLocations(state);
+  return `
+    <form class="form-grid bulk-action-form" data-form="bulk-delete">
+      <p class="reverse-helper wide">Reverses fresh ingests only. The correction audit row survives, so this is never data loss.</p>
+      ${renderFromCard(sourceLocations)}
+      <label class="wide">
+        Reason
+        <textarea name="bulkDelete.reason">${escapeHtml(state.bulkQueue.deleteForm.reason)}</textarea>
+      </label>
+      <button type="submit" class="primary-uppercase wide" ${disabled(state.pendingAction !== null || state.bulkQueue.rows.length === 0 || state.bulkQueue.deleteForm.reason.trim().length === 0)}>
+        ${state.pendingAction === "bulk" ? "Reversing..." : `Reverse ingest ${state.bulkQueue.summary.uniqueLabelCount} items`}
+      </button>
+    </form>
   `;
 }
 
@@ -332,10 +907,10 @@ function renderLabelCard(
       ? (labelOptions.find((pt) => pt.id === state.assignForm.existingPartTypeId) ??
          state.catalogSuggestions.find((pt) => pt.id === state.assignForm.existingPartTypeId))
       : null;
-  const entityLocked = existingSelected !== null && existingSelected !== undefined && !existingSelected.countable;
+  const lockedKind = existingSelected ? (existingSelected.countable ? "instance" : "bulk") : null;
   return `
-    <div class="result-card has-corner-switch">
-      ${renderEntityKindSwitch(state, entityLocked)}
+    <div class="result-card has-corner-switch result-card-assign" data-motion-surface="scan-result" data-scan-result-mode="label">
+      ${renderEntityKindSwitch(state, lockedKind)}
       <h3>Assign ${escapeHtml(state.scanResult?.mode === "label" ? state.scanResult.qrCode.code : "")}</h3>
       ${state.lastAssignment ? `
         <div class="assign-same-bar">
@@ -347,8 +922,8 @@ function renderLabelCard(
       <form class="form-grid" data-form="assign">
         ${renderPartTypeField(state, labelOptions, assignIssues)}
         ${renderSharedAssignFields(state, assignIssues)}
-        <button type="submit" ${disabled(state.pendingAction !== null || Object.keys(assignIssues).length > 0)}>
-          ${state.pendingAction === "assign" ? "Assigning..." : "Assign QR"}
+        <button type="submit" class="primary-cta" ${disabled(state.pendingAction !== null || Object.keys(assignIssues).length > 0)}>
+          ${state.pendingAction === "assign" ? "Assigning..." : "Assign item"}
         </button>
       </form>
     </div>
@@ -413,31 +988,38 @@ function renderPartTypeField(
   labelOptions: readonly PartType[],
   assignIssues: ReturnType<typeof getAssignFormIssues>,
 ): string {
-  const ranked = rankPartTypeMatches(labelOptions, state.labelSearch.query);
-  const shown = ranked.slice(0, 48);
-
   const resolveSelected = collectPartTypeCandidates(state, labelOptions);
   const selected = resolveSelected.find((pt) => pt.id === state.assignForm.existingPartTypeId) ?? null;
+  const ranked = rankPartTypeMatches(labelOptions, state.labelSearch.query);
+  const pickerOptions = selected
+    ? [
+      selected,
+      ...ranked.filter((partType) => partType.id !== selected.id),
+    ]
+    : ranked;
+  const shown = pickerOptions.slice(0, 48);
   const isCreating = state.assignForm.partTypeMode === "new";
   const createToggleLabel = isCreating ? "− Cancel new part type" : "+ New part type";
   const createToggleAction = isCreating ? "existing" : "new";
   const trimmedQuery = state.labelSearch.query.trim();
 
   return `
-    <label class="wide">
-      Part type
-      <input
-        name="labelSearch.query"
-        value="${attr(state.labelSearch.query)}"
-        placeholder="Search by name, alias, or category…"
-        autocomplete="off"
-      />
-    </label>
-    ${state.labelSearch.error ? `<p class="banner error wide">${escapeHtml(state.labelSearch.error)}</p>` : ""}
-    ${!isCreating && assignIssues.existingPartTypeId ? `<p class="field-error wide">${escapeHtml(assignIssues.existingPartTypeId)}</p>` : ""}
+    ${!isCreating ? `
+      <label class="wide">
+        Part type
+        <input
+          name="labelSearch.query"
+          value="${attr(state.labelSearch.query)}"
+          placeholder="Search by name, alias, or category…"
+          autocomplete="off"
+        />
+      </label>
+      ${state.labelSearch.error ? `<p class="banner error wide">${escapeHtml(state.labelSearch.error)}</p>` : ""}
+      ${assignIssues.existingPartTypeId ? `<p class="field-error wide">${escapeHtml(assignIssues.existingPartTypeId)}</p>` : ""}
+    ` : ""}
 
     ${!isCreating ? `
-      <div class="wide picker" role="radiogroup" aria-label="Existing part types">
+      <div class="wide picker label-suggestion-picker" role="radiogroup" aria-label="Existing part types">
         ${shown.length > 0 ? shown.map((partType) => `
           <button
             type="button"
@@ -447,12 +1029,15 @@ function renderPartTypeField(
             data-action="select-existing-part"
             data-part-id="${attr(partType.id)}"
           >
-            <strong>${escapeHtml(partType.canonicalName)}</strong>
-            <span>${escapeHtml(formatCategoryPath(partType.categoryPath))}</span>
+            ${renderPartTileArt(partType, "picker")}
+            <span class="picker-copy">
+              <strong>${escapeHtml(partType.canonicalName)}</strong>
+              <span>${escapeHtml(formatCategoryPath(partType.categoryPath))}</span>
+            </span>
           </button>
         `).join("") : `<p class="muted-copy">${trimmedQuery ? `No matches for "${escapeHtml(trimmedQuery)}".` : "No part types yet."} Use the button below to add one.</p>`}
       </div>
-      ${ranked.length > shown.length ? `<p class="muted-copy wide" style="font-size:0.75rem">Showing ${shown.length} of ${ranked.length} matches — refine your search to narrow down.</p>` : ""}
+      ${pickerOptions.length > shown.length ? `<p class="muted-copy wide result-limit-note">Showing ${shown.length} of ${pickerOptions.length} matches — refine your search to narrow down.</p>` : ""}
       ${selected && !selected.countable ? `
         <p class="muted-copy wide">Measured part types are always bulk items.</p>
       ` : ""}
@@ -508,7 +1093,7 @@ function renderNewPartTypePanel(
 ): string {
   const unit = measurementUnitCatalog.find((u) => u.symbol === state.assignForm.unitSymbol) ?? measurementUnitCatalog[0];
   return `
-    <div class="path-create-panel wide" role="region" aria-label="New part type">
+    <div class="path-create-panel path-create-panel-part wide" role="region" aria-label="New part type" data-art-zone="new-part-type">
       <p class="path-create-title">New part type</p>
       <label class="wide">
         Canonical name
@@ -518,14 +1103,10 @@ function renderNewPartTypePanel(
       ${renderPathPickerField(state, "category")}
       ${assignIssues.category ? `<span class="field-error wide">${escapeHtml(assignIssues.category)}</span>` : ""}
       ${state.assignForm.entityKind === "bulk" ? `
-        <div class="wide mode-toggle" role="radiogroup" aria-label="Part type kind">
-          <button type="button" role="radio" aria-checked="${String(state.assignForm.countable)}" class="${state.assignForm.countable ? "selected" : ""}" data-action="set-bulk-countability" data-countable="true">Piece-counted</button>
-          <button type="button" role="radio" aria-checked="${String(!state.assignForm.countable)}" class="${!state.assignForm.countable ? "selected" : ""}" data-action="set-bulk-countability" data-countable="false">Measured</button>
-        </div>
         <label class="wide">
           Unit of measure
           <select name="assign.unitSymbol">
-            ${measurementUnitCatalog.filter((u) => (state.assignForm.countable ? u.isInteger : true)).map((u) => `
+            ${measurementUnitCatalog.map((u) => `
               <option value="${attr(u.symbol)}"${selected(u.symbol === state.assignForm.unitSymbol)}>${escapeHtml(u.name)} (${escapeHtml(u.symbol)})</option>
             `).join("")}
           </select>
@@ -581,15 +1162,37 @@ function renderInteractCard(
     return "";
   }
 
+  const entity = state.scanResult.entity;
+  const isBulkEntity = entity.targetType === "bulk";
+  const statusPillClass = entity.state === "available"
+    ? "is-available"
+    : entity.state === "checked_out"
+      ? "is-checked-out"
+      : entity.state === "damaged" || entity.state === "lost"
+        ? "is-warn"
+        : entity.state === "consumed"
+          ? "is-muted"
+          : entity.state === "good" || entity.state === "full"
+            ? "is-available"
+            : entity.state === "low"
+              ? "is-warn"
+              : entity.state === "empty"
+                ? "is-muted"
+                : "is-muted";
+
   return `
-    <div class="result-card">
-      <h3>${escapeHtml(state.scanResult.entity.partType.canonicalName)}</h3>
+    <div class="result-card result-card-interact" data-motion-surface="scan-result" data-scan-result-mode="${entity.targetType}">
+      <header class="result-card-head">
+        <h3>${isBulkEntity ? "Bulk Bin" : "Item"}</h3>
+        <span class="status-pill ${statusPillClass}">${escapeHtml(entity.state.replace(/_/g, " ").toUpperCase())}</span>
+      </header>
+      ${renderPartHero(entity.partType, "scan")}
+      <p class="result-title">${escapeHtml(entity.partType.canonicalName)}</p>
+      <p class="result-code">${escapeHtml(entity.qrCode)}</p>
       <p class="meta-line">
-        <code>${escapeHtml(state.scanResult.entity.qrCode)}</code>
-        <span class="sep">·</span>
-        <span>${escapeHtml(state.scanResult.entity.targetType)}</span>
+        <span>${escapeHtml(isBulkEntity ? "bulk" : "instance")}</span>
         <span class="sep">in</span>
-        <span class="meta-loc">${escapeHtml(state.scanResult.entity.location)}</span>
+        <span class="meta-loc">${escapeHtml(entity.location)}</span>
       </p>
       ${state.scanResult.entity.targetType === "bulk" && state.scanResult.entity.quantity !== null ? `
         <div class="quantity-display">
@@ -598,18 +1201,37 @@ function renderInteractCard(
           ${state.scanResult.entity.minimumQuantity !== null ? `<span class="quantity-threshold">min ${escapeHtml(formatQuantity(state.scanResult.entity.minimumQuantity))} ${escapeHtml(state.scanResult.entity.partType.unit.symbol)}</span>` : ""}
         </div>
       ` : `<p>Current state: <strong>${escapeHtml(state.scanResult.entity.state)}</strong></p>`}
-      <p class="muted-copy" style="font-size:0.78rem">Part-DB sync: ${escapeHtml(state.scanResult.entity.partDbSyncStatus)}</p>
+      ${renderCurrentBorrow(state)}
+      <p class="muted-copy partdb-sync-note">Part-DB sync: ${escapeHtml(state.scanResult.entity.partDbSyncStatus)}</p>
+      ${renderScanQuickChips(state)}
       ${(() => {
         const actions = state.scanResult.availableActions;
-        const primary = actions.filter((a) => a === "checked_out");
-        const secondary = actions.filter((a) => a !== "checked_out");
+        const ent = state.scanResult.entity;
+        // The primary (highlighted) action matches the item's state so a
+        // checked-out item leads with Return and an available item with Check
+        // out — instead of always promoting re-checkout.
+        const primaryAction =
+          ent.targetType === "instance"
+            ? ent.state === "checked_out"
+              ? "returned"
+              : ent.state === "available"
+                ? "checked_out"
+                : null
+            : null;
+        const primary = actions.filter((a) => a === primaryAction);
+        const secondary = actions.filter((a) => a !== primaryAction);
+        if (primary.length === 0 && secondary.length === 0) return "";
         const renderBtn = (action: typeof actions[number]) =>
           `<button type="button" aria-pressed="${String(state.eventForm.event === action)}" class="${state.eventForm.event === action ? "selected" : ""}" data-action="select-event-action" data-event="${attr(action)}">${escapeHtml(actionLabel(action))}</button>`;
         return `
+          <p class="section-label">Actions</p>
           ${primary.length > 0 ? `<div class="action-buttons action-buttons-primary">${primary.map(renderBtn).join("")}</div>` : ""}
           ${secondary.length > 0 ? `<div class="action-buttons action-buttons-secondary">${secondary.map(renderBtn).join("")}</div>` : ""}
         `;
       })()}
+      ${state.scanResult.availableActions.length === 0 ? `
+        <p class="muted-copy no-actions-note">No further actions — this item is ${escapeHtml(state.scanResult.entity.state.replace(/_/g, " "))}.</p>
+      ` : `
       <form class="form-grid" data-form="event">
         ${(state.eventForm.event === "moved" || state.eventForm.event === "checked_out") ? `
           <label>
@@ -621,7 +1243,7 @@ function renderInteractCard(
             <label>
               Units to move
               <input type="number" min="0" step="${bulkQuantityStep}" inputmode="decimal" name="event.splitQuantity" value="${attr(state.eventForm.splitQuantity)}" placeholder="All (${escapeHtml(state.scanResult.entity.quantity ?? 0)})" />
-              <small style="margin-top:0.2rem;text-transform:none;letter-spacing:0;font-family:var(--font-sans)">Leave empty to move the entire bin.</small>
+              <small class="field-help">Leave empty to move the entire bin.</small>
               ${eventIssues.splitQuantity ? `<span class="field-error">${escapeHtml(eventIssues.splitQuantity)}</span>` : ""}
             </label>
           ` : ""}
@@ -629,7 +1251,8 @@ function renderInteractCard(
         ${state.eventForm.event === "checked_out" ? `
           <label>
             Assignee
-            <input name="event.assignee" value="${attr(state.eventForm.assignee)}" />
+            <input name="event.assignee" value="${attr(state.eventForm.assignee)}" placeholder="${attr(state.authState.status === "authenticated" ? formatActor(state.authState.session.username) : "")}" />
+            <small class="field-help">Leave blank to check out to yourself.</small>
           </label>
         ` : ""}
         ${(state.eventForm.event === "restocked" || state.eventForm.event === "consumed" || state.eventForm.event === "adjusted") && state.scanResult.entity.targetType === "bulk" ? `
@@ -655,16 +1278,651 @@ function renderInteractCard(
           ${state.pendingAction === "event" ? "Saving..." : escapeHtml(`Confirm ${actionLabel(state.eventForm.event)}`)}
         </button>
       </form>
-      <div class="event-list">
-        ${state.scanResult.recentEvents.map((stockEvent) => `
-          <article>
-            <strong>${escapeHtml(actionLabel(stockEvent.event))}</strong>
-            <span>${escapeHtml(stockEvent.actor)} · ${escapeHtml(formatTimestamp(stockEvent.createdAt))}</span>
-            <small>${escapeHtml(`${stockEvent.fromState ?? "none"} → ${stockEvent.toState ?? "none"}`)}</small>
-          </article>
+      `}
+      ${renderScanLocations(state)}
+      ${state.scanResult.recentEvents.length > 0 ? `
+        <p class="section-label">Recent history</p>
+        <div class="event-list">
+          ${state.scanResult.recentEvents.map((stockEvent) => `
+            <article>
+              <strong>${escapeHtml(actionLabel(stockEvent.event))}</strong>
+              <span>${escapeHtml(formatActor(stockEvent.actor))} · ${escapeHtml(formatTimestamp(stockEvent.createdAt))}</span>
+              <small>${escapeHtml(`${stockEvent.fromState ?? "none"} → ${stockEvent.toState ?? "none"}`)}</small>
+            </article>
+          `).join("")}
+        </div>
+      ` : ""}
+      ${state.scanEdit.status === "closed"
+        ? renderScanEditEntry(state)
+        : renderScanEditPanel(state)}
+    </div>
+  `;
+}
+
+function renderScanEditEntry(state: RewriteUiState): string {
+  const scan = state.scanResult;
+  if (!scan || scan.mode !== "interact") {
+    return "";
+  }
+  const canReverse = "canReverseIngest" in scan ? scan.canReverseIngest : false;
+  const canEditShared = "canEditSharedType" in scan ? scan.canEditSharedType : false;
+  const pending = state.pendingAction !== null;
+
+  const reverseButton = canReverse
+    ? `<button type="button" data-action="scan-edit-open-reverse" ${disabled(pending)}>Reverse ingest</button>`
+    : `<p class="muted-copy correction-note">Reverse ingest is only possible for fresh, untouched assignments.</p>`;
+  const sharedButton = canEditShared
+    ? `<button type="button" data-action="scan-edit-open-shared" ${disabled(pending)}>Rename shared part type</button>`
+    : "";
+
+  return `
+    <div class="scan-edit-entry">
+      <button type="button" class="disclosure primary" data-action="scan-edit-open" ${disabled(pending)}>Relabel</button>
+      <details class="more-corrections">
+        <summary>More corrections</summary>
+        <div class="more-corrections-body">
+          ${reverseButton}
+          ${sharedButton}
+        </div>
+      </details>
+    </div>
+  `;
+}
+
+function renderLocationTreePicker(
+  knownLocations: readonly string[],
+  current: string,
+  pickAction: string,
+): string {
+  if (knownLocations.length === 0) {
+    return "";
+  }
+  const view = buildTreePickerView(knownLocations, current);
+  const breadcrumbButtons = [
+    `<button type="button" class="disclosure" data-action="${attr(pickAction)}" data-location="">All</button>`,
+    ...view.breadcrumb.map(
+      (entry) =>
+        `<button type="button" class="disclosure" data-action="${attr(pickAction)}" data-location="${attr(entry.pathUpToHere)}">${escapeHtml(entry.segment)}</button>`,
+    ),
+  ].join(`<span class="tree-breadcrumb-sep" aria-hidden="true">/</span>`);
+
+  const children = view.children.length === 0
+    ? ""
+    : `
+      <div class="wide picker" role="listbox" aria-label="Location children">
+        ${view.children
+          .map(
+            (child) => `
+              <button type="button" role="option" data-action="${attr(pickAction)}" data-location="${attr(child.fullPath)}">
+                <strong>${escapeHtml(child.segment)}</strong>
+                ${child.hasChildren ? `<span>nested</span>` : child.isKnownLeaf ? `<span>leaf</span>` : ""}
+              </button>
+            `,
+          )
+          .join("")}
+      </div>
+    `;
+
+  return `
+    <div class="tree-picker wide" aria-label="Location tree">
+      <div class="tree-breadcrumb">${breadcrumbButtons}</div>
+      ${children}
+    </div>
+  `;
+}
+
+function renderCategoryTreePicker(
+  knownCategories: readonly string[],
+  current: string,
+  pickAction: string,
+): string {
+  const view = buildTreePickerView(knownCategories, current);
+  if (knownCategories.length === 0) {
+    return "";
+  }
+  const breadcrumbButtons = [
+    `<button type="button" class="disclosure" data-action="${attr(pickAction)}" data-category="">All</button>`,
+    ...view.breadcrumb.map(
+      (entry) =>
+        `<button type="button" class="disclosure" data-action="${attr(pickAction)}" data-category="${attr(entry.pathUpToHere)}">${escapeHtml(entry.segment)}</button>`,
+    ),
+  ].join(`<span class="tree-breadcrumb-sep" aria-hidden="true">/</span>`);
+
+  const children = view.children.length === 0
+    ? ""
+    : `
+      <div class="wide picker" role="listbox" aria-label="Category children">
+        ${view.children
+          .map(
+            (child) => `
+              <button type="button" role="option" data-action="${attr(pickAction)}" data-category="${attr(child.fullPath)}">
+                <strong>${escapeHtml(child.segment)}</strong>
+                ${child.hasChildren ? `<span>nested</span>` : child.isKnownLeaf ? `<span>leaf</span>` : ""}
+              </button>
+            `,
+          )
+          .join("")}
+      </div>
+    `;
+
+  return `
+    <div class="tree-picker wide" aria-label="Category tree">
+      <div class="tree-breadcrumb">${breadcrumbButtons}</div>
+      ${children}
+    </div>
+  `;
+}
+
+function renderCurrentBorrow(state: RewriteUiState): string {
+  const scan = state.scanResult;
+  if (!scan || scan.mode !== "interact" || !("currentBorrow" in scan)) {
+    return "";
+  }
+  const borrow = scan.currentBorrow;
+  if (!borrow) {
+    return "";
+  }
+  const overdue = borrow.isOverdue
+    ? `<span class="pill overdue borrow-overdue">Overdue</span>`
+    : "";
+  const due = borrow.dueAt
+    ? ` · due ${escapeHtml(formatTimestamp(borrow.dueAt))}`
+    : "";
+  return `
+    <p class="borrow-status">
+      Borrowed by <strong>${escapeHtml(formatActor(borrow.borrower))}</strong> since ${escapeHtml(formatTimestamp(borrow.borrowedAt))}${due}${overdue}
+    </p>
+  `;
+}
+
+function renderScanQuickChips(state: RewriteUiState): string {
+  if (!state.scanResult || state.scanResult.mode !== "interact") {
+    return "";
+  }
+  const entity = state.scanResult.entity;
+  const available = new Set(state.scanResult.availableActions);
+  const pending = state.pendingAction !== null;
+
+  const chips: string[] = [];
+  if (entity.targetType === "bulk") {
+    if (available.has("restocked")) {
+      chips.push(`<button type="button" data-action="quick-bulk-increment" ${disabled(pending)}>+1</button>`);
+    }
+    if (available.has("consumed") && (entity.quantity ?? 0) > 0) {
+      chips.push(`<button type="button" data-action="quick-bulk-decrement" ${disabled(pending)}>-1</button>`);
+    }
+  } else if (entity.state === "checked_out") {
+    // A checked-out item's one obvious action is Return. Re-checkout to someone
+    // else is a rare edge case and stays in the secondary action buttons, not
+    // as a confusing second quick chip next to Return.
+    if (available.has("returned")) {
+      chips.push(`<button type="button" data-action="quick-instance-return" ${disabled(pending)}>Return</button>`);
+    }
+  } else if (entity.state === "available") {
+    if (available.has("checked_out")) {
+      chips.push(`<button type="button" data-action="quick-instance-checkout-me" ${disabled(pending)}>Check out (me)</button>`);
+    }
+  }
+
+  if (chips.length === 0) {
+    return "";
+  }
+
+  return `<div class="quick-chips" aria-label="Quick actions">${chips.join("")}</div>`;
+}
+
+// Human-friendly actor/assignee label. SSO usernames are full emails like
+// "dhivyabharathi.chellakumar_ug2024@ashoka.edu.in"; strip the domain and the
+// "_ug2024"-style roll-number suffix so the activity log reads as a name.
+export function formatActor(actor: string | null | undefined): string {
+  if (!actor) return "system";
+  let name = actor.split("@")[0] ?? actor;
+  name = name.replace(/_[a-z]*\d{2,}.*$/i, "");
+  name = name.replace(/[._]+/g, " ").trim();
+  return name || actor;
+}
+
+function renderScanLocations(state: RewriteUiState): string {
+  if (!state.scanResult || state.scanResult.mode !== "interact") {
+    return "";
+  }
+  const locations = state.scanLocations;
+  const currentPartTypeId = state.scanResult.entity.partType.id;
+  const scannedId = state.scanResult.entity.id;
+  const unit = state.scanResult.entity.partType.unit;
+
+  if (locations.status === "idle") {
+    return "";
+  }
+  if (locations.partTypeId !== currentPartTypeId) {
+    return "";
+  }
+  if (locations.status === "loading") {
+    return `<p class="muted-copy scan-location-note">Loading other locations...</p>`;
+  }
+  if (locations.status === "error") {
+    return `<p class="banner error scan-location-note">${escapeHtml(locations.message)}</p>`;
+  }
+  const { bulkStocks, instances } = locations.data;
+  const total = bulkStocks.length + instances.length;
+  if (total <= 1) {
+    return `<p class="muted-copy scan-location-note">No other ${escapeHtml(state.scanResult.entity.partType.canonicalName)} on record.</p>`;
+  }
+
+  return `
+    <section class="scan-locations" aria-label="Other locations for this part">
+      <p class="muted-copy">At ${total} places:</p>
+      <ul class="scan-location-list">
+        ${bulkStocks.map((bulk) => `
+          <li class="scan-location-item${bulk.id === scannedId ? " selected" : ""}">
+            <span class="scan-location-main">
+              <span class="scan-location-where">${escapeHtml(bulk.location)}</span>
+              <code class="scan-location-code">${escapeHtml(bulk.qrCode)}</code>
+            </span>
+            <span class="scan-location-state">${escapeHtml(String(bulk.quantity))} ${escapeHtml(unit.symbol)}</span>
+          </li>
+        `).join("")}
+        ${instances.map((instance) => `
+          <li class="scan-location-item${instance.id === scannedId ? " selected" : ""}">
+            <span class="scan-location-main">
+              <span class="scan-location-where">${escapeHtml(instance.location)}</span>
+              <code class="scan-location-code">${escapeHtml(instance.qrCode)}</code>
+            </span>
+            <span class="scan-location-state">${escapeHtml(instance.status)}${instance.assignee ? ` · ${escapeHtml(formatActor(instance.assignee))}` : ""}</span>
+          </li>
+        `).join("")}
+      </ul>
+    </section>
+  `;
+}
+
+function renderScanEditPanel(state: RewriteUiState): string {
+  if (state.scanEdit.status !== "open" || !state.scanResult || state.scanResult.mode !== "interact") {
+    return "";
+  }
+  const edit = state.scanEdit;
+  const target = state.scanResult;
+  const targetEntity = target.entity;
+
+  return `
+    <section class="scan-edit-panel" aria-label="Edit this part">
+      <div class="scan-edit-header">
+        <strong>Edit</strong>
+        <button type="button" class="disclosure" data-action="scan-edit-close" ${disabled(state.pendingAction !== null)}>Close</button>
+      </div>
+      <p class="muted-copy">
+        Category: ${escapeHtml(formatCategoryPath(targetEntity.partType.categoryPath))}
+      </p>
+      <div class="wide mode-toggle" role="radiogroup" aria-label="Edit action">
+        <button type="button" role="radio" aria-checked="${String(edit.form.action === "reassign")}" class="${edit.form.action === "reassign" ? "selected" : ""}" data-action="set-scan-edit-action" data-scan-edit-action="reassign">Relabel</button>
+        ${"canEditSharedType" in target && target.canEditSharedType ? `<button type="button" role="radio" aria-checked="${String(edit.form.action === "editShared")}" class="${edit.form.action === "editShared" ? "selected" : ""}" data-action="set-scan-edit-action" data-scan-edit-action="editShared">Rename shared type</button>` : ""}
+        ${"canReverseIngest" in target && target.canReverseIngest ? `<button type="button" role="radio" aria-checked="${String(edit.form.action === "reverseIngest")}" class="${edit.form.action === "reverseIngest" ? "selected" : ""}" data-action="set-scan-edit-action" data-scan-edit-action="reverseIngest">Reverse ingest</button>` : ""}
+      </div>
+
+      ${edit.form.action === "reassign" ? renderScanEditReassignForm(state, edit.form, targetEntity) : ""}
+      ${edit.form.action === "editShared" ? renderScanEditSharedForm(state, edit.form, targetEntity) : ""}
+      ${edit.form.action === "reverseIngest" ? renderScanEditReverseForm(state, edit.form) : ""}
+
+      ${edit.history.length > 0 || edit.historyError ? `
+        <div class="event-list scan-edit-history">
+          ${edit.historyError ? `<p class="banner error">${escapeHtml(edit.historyError)}</p>` : ""}
+          ${edit.history.map((event) => `
+            <article>
+              <strong>${escapeHtml(correctionLabel(event.correctionKind))}</strong>
+              <span>${escapeHtml(formatActor(event.actor))} · ${escapeHtml(formatTimestamp(event.createdAt))}</span>
+              <small>${escapeHtml(event.reason)}</small>
+            </article>
+          `).join("")}
+        </div>
+      ` : ""}
+    </section>
+  `;
+}
+
+function renderScanEditReassignForm(
+  state: RewriteUiState,
+  form: Extract<RewriteUiState["scanEdit"], { status: "open" }>["form"] & { action: "reassign" },
+  targetEntity: Extract<RewriteUiState["scanResult"], { mode: "interact" }>["entity"],
+): string {
+  const compatibleReplacementTypes = (form.search.results.length > 0 ? form.search.results : state.catalogSuggestions)
+    .filter((partType) => partType.id !== targetEntity.partType.id)
+    .filter((partType) => {
+      if (targetEntity.targetType === "instance") {
+        return partType.countable;
+      }
+      return !partType.countable || partType.unit.isInteger;
+    });
+  const selectedReplacement = compatibleReplacementTypes.find((partType) => partType.id === form.replacementPartTypeId);
+  const replacementOptions = selectedReplacement
+    ? [
+      selectedReplacement,
+      ...compatibleReplacementTypes.filter((partType) => partType.id !== selectedReplacement.id),
+    ]
+    : compatibleReplacementTypes;
+
+  return `
+    <form class="form-grid" data-form="scan-edit-reassign">
+      <label class="wide">
+        Find replacement part type
+        <input name="scanEditSearch.query" value="${attr(form.search.query)}" placeholder="Search existing type" />
+      </label>
+      ${form.search.error ? `<p class="banner error wide">${escapeHtml(form.search.error)}</p>` : ""}
+      <div class="wide picker label-suggestion-picker replacement-suggestion-picker" role="radiogroup" aria-label="Replacement part type">
+        ${replacementOptions.map((partType) => `
+          <button type="button" role="radio" aria-checked="${String(form.replacementPartTypeId === partType.id)}" class="${form.replacementPartTypeId === partType.id ? "selected" : ""}" data-action="select-scan-edit-part" data-part-id="${attr(partType.id)}">
+            ${renderPartTileArt(partType, "picker")}
+            <span class="picker-copy">
+              <strong>${escapeHtml(partType.canonicalName)}</strong>
+              <span>${escapeHtml(formatCategoryPath(partType.categoryPath))}</span>
+            </span>
+          </button>
         `).join("")}
       </div>
-    </div>
+      <label class="wide">
+        Reason
+        <textarea name="scanEdit.reason">${escapeHtml(form.reason)}</textarea>
+      </label>
+      <button type="submit" ${disabled(state.pendingAction !== null)}>${state.pendingAction === "correct" ? "Saving..." : "Reassign this scan"}</button>
+    </form>
+  `;
+}
+
+function renderScanEditSharedForm(
+  state: RewriteUiState,
+  form: Extract<RewriteUiState["scanEdit"], { status: "open" }>["form"] & { action: "editShared" },
+  targetEntity: Extract<RewriteUiState["scanResult"], { mode: "interact" }>["entity"],
+): string {
+  const usage = state.inventorySummary.find((row) => row.id === targetEntity.partType.id) ?? null;
+  const sharedEditConflicts = findSharedTypeConflictCandidates(
+    state.inventorySummary,
+    targetEntity.partType.id,
+    form.sharedCanonicalName,
+    form.sharedCategory,
+  );
+
+  return `
+    <form class="form-grid" data-form="scan-edit-shared">
+      <p class="banner error wide">
+        This renames the shared catalog type itself, not just the scanned item.
+        ${usage ? escapeHtml(` It is currently linked to ${usage.entityCount ?? usage.instanceCount + usage.bins} QR${(usage.entityCount ?? usage.instanceCount + usage.bins) === 1 ? "" : "s"} across locations.`) : ""}
+      </p>
+      <label class="wide">
+        Shared canonical name
+        <input name="scanEdit.sharedCanonicalName" value="${attr(form.sharedCanonicalName)}" />
+      </label>
+      <label class="wide">
+        Shared category path
+        <input name="scanEdit.sharedCategory" value="${attr(form.sharedCategory)}" />
+      </label>
+      ${renderCategoryTreePicker(state.knownCategories, form.sharedCategory, "tree-pick-scan-edit-category")}
+      ${sharedEditConflicts.length > 0 ? `
+        <div class="wide">
+          <p class="banner error">A matching part type already exists. Use 'Fix this item only' to reassign this scan instead of renaming the shared type.</p>
+          <div class="picker" role="listbox" aria-label="Existing matching part types">
+            ${sharedEditConflicts.map((match) => `
+              <button type="button" role="option" data-action="select-scan-edit-part" data-part-id="${attr(match.id)}">
+                ${renderIconSlot(iconIdForPart(match.canonicalName, match.categoryPath), match.canonicalName)}
+                <span class="picker-copy">
+                  <strong>${escapeHtml(match.canonicalName)}</strong>
+                  <span>${escapeHtml(formatCategoryPath(match.categoryPath))}</span>
+                </span>
+              </button>
+            `).join("")}
+          </div>
+        </div>
+      ` : ""}
+      <label class="wide">
+        Reason
+        <textarea name="scanEdit.reason">${escapeHtml(form.reason)}</textarea>
+      </label>
+      <button type="submit" ${disabled(state.pendingAction !== null || sharedEditConflicts.length > 0)}>${state.pendingAction === "correct" ? "Saving..." : "Rename shared type"}</button>
+    </form>
+  `;
+}
+
+function renderScanEditReverseForm(
+  state: RewriteUiState,
+  form: Extract<RewriteUiState["scanEdit"], { status: "open" }>["form"] & { action: "reverseIngest" },
+): string {
+  return `
+    <form class="form-grid" data-form="scan-edit-reverse">
+      <p class="banner error">Reverse ingest only when this was the original intake mistake. Historical lifecycle events remain in the audit trail.</p>
+      <label class="wide">
+        Reason
+        <textarea name="scanEdit.reason">${escapeHtml(form.reason)}</textarea>
+      </label>
+      <button type="submit" ${disabled(state.pendingAction !== null)}>${state.pendingAction === "correct" ? "Reversing..." : "Reverse ingest"}</button>
+    </form>
+  `;
+}
+
+function renderInventoryReverseToolbar(state: RewriteUiState, partTypeId: string): string {
+  const selection = state.inventoryReverseSelection;
+  if (selection.partTypeId !== partTypeId || selection.targets.length === 0) {
+    return "";
+  }
+  const count = selection.targets.length;
+  return `
+    <form class="form-grid inventory-reverse-toolbar" data-form="inventory-reverse">
+      <p class="banner error wide">Reversing sends each selected QR back to printed. The correction audit row survives.</p>
+      <label class="wide">
+        Reason
+        <textarea name="inventoryReverse.reason" placeholder="Why is this being reversed?">${escapeHtml(selection.reason)}</textarea>
+      </label>
+      <div class="inventory-reverse-actions">
+        <button type="submit" ${disabled(state.pendingAction !== null || selection.reason.trim().length === 0)}>
+          ${state.pendingAction === "correct" ? "Reversing..." : `Reverse ${count} ingest${count === 1 ? "" : "s"}`}
+        </button>
+        <button type="button" class="disclosure" data-action="inventory-reverse-clear" ${disabled(state.pendingAction !== null)}>Clear selection</button>
+      </div>
+    </form>
+  `;
+}
+
+type InventoryRow = RewriteUiState["inventorySummary"][number];
+
+function stockCategoryGlyph(segment: string): string {
+  const key = segment.toLowerCase().replaceAll("&", "and").replace(/\s+/g, " ").trim();
+  const shell = (body: string) => `
+    <svg class="stock-card-glyph" viewBox="0 0 64 64" aria-hidden="true" fill="none" stroke="currentColor" stroke-width="1.55" stroke-linecap="round" stroke-linejoin="round">
+      ${body}
+    </svg>
+  `;
+
+  switch (key) {
+    case "actuators":
+      return shell(`<path d="M12 40h11l8-8h11l10-10"/><path d="M33 32v12"/><path d="M21 40v8"/><path d="M43 24l9 9"/>`);
+    case "art and craft":
+      return shell(`<path d="M13 46c8-3 14-8 18-16"/><path d="M31 30l8-10"/><path d="M39 20l10 10"/><path d="M19 42c4 2 8 2 12 0"/>`);
+    case "cameras":
+      return shell(`<path d="M14 42h33c3 0 5-2 5-5V24c0-3-2-5-5-5H33l-4 5H18c-3 0-4 1-4 4z"/><path d="M39 28l7 7-7 7"/><path d="M18 30h10"/>`);
+    case "compute":
+      return shell(`<rect x="15" y="18" width="34" height="28" rx="2"/><path d="M22 18v-6M31 18v-6M40 18v-6M22 52v-6M31 52v-6M40 52v-6"/><path d="M24 31h16"/><path d="M24 37h10"/>`);
+    case "drilling":
+      return shell(`<path d="M18 18l14 14"/><path d="M32 32l14-14"/><path d="M26 26l-8 20"/><path d="M38 26l8 20"/>`);
+    case "electronics":
+      return shell(`<rect x="17" y="18" width="30" height="28" rx="2"/><path d="M24 18v-6M32 18v-6M40 18v-6M24 52v-6M32 52v-6M40 52v-6"/><path d="M24 28h16"/><path d="M24 34h8"/><path d="M37 34h3"/>`);
+    case "general electronics":
+      return shell(`<path d="M15 41h18c5 0 8-3 10-8l2-5"/><path d="M41 24h8v8h-8z"/><path d="M18 30l6 6"/><path d="M24 30l-6 6"/>`);
+    case "hand tools":
+      return shell(`<path d="M18 16l11 11"/><path d="M24 10c-4 0-7 3-7 7 0 2 1 4 2 5"/><path d="M45 26l7 7"/><path d="M30 27l15 15"/><path d="M19 45l11-11"/>`);
+    case "materials":
+      return shell(`<path d="M18 42c9-3 15-10 18-20"/><path d="M24 43c7 2 13 2 19 0"/><path d="M21 33c5 1 10 1 16 0"/><path d="M28 22h12"/>`);
+    case "mechanical":
+      return shell(`<path d="M18 36h28"/><path d="M24 30h16"/><path d="M28 24h8"/><path d="M18 42l6 6"/><path d="M46 42l-6 6"/>`);
+    case "motor control":
+      return shell(`<rect x="18" y="20" width="28" height="24" rx="2"/><path d="M24 32h16"/><path d="M24 26h7"/><path d="M35 26h5"/><path d="M30 44v8"/>`);
+    case "motors":
+      return shell(`<path d="M16 40h18"/><path d="M34 25h12l6 7-6 7H34z"/><path d="M22 26v12"/><path d="M18 40l-4 6"/><path d="M26 40l4 6"/>`);
+    case "safety":
+      return shell(`<path d="M32 15l15 6v10c0 9-5 16-15 19-10-3-15-10-15-19V21z"/><path d="M25 31l5 5 9-10"/>`);
+    case "sensors":
+      return shell(`<path d="M14 36h10l5-9 6 14 5-9h10"/><path d="M31 22v5"/><path d="M35 18v4"/>`);
+    case "sewing":
+      return shell(`<path d="M18 44c10-2 16-9 19-20"/><path d="M37 24l7-7"/><path d="M28 40c6 2 12 2 18 0"/>`);
+    case "xtool":
+      return shell(`<path d="M18 16l10 10"/><path d="M36 24l10-10"/><path d="M22 48l10-10"/><path d="M42 48l-10-10"/><path d="M28 26h8"/><path d="M24 40h16"/>`);
+    default:
+      return shell(`<path d="M18 42h20"/><path d="M38 42l8-8"/><path d="M18 42l6-18"/><path d="M24 24h16"/>`);
+  }
+}
+
+function renderStockItemRow(row: InventoryRow, eyebrowPath: readonly string[]): string {
+  const isStocked = row.bins > 0 || row.instanceCount > 0;
+  const eyebrow = eyebrowPath.join(" › ");
+  return `
+    <li class="inventory-row-wrap ${isStocked ? "stocked" : "empty"}">
+      <button type="button" class="inventory-row" data-action="open-part-detail" data-part-type-id="${attr(row.id)}" aria-label="Open ${attr(row.canonicalName)} details">
+        <div class="inventory-row-name">
+          ${renderPartTileArt(row, "inventory")}
+          <span class="inventory-row-copy">
+            <strong>${escapeHtml(row.canonicalName)}</strong>
+            ${eyebrow ? `<span>${escapeHtml(eyebrow)}</span>` : ""}
+          </span>
+        </div>
+        <div class="inventory-row-quantity">
+          <span class="qty-value">${escapeHtml(formatQuantity(row.onHand))}</span>
+          <span class="qty-unit">${escapeHtml(row.unit.symbol)}${row.entityCount > 0 ? ` · ${row.entityCount} QR${row.entityCount === 1 ? "" : "s"}` : ""}</span>
+        </div>
+        <span class="inventory-row-chev" aria-hidden="true">›</span>
+      </button>
+    </li>
+  `;
+}
+
+function encodePath(path: readonly string[]): string {
+  return path.map(encodeURIComponent).join("/");
+}
+
+function renderStockCategoryCard(
+  segment: string,
+  rows: readonly InventoryRow[],
+  path: readonly string[],
+  withGlyph: boolean,
+  isExpanded: boolean,
+): string {
+  const types = rows.length;
+  const qrs = rows.reduce((sum, r) => sum + r.entityCount, 0);
+  const onHand = rows.reduce((sum, r) => sum + r.onHand, 0);
+  const units = new Set(rows.map((r) => r.unit.symbol));
+  const onHandLabel = units.size === 1
+    ? `${formatQuantity(onHand)} ${[...units][0]}`
+    : `${types} type${types === 1 ? "" : "s"}`;
+  return `
+    <button
+      type="button"
+      class="stock-card${isExpanded ? " is-open" : ""}"
+      data-action="stock-toggle"
+      data-category-path="${attr(encodePath(path))}"
+      aria-expanded="${String(isExpanded)}"
+      aria-label="${isExpanded ? "Collapse" : "Expand"} ${attr(segment)}"
+    >
+      ${withGlyph ? stockCategoryGlyph(segment) : ""}
+      <span class="stock-card-copy">
+        <strong class="stock-card-title">${escapeHtml(segment)}</strong>
+        <span class="stock-card-meta">
+          <span>${types} type${types === 1 ? "" : "s"}</span>
+          <span class="stock-card-meta-sep" aria-hidden="true">·</span>
+          <span>${qrs} QR${qrs === 1 ? "" : "s"}</span>
+          <span class="stock-card-meta-sep" aria-hidden="true">·</span>
+          <span>${escapeHtml(onHandLabel)}</span>
+        </span>
+      </span>
+      <span class="stock-card-chev" aria-hidden="true">›</span>
+    </button>
+  `;
+}
+
+function renderStockSubtreeContents(
+  rows: readonly InventoryRow[],
+  path: readonly string[],
+): string {
+  const groups = new Map<string, InventoryRow[]>();
+  const directItems: InventoryRow[] = [];
+  for (const row of rows) {
+    const next = row.categoryPath[path.length];
+    if (next === undefined || next === "") {
+      directItems.push(row);
+    } else {
+      const arr = groups.get(next) ?? [];
+      arr.push(row);
+      groups.set(next, arr);
+    }
+  }
+
+  const sorted = Array.from(groups.entries()).sort((a, b) => a[0].localeCompare(b[0]));
+
+  const directItemsHtml = directItems.length === 0 ? "" : `
+    <ul class="inventory-list stock-subtree-items">
+      ${directItems
+        .slice()
+        .sort((a, b) => a.canonicalName.localeCompare(b.canonicalName))
+        .map((row) => renderStockItemRow(row, []))
+        .join("")}
+    </ul>
+  `;
+
+  const groupsHtml = sorted.map(([segment, groupRows]) => `
+    <section class="stock-sub-group">
+      <h4 class="stock-sub-label">${escapeHtml(segment)} <span class="stock-sub-count">${groupRows.length}</span></h4>
+      ${renderStockSubtreeContents(groupRows, [...path, segment])}
+    </section>
+  `).join("");
+
+  return `${directItemsHtml}${groupsHtml}`;
+}
+
+function renderStockTopLevel(
+  rows: readonly InventoryRow[],
+  browsePath: readonly string[],
+  showAll: boolean,
+): string {
+  const groups = new Map<string, InventoryRow[]>();
+  const directItems: InventoryRow[] = [];
+  for (const row of rows) {
+    const next = row.categoryPath[0];
+    if (next === undefined || next === "") {
+      directItems.push(row);
+    } else {
+      const arr = groups.get(next) ?? [];
+      arr.push(row);
+      groups.set(next, arr);
+    }
+  }
+
+  const sorted = Array.from(groups.entries()).sort((a, b) => a[0].localeCompare(b[0]));
+  const openSegment = browsePath.length > 0 ? browsePath[0] : null;
+
+  const cardsHtml = sorted.map(([segment, groupRows]) => {
+    const isExpanded = showAll || segment === openSegment;
+    const subtreeHtml = isExpanded
+      ? `<div class="stock-accordion-children">${renderStockSubtreeContents(groupRows, [segment])}</div>`
+      : "";
+    return `
+      <li class="stock-accordion-item${isExpanded ? " is-open" : ""}">
+        ${renderStockCategoryCard(segment, groupRows, [segment], true, isExpanded)}
+        ${subtreeHtml}
+      </li>
+    `;
+  }).join("");
+
+  const directItemsHtml = directItems.length === 0 ? "" : `
+    <li class="stock-accordion-items">
+      <ul class="inventory-list">
+        ${directItems
+          .slice()
+          .sort((a, b) => a.canonicalName.localeCompare(b.canonicalName))
+          .map((row) => renderStockItemRow(row, []))
+          .join("")}
+      </ul>
+    </li>
+  `;
+
+  return `
+    <ul class="stock-accordion stock-accordion-depth-0">
+      ${cardsHtml}
+      ${directItemsHtml}
+    </ul>
   `;
 }
 
@@ -674,7 +1932,10 @@ function renderInventoryTab(state: RewriteUiState): string {
   }
 
   const tokens = tokenizeQuery(state.inventoryUi.query);
-  const rows = state.inventorySummary.filter((row) => {
+  const isSearching = tokens.length > 0;
+  const browsePath = state.inventoryUi.browsePath;
+
+  const matchesFilters = (row: InventoryRow): boolean => {
     if (!state.inventoryUi.showEmpty && row.bins === 0 && row.instanceCount === 0) {
       return false;
     }
@@ -686,79 +1947,68 @@ function renderInventoryTab(state: RewriteUiState): string {
       row.unit.name,
     ].join(" ");
     return matchesAllTokens(blob, tokens);
-  });
+  };
 
-  const groups = new Map<string, typeof rows>();
-  for (const row of rows) {
-    const top = row.categoryPath[0] ?? "Uncategorized";
-    const existing = groups.get(top) ?? [];
-    existing.push(row);
-    groups.set(top, existing);
-  }
+  const filteredRows = state.inventorySummary.filter(matchesFilters);
+
+  const totalOnHand = filteredRows.reduce((sum, row) => sum + row.onHand, 0);
+  const totalEntities = filteredRows.reduce((sum, row) => sum + row.entityCount, 0);
+
+  const accordionHtml = !isSearching
+    ? renderStockTopLevel(filteredRows, browsePath, state.inventoryUi.showAll)
+    : "";
+
+  const searchResultsHtml = !isSearching ? "" : `
+    <ul class="inventory-list">
+      ${filteredRows
+        .slice()
+        .sort((a, b) => a.canonicalName.localeCompare(b.canonicalName))
+        .map((row) => renderStockItemRow(row, row.categoryPath))
+        .join("")}
+    </ul>
+  `;
+
+  const emptyCopy = isSearching
+    ? "No inventory entries match your search."
+    : "Nothing in stock yet.";
+
+  const hasContent = filteredRows.length > 0;
 
   return `
-    <section id="panel-inventory" role="tabpanel" aria-labelledby="tab-inventory" class="panel">
+    <section id="panel-inventory" role="tabpanel" aria-labelledby="tab-inventory" class="panel panel-inventory" data-motion-surface="stock">
+      <header class="panel-head">
+        <h2>Stock</h2>
+      </header>
+      <div class="stock-summary">
+        <div class="stock-summary-cell">
+          <span class="stock-summary-label">Types</span>
+          <strong class="stock-summary-value">${filteredRows.length}</strong>
+        </div>
+        <div class="stock-summary-cell">
+          <span class="stock-summary-label">QRs</span>
+          <strong class="stock-summary-value">${totalEntities}</strong>
+        </div>
+        <div class="stock-summary-cell">
+          <span class="stock-summary-label">On hand</span>
+          <strong class="stock-summary-value">${escapeHtml(formatQuantity(totalOnHand))}</strong>
+        </div>
+      </div>
       <div class="stock-controls">
         <input type="search" aria-label="Filter inventory" name="inventory.query" value="${attr(state.inventoryUi.query)}" placeholder="Search..." />
+        <label class="inventory-toggle">
+          <input type="checkbox" name="inventory.showAll"${checked(state.inventoryUi.showAll)} />
+          Show all
+        </label>
         <label class="inventory-toggle">
           <input type="checkbox" name="inventory.showEmpty"${checked(state.inventoryUi.showEmpty)} />
           Show empty
         </label>
       </div>
-      ${rows.length === 0 ? `<p class="muted-copy">No inventory entries match your filter.</p>` : Array.from(groups.entries()).sort((a, b) => a[0].localeCompare(b[0])).map(([top, items]) => `
-        <section class="inventory-group">
-          <h3 class="inventory-group-title"><span>${escapeHtml(top)}</span><span class="inventory-group-count">${items.length}</span></h3>
-          <ul class="inventory-list">
-            ${items.map((row) => {
-              const subPath = row.categoryPath.slice(1).join(" / ");
-              const isStocked = row.bins > 0 || row.instanceCount > 0;
-              const isExpanded = state.inventoryUi.expandedId === row.id;
-              const expandedItems = isExpanded ? state.inventoryUi.expandedItems.get(row.id) ?? null : null;
-              const expandedError = isExpanded ? state.inventoryUi.expandedErrors.get(row.id) ?? null : null;
-              return `
-                <li class="inventory-row-wrap ${isStocked ? "stocked" : "empty"} ${isExpanded ? "expanded" : ""}">
-                  <button type="button" class="inventory-row" data-action="toggle-inventory-expand" data-part-type-id="${attr(row.id)}" aria-expanded="${String(isExpanded)}">
-                    <div class="inventory-row-name">
-                      <strong>${escapeHtml(row.canonicalName)}</strong>
-                      ${subPath ? `<span>${escapeHtml(subPath)}</span>` : ""}
-                    </div>
-                    <div class="inventory-row-quantity">
-                      <span class="qty-value">${row.countable ? row.instanceCount : escapeHtml(formatQuantity(row.onHand))}</span>
-                      <span class="qty-unit">${escapeHtml(row.unit.symbol)}</span>
-                    </div>
-                  </button>
-                  <button type="button" class="inventory-row-arrow" data-action="open-part-detail" data-part-type-id="${attr(row.id)}" aria-label="Open ${attr(row.canonicalName)} details">
-                    <span aria-hidden="true">›</span>
-                  </button>
-                  ${isExpanded ? `
-                    <div class="inventory-row-detail">
-                      ${expandedError ? `<p class="banner error">${escapeHtml(expandedError)}</p>` : expandedItems && (expandedItems.bulkStocks.length > 0 || expandedItems.instances.length > 0) ? `
-                        <ul class="inventory-detail-list">
-                          ${expandedItems.bulkStocks.map((bulk) => `
-                            <li class="inventory-detail-item">
-                              <code>${escapeHtml(bulk.qrCode)}</code>
-                              <span>${escapeHtml(bulk.location)}</span>
-                              <strong>${escapeHtml(formatQuantity(bulk.quantity))} ${escapeHtml(row.unit.symbol)}</strong>
-                            </li>
-                          `).join("")}
-                          ${expandedItems.instances.map((instance) => `
-                            <li class="inventory-detail-item">
-                              <code>${escapeHtml(instance.qrCode)}</code>
-                              <span>${escapeHtml(instance.location)}</span>
-                              <strong>${escapeHtml(instance.status)}</strong>
-                              ${instance.assignee ? `<span>${escapeHtml(instance.assignee)}</span>` : ""}
-                            </li>
-                          `).join("")}
-                        </ul>
-                      ` : `<p class="muted-copy">No items assigned to this part type.</p>`}
-                    </div>
-                  ` : ""}
-                </li>
-              `;
-            }).join("")}
-          </ul>
-        </section>
-      `).join("")}
+      ${!hasContent
+        ? `<p class="muted-copy">${emptyCopy}</p>`
+        : isSearching
+          ? searchResultsHtml
+          : accordionHtml}
     </section>
   `;
 }
@@ -770,7 +2020,7 @@ function renderPartTypeDetail(state: RewriteUiState, partTypeId: string): string
 
   if (!row) {
     return `
-      <section id="panel-inventory" role="tabpanel" aria-labelledby="tab-inventory" class="panel">
+      <section id="panel-inventory" role="tabpanel" aria-labelledby="tab-inventory" class="panel panel-workspace panel-inventory" data-motion-surface="stock-detail">
         <div class="part-detail">
           <button type="button" class="part-detail-back" data-action="close-part-detail">
             <span aria-hidden="true">‹</span> Back to Assets
@@ -800,13 +2050,14 @@ function renderPartTypeDetail(state: RewriteUiState, partTypeId: string): string
   const locations = Array.from(byLocation.entries()).sort((a, b) => a[0].localeCompare(b[0]));
 
   return `
-    <section id="panel-inventory" role="tabpanel" aria-labelledby="tab-inventory" class="panel">
+    <section id="panel-inventory" role="tabpanel" aria-labelledby="tab-inventory" class="panel panel-workspace panel-inventory" data-motion-surface="stock-detail">
       <div class="part-detail">
         <button type="button" class="part-detail-back" data-action="close-part-detail">
           <span aria-hidden="true">‹</span> Back to Assets
         </button>
 
         <header class="part-detail-header">
+          ${renderPartHero(row, "detail")}
           <p class="eyebrow">${escapeHtml(categoryTop)}${subPath ? ` / ${escapeHtml(subPath)}` : ""}</p>
           <h2 class="part-detail-name">${escapeHtml(row.canonicalName)}</h2>
           <dl class="part-detail-stats">
@@ -844,7 +2095,7 @@ function renderPartTypeDetail(state: RewriteUiState, partTypeId: string): string
                       <li class="location-item">
                         <code>${escapeHtml(inst.qrCode)}</code>
                         <span class="location-item-kind">${escapeHtml(inst.status)}</span>
-                        ${inst.assignee ? `<span class="muted-copy">${escapeHtml(inst.assignee)}</span>` : ""}
+                        ${inst.assignee ? `<span class="muted-copy">${escapeHtml(formatActor(inst.assignee))}</span>` : ""}
                       </li>
                     `).join("")}
                   </ul>
@@ -859,26 +2110,68 @@ function renderPartTypeDetail(state: RewriteUiState, partTypeId: string): string
 }
 
 function renderDashboardTab(state: RewriteUiState): string {
+  const sync = state.partDbSyncStatus;
+  const health = state.partDbStatus;
+  const queueCount = sync?.pending ?? 0;
+  const failureCount = sync?.failedLast24h ?? 0;
+  const queueTone = failureCount > 0 ? "error" : queueCount > 0 ? "warn" : "ok";
+  const queueLabel = failureCount > 0
+    ? `${failureCount} failed`
+    : queueCount > 0
+      ? `${queueCount} pending`
+      : "clear";
+  const healthTone = health?.connected ? "ok" : health?.configured ? "warn" : "error";
+  const healthLabel = health?.connected ? "OK" : health?.configured ? "checking" : "off";
+
   return `
-    <section id="panel-dashboard" role="tabpanel" aria-labelledby="tab-dashboard" class="panel">
-      <section class="metrics">
-        ${renderMetric("Part types", state.dashboard?.partTypeCount ?? 0)}
-        ${renderMetric("Instances", state.dashboard?.instanceCount ?? 0)}
-        ${renderMetric("Bulk bins", state.dashboard?.bulkStockCount ?? 0)}
-        ${renderMetric("Provisional", state.dashboard?.provisionalCount ?? 0)}
-        ${renderMetric("Unassigned QRs", state.dashboard?.unassignedQrCount ?? 0)}
+    <section id="panel-dashboard" role="tabpanel" aria-labelledby="tab-dashboard" class="panel-dashboard" data-motion-surface="dashboard">
+      <section class="dash-grid" aria-label="Inventory counts">
+        ${renderDashTile("Part types", state.dashboard?.partTypeCount ?? 0)}
+        ${renderDashTile("Instances", state.dashboard?.instanceCount ?? 0)}
+        ${renderDashTile("Bulk bins", state.dashboard?.bulkStockCount ?? 0)}
+        ${renderDashTile("Provisional", state.dashboard?.provisionalCount ?? 0)}
+        ${renderDashTile("Unassigned QRs", state.dashboard?.unassignedQrCount ?? 0)}
+        ${renderDashTile("Checked out", state.dashboard?.recentEvents.length ?? 0)}
+      </section>
+      <section class="dash-health" aria-labelledby="dash-health-heading" data-motion-surface="sync-panel">
+        <h3 id="dash-health-heading" class="dash-health-title">Part-DB Health</h3>
+        <dl class="dash-health-list">
+          <div class="dash-health-row">
+            <dt>Health</dt>
+            <dd class="dash-health-value tone-${healthTone}"><span class="dot" aria-hidden="true"></span>${escapeHtml(healthLabel)}</dd>
+          </div>
+          <div class="dash-health-row">
+            <dt>Queue</dt>
+            <dd class="dash-health-value tone-${queueTone}"><span class="dot" aria-hidden="true"></span>${escapeHtml(queueLabel)}</dd>
+          </div>
+          <div class="dash-health-row">
+            <dt>Last sync</dt>
+            <dd class="dash-health-value tone-muted">${state.dashboard ? "live" : "—"}</dd>
+          </div>
+        </dl>
+        <button type="button" class="dash-health-link" data-action="change-tab" data-tab="admin">
+          Open sync center →
+        </button>
       </section>
     </section>
+  `;
+}
+
+function renderDashTile(label: string, value: number): string {
+  return `
+    <article class="dash-tile">
+      <span class="dash-tile-label">${escapeHtml(label)}</span>
+      <strong class="dash-tile-value">${value.toLocaleString("en-US")}</strong>
+    </article>
   `;
 }
 
 function renderActivityTab(state: RewriteUiState): string {
   const events = state.dashboard?.recentEvents ?? [];
   return `
-    <section id="panel-activity" role="tabpanel" aria-labelledby="tab-activity" class="panel">
-      <header class="activity-header">
-        <p class="eyebrow">Activity</p>
-        <h2>Recent events</h2>
+    <section id="panel-activity" role="tabpanel" aria-labelledby="tab-activity" class="panel panel-activity" data-motion-surface="activity">
+      <header class="panel-head">
+        <h2>Activity</h2>
       </header>
       ${events.length === 0 && state.scanHistory.length === 0 ? `<p class="activity-empty">No activity yet. Events appear here as you scan and update inventory.</p>` : ""}
       ${events.length > 0 ? `
@@ -890,7 +2183,7 @@ function renderActivityTab(state: RewriteUiState): string {
               <span class="activity-icon tone-${icon.tone}" aria-hidden="true">${escapeHtml(icon.glyph)}</span>
               <div class="activity-item-body">
                 <div class="activity-item-header">
-                  <span class="activity-action">${escapeHtml(`${actionLabel(event.event)} by ${event.actor ?? "system"}`)}</span>
+                  <span class="activity-action">${escapeHtml(`${actionLabel(event.event)} by ${formatActor(event.actor)}`)}</span>
                   <span class="activity-time">${escapeHtml(formatTimestamp(event.createdAt))}</span>
                 </div>
                 ${event.partName ? `<span class="activity-item-name">${escapeHtml(event.partName)}</span>` : ""}
@@ -901,6 +2194,7 @@ function renderActivityTab(state: RewriteUiState): string {
           }).join("")}
         </ul>
       ` : ""}
+      ${renderCorrectionLog(state)}
       ${state.scanHistory.length > 0 ? `
         <h3 class="activity-section-title">This session</h3>
         <ul class="activity-list">
@@ -922,15 +2216,117 @@ function renderActivityTab(state: RewriteUiState): string {
   `;
 }
 
+function renderCorrectionLog(state: RewriteUiState): string {
+  if (state.correctionLog.length === 0 && !state.correctionLogError) {
+    return "";
+  }
+  return `
+    <h3 class="activity-section-title">Corrections</h3>
+    ${state.correctionLogError ? `<p class="banner error">${escapeHtml(state.correctionLogError)}</p>` : ""}
+    <ul class="activity-list correction-log">
+      ${state.correctionLog.map((event) => {
+        const after = (event.after ?? null) as Record<string, unknown> | null;
+        const before = (event.before ?? null) as Record<string, unknown> | null;
+        const qrCode =
+          typeof after?.qrCode === "string"
+            ? after.qrCode
+            : typeof before?.qrCode === "string"
+              ? before.qrCode
+              : null;
+        return `
+          <li class="activity-item correction-item">
+            <span class="activity-icon tone-correction" aria-hidden="true">↺</span>
+            <div class="activity-item-body">
+              <div class="activity-item-header">
+                <span class="activity-action">${escapeHtml(correctionLabel(event.correctionKind))}</span>
+                <span class="activity-time">${escapeHtml(formatTimestamp(event.createdAt))}</span>
+              </div>
+              ${qrCode ? `<span class="activity-item-name"><code class="activity-code">${escapeHtml(qrCode)}</code></span>` : ""}
+              <span class="activity-detail">${escapeHtml(event.reason)}</span>
+              <span class="correction-actor">by ${escapeHtml(formatActor(event.actor))}</span>
+              ${qrCode ? `<button type="button" class="correction-link" data-action="open-correction-on-scan" data-qr-code="${attr(qrCode)}">Open on scan →</button>` : ""}
+            </div>
+          </li>
+        `;
+      }).join("")}
+    </ul>
+  `;
+}
+
 function renderAdminTab(state: RewriteUiState): string {
   const syncEnabled = state.partDbSyncStatus?.enabled ?? false;
-  const mergeOptions = state.mergeSearch.results.length > 0 ? state.mergeSearch.results : state.catalogSuggestions;
   const isDownloadingLabels = state.downloadingBatchId === state.latestBatch?.id;
 
+  const categoryAgg = new Map<string, { types: number; onHand: number; unit: string }>();
+  for (const row of state.inventorySummary) {
+    const top = row.categoryPath[0] ?? "Uncategorized";
+    const prev = categoryAgg.get(top) ?? { types: 0, onHand: 0, unit: row.unit.symbol };
+    prev.types += 1;
+    prev.onHand += row.onHand;
+    categoryAgg.set(top, prev);
+  }
+  const categoryRows = Array.from(categoryAgg.entries())
+    .sort((a, b) => a[0].localeCompare(b[0]));
+
+  const partDbLinked = state.partDbStatus?.connected ?? false;
+
   return `
-    <section id="panel-admin" role="tabpanel" aria-labelledby="tab-admin">
-      <section class="panel">
-        ${renderPanelTitle("Part-DB sync", "SmartDB remains writable while sync catches up in the background.")}
+    <section id="panel-admin" role="tabpanel" aria-labelledby="tab-admin" class="panel panel-admin" data-motion-surface="admin">
+      <header class="panel-head">
+        <h2>Assets</h2>
+      </header>
+
+      <ul class="assets-list">
+        ${categoryRows.map(([top, info]) => `
+          <li class="assets-row">
+            <span class="assets-row-name">${escapeHtml(top.toUpperCase())}</span>
+            <span class="assets-row-meta">${info.types} type${info.types === 1 ? "" : "s"}</span>
+            <span class="assets-row-value">${escapeHtml(formatQuantity(info.onHand))} on hand</span>
+            <span class="assets-row-chev" aria-hidden="true">›</span>
+          </li>
+        `).join("")}
+        ${categoryRows.length === 0 ? `<li class="assets-row assets-row-empty"><span class="assets-row-name">No inventory yet</span></li>` : ""}
+      </ul>
+
+      <p class="admin-section-label">Admin shortcuts</p>
+      <ul class="admin-shortcuts">
+        <li>
+          <a class="admin-shortcut" href="#admin-sync">
+            <span class="admin-shortcut-icon" aria-hidden="true">
+              <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round">
+                <path d="M3 12a9 9 0 0 1 15-6.7L21 8"/>
+                <path d="M21 3v5h-5"/>
+                <path d="M21 12a9 9 0 0 1-15 6.7L3 16"/>
+                <path d="M3 21v-5h5"/>
+              </svg>
+            </span>
+            <span class="admin-shortcut-label">Sync Center</span>
+            <span class="admin-shortcut-meta">
+              <span class="status-dot ${partDbLinked ? "ok" : "warn"}" aria-hidden="true"></span>
+              ${partDbLinked ? "PART-DB linked" : "PART-DB offline"}
+            </span>
+            <span class="admin-shortcut-chev" aria-hidden="true">›</span>
+          </a>
+        </li>
+        <li>
+          <a class="admin-shortcut" href="#admin-batches">
+            <span class="admin-shortcut-icon" aria-hidden="true">
+              <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round">
+                <rect x="3" y="3" width="7" height="7" rx="1"/>
+                <rect x="14" y="3" width="7" height="7" rx="1"/>
+                <rect x="3" y="14" width="7" height="7" rx="1"/>
+                <rect x="14" y="14" width="7" height="7" rx="1"/>
+              </svg>
+            </span>
+            <span class="admin-shortcut-label">QR Batch Tools</span>
+            <span class="admin-shortcut-chev" aria-hidden="true">›</span>
+          </a>
+        </li>
+      </ul>
+
+      <div class="admin-grid">
+      <section class="panel" id="admin-sync" data-motion-surface="sync-panel">
+        ${renderPanelTitle("Part-DB sync", "SmartDB remains writable while sync catches up in the background.", "sync")}
         <div class="sync-status-grid">
           <div class="sync-status-card"><strong>Queued</strong><span>${state.partDbSyncStatus?.pending ?? 0}</span></div>
           <div class="sync-status-card"><strong>In flight</strong><span>${state.partDbSyncStatus?.inFlight ?? 0}</span></div>
@@ -956,15 +2352,15 @@ function renderAdminTab(state: RewriteUiState): string {
         ` : `<p class="muted-copy">No recent sync failures.</p>`}
       </section>
 
-      <section class="panel">
-        ${renderPanelTitle("Print QR batches", state.authState.status === "authenticated" ? `Pre-register sticker ranges. This batch will be attributed to ${state.authState.session.username}.` : "Pre-register sticker ranges.")}
+      <section class="panel" id="admin-batches">
+        ${renderPanelTitle("Print QR batches", state.authState.status === "authenticated" ? `Pre-register sticker ranges. This batch will be attributed to ${formatActor(state.authState.session.username)}.` : "Pre-register sticker ranges.", "batch")}
         <p class="muted-copy batch-preview">Next range preview: ${escapeHtml(state.batchForm.prefix)}-${state.batchForm.startNumber} to ${escapeHtml(state.batchForm.prefix)}-${state.batchForm.startNumber + state.batchForm.count - 1} (${state.batchForm.count} labels)</p>
         ${state.latestBatch ? `
           <div class="latest-batch-card">
             <div>
               <strong>Latest batch</strong>
               <p>${escapeHtml(`${state.latestBatch.id} · ${state.latestBatch.prefix}-${state.latestBatch.startNumber} to ${state.latestBatch.prefix}-${state.latestBatch.endNumber}`)}</p>
-              <small>${escapeHtml(`${state.latestBatch.endNumber - state.latestBatch.startNumber + 1} labels · created by ${state.latestBatch.actor}`)}</small>
+              <small>${escapeHtml(`${state.latestBatch.endNumber - state.latestBatch.startNumber + 1} labels · created by ${formatActor(state.latestBatch.actor)}`)}</small>
             </div>
             <button type="button" data-action="download-labels" ${disabled(isDownloadingLabels)}>${isDownloadingLabels ? "Downloading..." : "Download PDF Labels"}</button>
           </div>
@@ -977,53 +2373,7 @@ function renderAdminTab(state: RewriteUiState): string {
         </form>
       </section>
 
-      <section class="panel">
-        ${renderPanelTitle("Canonicalize provisional types", "Merge cleanup uses its own predictive search state and request ordering.")}
-        <div class="stack">
-          <label>
-            Provisional source
-            <select name="merge.sourceId">
-              <option value="">Select provisional type</option>
-              ${state.provisionalPartTypes.map((partType) => `<option value="${attr(partType.id)}"${selected(state.mergeSourceId === partType.id)}>${escapeHtml(`${partType.canonicalName} · ${formatCategoryPath(partType.categoryPath)}`)}</option>`).join("")}
-            </select>
-          </label>
-          ${state.mergeSourceId ? `<button type="button" data-action="approve-part" data-part-id="${attr(state.mergeSourceId)}" ${disabled(state.pendingAction !== null)}>Keep As-Is</button>` : ""}
-          <label>
-            Find canonical destination
-            <input name="mergeSearch.query" value="${attr(state.mergeSearch.query)}" placeholder="Search existing type" />
-          </label>
-          ${state.mergeSearch.error ? `<p class="banner error">${escapeHtml(state.mergeSearch.error)}</p>` : ""}
-          <div class="picker" role="radiogroup" aria-label="Canonical destination">
-            ${mergeOptions.map((partType) => `
-              <button type="button" role="radio" aria-checked="${String(state.mergeDestinationId === partType.id)}" class="${state.mergeDestinationId === partType.id ? "selected" : ""}" data-action="select-merge-destination" data-part-id="${attr(partType.id)}">
-                <strong>${escapeHtml(partType.canonicalName)}</strong>
-                <span>${escapeHtml(formatCategoryPath(partType.categoryPath))}</span>
-              </button>
-            `).join("")}
-          </div>
-          <button type="button" data-action="merge-parts" ${disabled(state.pendingAction !== null)}>${state.pendingAction === "merge" ? "Merging..." : "Merge provisional type"}</button>
-        </div>
-      </section>
-
-      <section class="panel">
-        ${renderPanelTitle("Correct mislabeled ingest", "Scan an already-ingested item or bin, then correct its linked part type, edit the shared definition, or reverse the ingest with a typed correction record.")}
-        <form class="scan-form" data-form="correction-scan">
-          <label class="sr-only" for="correction-scan-input">Scan ingested QR / Data Matrix</label>
-          <input
-            id="correction-scan-input"
-            name="correction.scanCode"
-            aria-label="Scan ingested QR / Data Matrix"
-            placeholder="Scan ingested QR / Data Matrix"
-            value="${attr(state.correctionUi.scanCode)}"
-            autocomplete="off"
-          />
-          <button type="submit" ${disabled(state.pendingAction !== null)}>
-            ${state.pendingAction === "correct" ? "Opening..." : "Open"}
-          </button>
-        </form>
-        ${state.correctionUi.targetError ? `<p class="banner error">${escapeHtml(state.correctionUi.targetError)}</p>` : ""}
-        ${state.correctionUi.target ? renderCorrectionTarget(state) : ""}
-      </section>
+      </div>
     </section>
   `;
 }
@@ -1347,129 +2697,16 @@ function scanModeLabel(mode: string): string {
   }
 }
 
-function renderCorrectionTarget(state: RewriteUiState): string {
-  const target = state.correctionUi.target!;
-  const targetEntity = target.entity;
-  const usage = state.inventorySummary.find((row) => row.id === targetEntity.partType.id) ?? null;
-  const sharedEditConflicts = findSharedTypeConflictCandidates(
-    state.inventorySummary,
-    targetEntity.partType.id,
-    state.correctionUi.sharedCanonicalName,
-    state.correctionUi.sharedCategory,
-  );
-  const compatibleReplacementTypes = (state.correctionUi.search.results.length > 0 ? state.correctionUi.search.results : state.catalogSuggestions)
-    .filter((partType) => partType.id !== targetEntity.partType.id)
-    .filter((partType) => {
-      if (targetEntity.targetType === "instance") {
-        return partType.countable;
-      }
-      return !partType.countable || partType.unit.isInteger;
-    });
 
-  return `
-    <div class="result-card">
-      <h3>${escapeHtml(targetEntity.partType.canonicalName)}</h3>
-      <p class="muted-copy">
-        ${escapeHtml(target.qrCode.code)} · ${escapeHtml(targetEntity.targetType)} · ${escapeHtml(targetEntity.location)}
-      </p>
-      <p class="muted-copy">
-        Category: ${escapeHtml(formatCategoryPath(targetEntity.partType.categoryPath))}
-      </p>
-      <div class="wide mode-toggle" role="radiogroup" aria-label="Correction action">
-        <button type="button" role="radio" aria-checked="${String(state.correctionUi.action === "reassign")}" class="${state.correctionUi.action === "reassign" ? "selected" : ""}" data-action="set-correction-action" data-correction-action="reassign">Fix this item/bin only</button>
-        <button type="button" role="radio" aria-checked="${String(state.correctionUi.action === "editShared")}" class="${state.correctionUi.action === "editShared" ? "selected" : ""}" data-action="set-correction-action" data-correction-action="editShared">Rename shared type (all linked items)</button>
-        <button type="button" role="radio" aria-checked="${String(state.correctionUi.action === "reverseIngest")}" class="${state.correctionUi.action === "reverseIngest" ? "selected" : ""}" data-action="set-correction-action" data-correction-action="reverseIngest">Reverse ingest</button>
-      </div>
-
-      ${state.correctionUi.action === "reassign" ? `
-        <form class="form-grid" data-form="correction-reassign">
-          <label class="wide">
-            Find replacement part type
-            <input name="correctionSearch.query" value="${attr(state.correctionUi.search.query)}" placeholder="Search existing type" />
-          </label>
-          ${state.correctionUi.search.error ? `<p class="banner error wide">${escapeHtml(state.correctionUi.search.error)}</p>` : ""}
-          <div class="wide picker" role="radiogroup" aria-label="Replacement part type">
-            ${compatibleReplacementTypes.map((partType) => `
-              <button type="button" role="radio" aria-checked="${String(state.correctionUi.replacementPartTypeId === partType.id)}" class="${state.correctionUi.replacementPartTypeId === partType.id ? "selected" : ""}" data-action="select-correction-part" data-part-id="${attr(partType.id)}">
-                <strong>${escapeHtml(partType.canonicalName)}</strong>
-                <span>${escapeHtml(formatCategoryPath(partType.categoryPath))}</span>
-              </button>
-            `).join("")}
-          </div>
-          <label class="wide">
-            Reason
-            <textarea name="correction.reason">${escapeHtml(state.correctionUi.reason)}</textarea>
-          </label>
-          <button type="submit" ${disabled(state.pendingAction !== null)}>${state.pendingAction === "correct" ? "Saving..." : "Reassign item/bin"}</button>
-        </form>
-      ` : ""}
-
-      ${state.correctionUi.action === "editShared" ? `
-        <form class="form-grid" data-form="correction-edit-shared">
-          <p class="banner error wide">
-            This renames the shared catalog type itself, not just the scanned item.
-            ${usage ? escapeHtml(` It is currently linked to ${usage.instanceCount} tracked items and ${usage.bins} bulk bins.`) : ""}
-          </p>
-          <label class="wide">
-            Shared canonical name
-            <input name="correction.sharedCanonicalName" value="${attr(state.correctionUi.sharedCanonicalName)}" />
-          </label>
-          <label class="wide">
-            Shared category path
-            <input name="correction.sharedCategory" value="${attr(state.correctionUi.sharedCategory)}" />
-          </label>
-          ${sharedEditConflicts.length > 0 ? `
-            <div class="wide">
-              <p class="banner error">A matching part type already exists. Reassign this scanned item to it instead of renaming the shared type.</p>
-              <div class="picker" role="listbox" aria-label="Existing matching part types">
-                ${sharedEditConflicts.map((match) => `
-                  <button type="button" role="option" data-action="use-correction-match" data-part-id="${attr(match.id)}" data-query="${attr(match.canonicalName)}">
-                    <strong>${escapeHtml(match.canonicalName)}</strong>
-                    <span>${escapeHtml(formatCategoryPath(match.categoryPath))}</span>
-                  </button>
-                `).join("")}
-              </div>
-            </div>
-          ` : ""}
-          <label class="wide">
-            Reason
-            <textarea name="correction.reason">${escapeHtml(state.correctionUi.reason)}</textarea>
-          </label>
-          <button type="submit" ${disabled(state.pendingAction !== null || sharedEditConflicts.length > 0)}>${state.pendingAction === "correct" ? "Saving..." : "Rename shared type"}</button>
-        </form>
-      ` : ""}
-
-      ${state.correctionUi.action === "reverseIngest" ? `
-        <form class="form-grid" data-form="correction-reverse-ingest">
-          <p class="banner error">Reverse ingest only when this was the original intake mistake. Historical lifecycle events remain in the audit trail.</p>
-          <label class="wide">
-            Reason
-            <textarea name="correction.reason">${escapeHtml(state.correctionUi.reason)}</textarea>
-          </label>
-          <button type="submit" ${disabled(state.pendingAction !== null)}>${state.pendingAction === "correct" ? "Reversing..." : "Reverse ingest"}</button>
-        </form>
-      ` : ""}
-
-      <div class="event-list" style="margin-top:1rem">
-        ${target.recentEvents.map((stockEvent) => `
-          <article>
-            <strong>${escapeHtml(actionLabel(stockEvent.event))}</strong>
-            <span>${escapeHtml(stockEvent.actor)} · ${escapeHtml(formatTimestamp(stockEvent.createdAt))}</span>
-            <small>${escapeHtml(`${stockEvent.fromState ?? "none"} → ${stockEvent.toState ?? "none"}`)}</small>
-          </article>
-        `).join("")}
-        ${state.correctionUi.history.map((event) => `
-          <article>
-            <strong>${escapeHtml(correctionLabel(event.correctionKind))}</strong>
-            <span>${escapeHtml(event.actor)} · ${escapeHtml(formatTimestamp(event.createdAt))}</span>
-            <small>${escapeHtml(event.reason)}</small>
-          </article>
-        `).join("")}
-      </div>
-
-      <button type="button" data-action="correction-clear" ${disabled(state.pendingAction !== null)} style="margin-top:1rem">Clear correction target</button>
-    </div>
-  `;
+function emptyBulkQueueCopy(action: "label" | "move" | "delete"): string {
+  switch (action) {
+    case "label":
+      return "Scan printed Smart DB labels to build a homogeneous bulk labeling queue.";
+    case "move":
+      return "Scan assigned Smart DB labels to move several entities at once.";
+    case "delete":
+      return "Scan fresh ingests whose history is still just the original labeled event to reverse them in bulk.";
+  }
 }
 
 function correctionLabel(kind: string): string {

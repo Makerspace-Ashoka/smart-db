@@ -22,6 +22,7 @@ export interface AppConfig {
   publicBaseUrl: string;
   dataPath: string;
   sessionCookieName: string;
+  devAuthBypass: boolean;
   partDb: {
     baseUrl: string | null;
     publicBaseUrl: string | null;
@@ -53,6 +54,7 @@ export function parseConfig(environment: Partial<Record<keyof ConfigEnvironment,
       parsedEnvironment.PUBLIC_BASE_URL.startsWith("https://")
         ? "__Host-smartdb_session"
         : "smartdb_session",
+    devAuthBypass: parsedEnvironment.DEV_AUTH_BYPASS,
     partDb: {
       baseUrl: parsedEnvironment.PARTDB_BASE_URL,
       publicBaseUrl: parsedEnvironment.PARTDB_PUBLIC_BASE_URL,
@@ -78,6 +80,7 @@ export const config = parseConfig({
   PARTDB_PUBLIC_BASE_URL: process.env.PARTDB_PUBLIC_BASE_URL,
   PARTDB_API_TOKEN: process.env.PARTDB_API_TOKEN,
   PARTDB_SYNC_ENABLED: process.env.PARTDB_SYNC_ENABLED,
+  DEV_AUTH_BYPASS: process.env.DEV_AUTH_BYPASS,
   SESSION_COOKIE_SECRET: process.env.SESSION_COOKIE_SECRET,
   ZITADEL_ISSUER: process.env.ZITADEL_ISSUER,
   ZITADEL_CLIENT_ID: process.env.ZITADEL_CLIENT_ID,

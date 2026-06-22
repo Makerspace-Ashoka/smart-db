@@ -119,6 +119,20 @@ Create a new **Web** application in Zitadel (`https://auth.makerspace.tools`) wi
 
 ## Day-to-day operation
 
+### Branch flow
+
+Use `dev` as the integration branch. Feature and fix branches open PRs against
+`dev`; those PRs get the preview environment and staging path. Production changes
+then move as a `dev` → `main` PR. The PR hygiene workflow fails direct
+feature-branch PRs into `main`, so `main` should only receive release PRs from
+the canonical `dev` branch.
+
+Merged PRs into `dev` also clean up their head branches when the branch name is
+an ordinary topic prefix: `feat/`, `feature/`, `fix/`, `impr/`, `docs/`, `style/`,
+`refactor/`, `perf/`, `test/`, `build/`, `ci/`, `chore/`, `revert/`, `codex/`, or
+`dependabot/`. Long-lived branches such as `main`, `dev`, `release/*`, and
+`hotfix/*` are intentionally preserved.
+
 ### Trigger a staging deploy
 
 Any push to `dev` automatically deploys to staging after the check job passes. To redeploy without a code change:

@@ -69,6 +69,27 @@ describe("AuthService", () => {
     });
   });
 
+  it("removes transient auth errors from the post-login return target", async () => {
+    const service = new AuthService(
+      {
+        authorizationUrl: vi.fn(async () => "https://auth.example.com/login"),
+        exchangeAuthorizationCode: vi.fn(),
+        logoutUrl: vi.fn(),
+      } as never,
+      new SessionStore(db),
+      {
+        frontendOrigin: "https://smartdb.example.com",
+        redirectUri: "https://smartdb.example.com/api/auth/callback",
+        sessionCookieSecret: "super-secret",
+      },
+    );
+
+    const result = await service.startLogin("https://smartdb.example.com/?tab=scan&authError=Sign-in+failed");
+    expect(decodeAuthRequest(result.authRequest, "super-secret")).toMatchObject({
+      returnTo: "https://smartdb.example.com/?tab=scan",
+    });
+  });
+
   it("rejects login start when the cookie secret is missing", async () => {
     const service = new AuthService(
       {
@@ -171,11 +192,46 @@ describe("AuthService", () => {
     });
 
     expect(service.getSession(stored.id)).toMatchObject({ username: "labeler" });
+    // App-only logout: deletes the local session and returns no redirect, so the
+    // client lands on the SmartDB login screen instead of the Zitadel page.
     await expect(service.logout(stored.id)).resolves.toEqual({
-      redirectUrl: "https://auth.example.com/logout",
+      redirectUrl: null,
     });
     expect(service.getSession(stored.id)).toBeNull();
-    expect(logoutUrl).toHaveBeenCalledWith("id-token");
+    expect(logoutUrl).not.toHaveBeenCalled();
+  });
+
+  it("still completes logout when the identity provider's logoutUrl throws", async () => {
+    const logoutUrl = vi.fn(async () => {
+      throw new Error("discovery fetch failed");
+    });
+    const store = new SessionStore(db);
+    const service = new AuthService(
+      {
+        authorizationUrl: vi.fn(async () => "https://auth.example.com/login"),
+        exchangeAuthorizationCode: vi.fn(),
+        logoutUrl,
+      } as never,
+      store,
+      {
+        frontendOrigin: "https://smartdb.example.com",
+        redirectUri: "https://smartdb.example.com/api/auth/callback",
+        sessionCookieSecret: "super-secret",
+      },
+    );
+    const stored = store.create({
+      subject: "zitadel-user-2",
+      username: "maker",
+      name: null,
+      email: null,
+      roles: [],
+      expiresAt: "2030-04-02T00:00:00.000Z",
+      idToken: "id-token-2",
+    });
+
+    await expect(service.logout(stored.id)).resolves.toEqual({ redirectUrl: null });
+    // The local session is gone regardless of IdP availability.
+    expect(service.getSession(stored.id)).toBeNull();
   });
 
   it("rejects invalid callback state", async () => {

@@ -1,5 +1,8 @@
-import jsQR from "jsqr";
 import { sanitizeScannedCode, scanLookupCompactKey } from "@smart-db/contracts";
+
+type HTMLVideoElementWithFocusHandler = HTMLVideoElement & {
+  __smartDbFocusClickHandler?: ((event: Event) => void) | undefined;
+};
 
 export type CameraScannerPermissionState = "unknown" | "granted" | "denied";
 
@@ -124,6 +127,7 @@ interface BarcodeDetectorLike {
 }
 
 type BarcodeDetectorConstructor = new (options?: { readonly formats?: readonly string[] }) => BarcodeDetectorLike;
+type JsQrDecoder = typeof import("jsqr").default;
 
 export interface CameraScannerServiceOptions {
   readonly onScan: (code: string) => void;
@@ -137,7 +141,8 @@ export interface CameraScannerServiceOptions {
   readonly clearInterval?: (handle: number) => void;
   readonly createCanvas?: () => CameraScannerCanvasLike;
   readonly loadBarcodeDetectorClass?: () => Promise<BarcodeDetectorConstructor>;
-  readonly jsqr?: typeof jsQR;
+  readonly loadJsQr?: () => Promise<JsQrDecoder>;
+  readonly jsqr?: JsQrDecoder;
   readonly logger?: Pick<Console, "warn" | "error">;
   readonly observeVisibility?: boolean;
 }
@@ -164,13 +169,24 @@ interface CameraScannerCanvasLike {
 
 const DEFAULT_SCAN_INTERVAL_MS = 120;
 const DEFAULT_DUPLICATE_WINDOW_MS = 3000;
+const FOCUS_MODE_PRIORITY = ["continuous", "auto", "single-shot", "manual"] as const;
+type FocusMode = (typeof FOCUS_MODE_PRIORITY)[number];
+
 const DEFAULT_VIDEO_CONSTRAINTS: MediaStreamConstraints = {
+  // Keep initial constraints minimal - just the facing preference. Driver-
+  // specific knobs (focus/exposure/white-balance/resolution) are handled via
+  // applyConstraints AFTER the track is live, because some Android camera
+  // HALs reject advanced constraints at getUserMedia time with
+  // OverConstrainedError, which fails the entire stream acquisition. The
+  // post-start path in engageContinuousAutoTuning is always safe because each
+  // applyConstraints call there is individually caught and logged.
   video: {
     facingMode: "environment",
   },
 };
 
 let defaultDetectorClassPromise: Promise<BarcodeDetectorConstructor> | null = null;
+let defaultJsQrPromise: Promise<JsQrDecoder> | null = null;
 
 function loadDefaultBarcodeDetectorClass(): Promise<BarcodeDetectorConstructor> {
   if (!defaultDetectorClassPromise) {
@@ -183,6 +199,14 @@ function loadDefaultBarcodeDetectorClass(): Promise<BarcodeDetectorConstructor> 
   }
 
   return defaultDetectorClassPromise;
+}
+
+function loadDefaultJsQr(): Promise<JsQrDecoder> {
+  if (!defaultJsQrPromise) {
+    defaultJsQrPromise = import("jsqr").then((module) => module.default);
+  }
+
+  return defaultJsQrPromise;
 }
 
 function readSecureContext(): boolean | null {
@@ -391,7 +415,8 @@ export class CameraScannerService {
   private readonly clearIntervalFn: (handle: number) => void;
   private readonly createCanvas: () => CameraScannerCanvasLike;
   private readonly loadBarcodeDetectorClass: () => Promise<BarcodeDetectorConstructor>;
-  private readonly jsqr: typeof jsQR;
+  private readonly loadJsQr: () => Promise<JsQrDecoder>;
+  private readonly jsqr: JsQrDecoder | null;
   private readonly logger: Pick<Console, "warn" | "error">;
   private readonly observeVisibility: boolean;
 
@@ -403,6 +428,7 @@ export class CameraScannerService {
   private stream: MediaStream | null = null;
   private detector: BarcodeDetectorLike | null = null;
   private detectorPromise: Promise<BarcodeDetectorLike | null> | null = null;
+  private jsqrPromise: Promise<JsQrDecoder | null> | null = null;
   private timerHandle: number | null = null;
   private inFlight = false;
   private sessionToken = 0;
@@ -434,7 +460,8 @@ export class CameraScannerService {
       } as CameraScannerCanvasLike;
     });
     this.loadBarcodeDetectorClass = options.loadBarcodeDetectorClass ?? loadDefaultBarcodeDetectorClass;
-    this.jsqr = options.jsqr ?? jsQR;
+    this.loadJsQr = options.loadJsQr ?? loadDefaultJsQr;
+    this.jsqr = options.jsqr ?? null;
     this.logger = options.logger ?? console;
     this.observeVisibility = options.observeVisibility ?? true;
     this.isSupported = Boolean(mediaDevices?.getUserMedia);
@@ -535,21 +562,14 @@ export class CameraScannerService {
     try {
       stream = await this.mediaDevices.getUserMedia(this.videoConstraints);
 
-      // Request continuous autofocus on the video track if the device supports it.
-      // Many phones default to fixed focus unless explicitly told otherwise.
       const videoTrack = stream.getVideoTracks()[0];
       if (videoTrack) {
-        try {
-          const capabilities = videoTrack.getCapabilities?.() as Record<string, unknown> | undefined;
-          const focusModes = capabilities?.focusMode as string[] | undefined;
-          if (focusModes?.includes("continuous")) {
-            await videoTrack.applyConstraints({
-              advanced: [{ focusMode: "continuous" } as MediaTrackConstraintSet],
-            });
-          }
-        } catch {
-          // Not all browsers/devices support focusMode — ignore silently.
-        }
+        // Fire-and-forget. applyConstraints against real camera hardware can
+        // take hundreds of milliseconds on some Android devices and must never
+        // hold up stream binding. If it resolves, great. If it rejects, the
+        // helper logs the diagnosis and the scanner keeps working with
+        // whatever focus state the driver started with.
+        void this.engageContinuousAutoTuning(videoTrack);
       }
     } catch (error) {
       const failure = classifyStartFailure(error);
@@ -595,6 +615,7 @@ export class CameraScannerService {
     });
 
     void this.ensureBarcodeDetector();
+    void this.ensureJsQr();
 
     if (this.videoElement) {
       const result = await this.bindStreamToVideo(this.videoElement, token);
@@ -639,6 +660,7 @@ export class CameraScannerService {
     }
 
     this.videoElement = video;
+    this.bindFocusTapHandler(video);
 
     if (this.stream && this.videoElement === video && video.srcObject === this.stream && this.snapshot.phase === "scanning") {
       return { ok: true };
@@ -702,13 +724,13 @@ export class CameraScannerService {
     }
 
     this.videoElement = video;
+    this.bindFocusTapHandler(video);
 
     // Mirror the video preview when using a user-facing (laptop / selfie) camera.
     // The scan loop reads raw pixels from the stream, so mirroring is CSS-only.
     const track = this.stream.getVideoTracks()[0];
     const facing = track?.getSettings?.().facingMode;
     video.style.transform = (!facing || facing === "user") ? "scaleX(-1)" : "";
-
     this.setSnapshot({
       phase: "scanning",
       supported: true,
@@ -778,10 +800,22 @@ export class CameraScannerService {
 
       try {
         const imageData = context.getImageData(0, 0, width, height);
-        const result = this.jsqr(imageData.data, width, height, { inversionAttempts: "dontInvert" });
-        if (result?.data) {
-          this.acceptCode(result.data);
+        const jsqr = await this.ensureJsQr();
+        if (this.destroyed || this.snapshot.phase !== "scanning") {
           return;
+        }
+        if (jsqr) {
+          // attemptBoth is jsQR's default and the only sensible production setting:
+          // many printed QRs and any code captured under changing light land in the
+          // inverted orientation from jsQR's perspective, and skipping the second
+          // pass means the decoder quietly refuses valid codes. The "dontInvert"
+          // CPU optimisation this replaces was the root cause of scans failing
+          // on laptop webcams.
+          const result = jsqr(imageData.data, width, height, { inversionAttempts: "attemptBoth" });
+          if (result?.data) {
+            this.acceptCode(result.data);
+            return;
+          }
         }
       } catch (error) {
         if (error instanceof Error || typeof error === "object") {
@@ -872,6 +906,21 @@ export class CameraScannerService {
     return this.detectorPromise;
   }
 
+  private async ensureJsQr(): Promise<JsQrDecoder | null> {
+    if (this.jsqr) {
+      return this.jsqr;
+    }
+
+    if (!this.jsqrPromise) {
+      this.jsqrPromise = this.loadJsQr().catch((error) => {
+        this.logger.warn("CameraScannerService jsQR load failed; barcode detector fallback remains enabled.", error);
+        return null;
+      });
+    }
+
+    return this.jsqrPromise;
+  }
+
   private stopInternal(options: { readonly preserveLastResult: boolean; readonly preserveVideoBinding?: boolean }): void {
     this.sessionToken += 1;
     this.stopLoop();
@@ -929,9 +978,169 @@ export class CameraScannerService {
         video.srcObject = null;
       }
       video.pause();
+      const handler = (video as HTMLVideoElementWithFocusHandler).__smartDbFocusClickHandler;
+      if (handler) {
+        video.removeEventListener("click", handler);
+        (video as HTMLVideoElementWithFocusHandler).__smartDbFocusClickHandler = undefined;
+      }
     } catch (error) {
       this.logger.warn("CameraScannerService failed to detach the video element cleanly.", error);
     }
+  }
+
+  /**
+   * Ask the active camera track to refocus at the given (optional) point, or
+   * to re-engage continuous autofocus if no point is supplied. Safe to call
+   * repeatedly; if the device exposes no focus control at all, this is a no-op
+   * (and any underlying rejection is logged rather than thrown).
+   */
+  async refocus(point?: { x: number; y: number }): Promise<void> {
+    const track = this.stream?.getVideoTracks()[0] ?? null;
+    if (!track || track.readyState !== "live") {
+      return;
+    }
+
+    try {
+      if (point) {
+        await this.applySingleShotFocusAtPoint(track, point);
+        return;
+      }
+      await this.engageContinuousAutoTuning(track);
+    } catch (error) {
+      this.logger.warn("CameraScannerService refocus failed.", error);
+    }
+  }
+
+  private getTrackFocusCapabilities(track: MediaStreamTrack): {
+    readonly focusModes: readonly string[];
+    readonly exposureModes: readonly string[];
+    readonly whiteBalanceModes: readonly string[];
+    readonly hasPointsOfInterest: boolean;
+  } {
+    const capabilities = (typeof track.getCapabilities === "function"
+      ? track.getCapabilities()
+      : undefined) as Record<string, unknown> | undefined;
+    const focusModes = Array.isArray(capabilities?.focusMode)
+      ? (capabilities!.focusMode as string[])
+      : [];
+    const exposureModes = Array.isArray(capabilities?.exposureMode)
+      ? (capabilities!.exposureMode as string[])
+      : [];
+    const whiteBalanceModes = Array.isArray(capabilities?.whiteBalanceMode)
+      ? (capabilities!.whiteBalanceMode as string[])
+      : [];
+    const hasPointsOfInterest =
+      capabilities !== undefined && "pointsOfInterest" in capabilities;
+    return { focusModes, exposureModes, whiteBalanceModes, hasPointsOfInterest };
+  }
+
+  private async engageContinuousAutoTuning(track: MediaStreamTrack): Promise<void> {
+    const { focusModes, exposureModes, whiteBalanceModes } =
+      this.getTrackFocusCapabilities(track);
+
+    // Focus: walk continuous → auto → manual → single-shot, apply the first
+    // supported mode. Report the full capability set to the logger so diagnosis
+    // of "no autofocus" on an unfamiliar device no longer requires reading
+    // source.
+    const preferredFocus = FOCUS_MODE_PRIORITY.find((mode) => focusModes.includes(mode));
+    if (preferredFocus) {
+      try {
+        await track.applyConstraints({
+          advanced: [{ focusMode: preferredFocus } as MediaTrackConstraintSet],
+        });
+      } catch (error) {
+        this.logger.warn(
+          `CameraScannerService could not apply focusMode='${preferredFocus}'; supported=${focusModes.join(",") || "(none)"}`,
+          error,
+        );
+      }
+    } else if (focusModes.length === 0) {
+      this.logger.warn(
+        "CameraScannerService: track reports no focusMode capability. Device will use its default (often fixed) focus; tap-to-focus on the viewfinder may still engage native AF on iOS.",
+      );
+    }
+
+    // Exposure and white-balance are best-effort; they dramatically improve
+    // decode reliability under changing light when available, but missing
+    // support is silent (not all drivers report these capabilities even when
+    // they engage the underlying modes automatically).
+    if (exposureModes.includes("continuous")) {
+      try {
+        await track.applyConstraints({
+          advanced: [{ exposureMode: "continuous" } as MediaTrackConstraintSet],
+        });
+      } catch (error) {
+        this.logger.warn("CameraScannerService: exposureMode=continuous rejected.", error);
+      }
+    }
+    if (whiteBalanceModes.includes("continuous")) {
+      try {
+        await track.applyConstraints({
+          advanced: [{ whiteBalanceMode: "continuous" } as MediaTrackConstraintSet],
+        });
+      } catch (error) {
+        this.logger.warn("CameraScannerService: whiteBalanceMode=continuous rejected.", error);
+      }
+    }
+  }
+
+  private async applySingleShotFocusAtPoint(
+    track: MediaStreamTrack,
+    point: { x: number; y: number },
+  ): Promise<void> {
+    const clampedX = Math.min(Math.max(point.x, 0), 1);
+    const clampedY = Math.min(Math.max(point.y, 0), 1);
+    const { focusModes, hasPointsOfInterest } = this.getTrackFocusCapabilities(track);
+
+    // Chromium exposes a `single-shot` focus mode plus a `pointsOfInterest`
+    // constraint — applying both in one call is the supported recipe. If the
+    // device lacks single-shot, fall back to re-engaging continuous so a move
+    // of the camera still triggers a hunt.
+    const preferred = focusModes.includes("single-shot")
+      ? "single-shot"
+      : FOCUS_MODE_PRIORITY.find((mode) => focusModes.includes(mode));
+    if (!preferred) {
+      return;
+    }
+
+    const base: Record<string, unknown> = { focusMode: preferred };
+    if (hasPointsOfInterest) {
+      base.pointsOfInterest = [{ x: clampedX, y: clampedY }];
+    }
+    try {
+      await track.applyConstraints({
+        advanced: [base as MediaTrackConstraintSet],
+      });
+    } catch (error) {
+      this.logger.warn(
+        `CameraScannerService tap-to-focus failed (mode=${preferred}, point=${clampedX.toFixed(2)}x${clampedY.toFixed(2)}).`,
+        error,
+      );
+    }
+  }
+
+  private bindFocusTapHandler(video: HTMLVideoElement): void {
+    const element = video as HTMLVideoElementWithFocusHandler;
+    if (element.__smartDbFocusClickHandler) {
+      return;
+    }
+    const handler = (event: Event) => {
+      const mouse = event as MouseEvent;
+      const target = event.currentTarget;
+      if (!(target instanceof HTMLVideoElement)) {
+        return;
+      }
+      const rect = target.getBoundingClientRect();
+      if (rect.width === 0 || rect.height === 0) {
+        void this.refocus();
+        return;
+      }
+      const x = (mouse.clientX - rect.left) / rect.width;
+      const y = (mouse.clientY - rect.top) / rect.height;
+      void this.refocus({ x, y });
+    };
+    video.addEventListener("click", handler);
+    element.__smartDbFocusClickHandler = handler;
   }
 
   private setSnapshot(snapshot: CameraScannerSnapshot): void {

@@ -4,13 +4,14 @@ import {
   hasSmartDbRole,
   InvariantError,
   smartDbRoles,
+  type AuthSession,
   type SmartDbRole,
   UnauthenticatedError,
   isApplicationError,
 } from "@smart-db/contracts";
 import cookie from "@fastify/cookie";
 import cors from "@fastify/cors";
-import Fastify, { type preHandlerAsyncHookHandler } from "fastify";
+import Fastify, { type FastifyInstance, type preHandlerAsyncHookHandler } from "fastify";
 import { config, type AppConfig } from "./config.js";
 import { AuthService } from "./auth/auth-service.js";
 import { SessionStore } from "./auth/session-store.js";
@@ -21,6 +22,7 @@ import { PartDbOutbox } from "./outbox/partdb-outbox.js";
 import { PartDbOutboxWorker } from "./outbox/partdb-worker.js";
 import { PartDbClient } from "./partdb/partdb-client.js";
 import { CategoryResolver } from "./partdb/category-resolver.js";
+import { LocationResolver } from "./partdb/location-resolver.js";
 import { PartDbOperations } from "./partdb/partdb-operations.js";
 import { registerAuthRoutes } from "./routes/auth-routes.js";
 import { registerInventoryRoutes } from "./routes/inventory-routes.js";
@@ -44,6 +46,10 @@ interface BuildServerOptions {
 
 export async function buildServer(options: BuildServerOptions = {}) {
   const activeConfig = options.configOverride ?? config;
+  if (activeConfig.devAuthBypass) {
+    assertDevAuthBypassAllowed(activeConfig);
+  }
+  const devAuthSession = activeConfig.devAuthBypass ? createDevAuthSession() : null;
   const app = Fastify({
     logger:
       process.env.NODE_ENV === "test"
@@ -59,6 +65,8 @@ export async function buildServer(options: BuildServerOptions = {}) {
             },
           },
   });
+
+  registerLenientJsonParser(app);
 
   await app.register(cookie);
   await app.register(cors, {
@@ -121,6 +129,15 @@ export async function buildServer(options: BuildServerOptions = {}) {
               apiToken: activeConfig.partDb.apiToken!,
             }),
           ),
+          new LocationResolver(
+            db,
+            new PartDbStorageLocationsResource(
+              new PartDbRestClient({
+                baseUrl: activeConfig.partDb.baseUrl!,
+                apiToken: activeConfig.partDb.apiToken!,
+              }),
+            ),
+          ),
         ),
         app.log,
       )
@@ -145,6 +162,13 @@ export async function buildServer(options: BuildServerOptions = {}) {
     request: Parameters<preHandlerAsyncHookHandler>[0],
     reply: Parameters<preHandlerAsyncHookHandler>[1],
   ) => {
+    if (devAuthSession) {
+      request.authContext = {
+        sessionId: "dev-auth-bypass",
+        session: devAuthSession,
+      };
+      return;
+    }
     const sessionId = request.cookies[activeConfig.sessionCookieName];
     const session = sessionId ? authService.getSession(sessionId) : null;
     if (!sessionId || !session) {
@@ -201,19 +225,112 @@ export async function buildServer(options: BuildServerOptions = {}) {
     });
   }
 
-  app.setErrorHandler((error, _request, reply) => {
-    const applicationError = isApplicationError(error)
-      ? error
-      : new InvariantError("Unhandled middleware failure.", {}, { cause: error });
+  app.setErrorHandler((error, request, reply) => {
+    if (isApplicationError(error)) {
+      reply.status(error.httpStatus).send({
+        error: {
+          code: error.code,
+          message: error.message,
+          details: error.details,
+        },
+      });
+      return;
+    }
 
-    reply.status(applicationError.httpStatus).send({
+    // Fastify's own errors (request parsing, validation, rate-limits etc.)
+    // carry their own statusCode + code. Surface them faithfully instead of
+    // wrapping as 500/invariant — a 400 "empty JSON body" is a client
+    // problem and must stay a 400.
+    const fastifyError = error as { statusCode?: number; code?: string; message?: string };
+    if (
+      typeof fastifyError.statusCode === "number" &&
+      fastifyError.statusCode >= 400 &&
+      fastifyError.statusCode < 500
+    ) {
+      request.log.warn(
+        { err: error, url: request.url, method: request.method },
+        "client request rejected by fastify",
+      );
+      reply.status(fastifyError.statusCode).send({
+        error: {
+          code: typeof fastifyError.code === "string" ? fastifyError.code : "bad_request",
+          message: typeof fastifyError.message === "string" ? fastifyError.message : "Bad request.",
+          details: {},
+        },
+      });
+      return;
+    }
+
+    // Genuine unexpected failure: log the cause so diagnosing "invariant /
+    // Unhandled middleware failure" in production no longer requires a
+    // redeploy-with-extra-logging cycle.
+    const wrapped = new InvariantError("Unhandled middleware failure.", {}, { cause: error });
+    request.log.error(
+      { err: error, url: request.url, method: request.method },
+      "unhandled middleware failure",
+    );
+    reply.status(wrapped.httpStatus).send({
       error: {
-        code: applicationError.code,
-        message: applicationError.message,
-        details: applicationError.details,
+        code: wrapped.code,
+        message: wrapped.message,
+        details: wrapped.details,
       },
     });
   });
 
   return app;
+}
+
+function assertDevAuthBypassAllowed(config: AppConfig): void {
+  if (process.env.NODE_ENV === "production") {
+    throw new InvariantError("DEV_AUTH_BYPASS cannot be enabled in production.");
+  }
+  if (!isLocalUrl(config.frontendOrigin) || !isLocalUrl(config.publicBaseUrl)) {
+    throw new InvariantError("DEV_AUTH_BYPASS is limited to localhost development origins.");
+  }
+}
+
+function isLocalUrl(value: string): boolean {
+  try {
+    const hostname = new URL(value).hostname.toLowerCase();
+    return hostname === "localhost" || hostname === "127.0.0.1" || hostname === "::1" || hostname === "[::1]";
+  } catch {
+    return false;
+  }
+}
+
+function createDevAuthSession(now: Date = new Date()): AuthSession {
+  return {
+    subject: "dev-auth-bypass",
+    username: "dev-admin",
+    name: "Dev Auth Bypass",
+    email: null,
+    roles: [smartDbRoles.admin, smartDbRoles.labeler, smartDbRoles.viewer],
+    issuedAt: now.toISOString(),
+    expiresAt: null,
+  };
+}
+
+function registerLenientJsonParser(app: FastifyInstance): void {
+  app.removeContentTypeParser("application/json");
+  app.addContentTypeParser("application/json", { parseAs: "string" }, (_request, body, done) => {
+    const raw = (typeof body === "string" ? body : body.toString("utf8")).trim();
+    if (raw.length === 0) {
+      done(null, undefined);
+      return;
+    }
+
+    try {
+      done(null, JSON.parse(raw) as unknown);
+    } catch (cause) {
+      const error = new Error("Body is not valid JSON.") as Error & {
+        code: string;
+        statusCode: number;
+      };
+      error.code = "FST_ERR_CTP_INVALID_JSON_BODY";
+      error.statusCode = 400;
+      error.cause = cause;
+      done(error);
+    }
+  });
 }
